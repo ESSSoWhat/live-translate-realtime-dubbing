@@ -1,0 +1,168 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "live-dubbing"
+version = "0.1.0"
+description = "Real-time audio translation and voice-cloned dubbing for Windows applications"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Live Dubbing Team"}
+]
+keywords = ["translation", "dubbing", "voice-cloning", "elevenlabs", "audio"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+dependencies = [
+    # GUI
+    "PyQt6>=6.6.0",
+
+    # Audio I/O
+    "sounddevice>=0.4.6",
+    "pyaudiowpatch>=0.2.12.6",
+    "pycaw>=20240210",
+
+    # Audio processing
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "soundfile>=0.12.0",
+    "pydub>=0.25.0",
+
+    # VAD (Voice Activity Detection)
+    "silero-vad>=5.1",
+    "torch>=2.1.0",
+    "torchaudio>=2.1.0",
+
+    # ElevenLabs API
+    "elevenlabs>=1.0.0",
+
+    # Translation
+    "openai>=1.0.0",
+    "deep-translator>=1.11.0",
+
+    # Async & networking
+    "aiohttp>=3.9.0",
+    "httpx>=0.25.0",
+
+    # Configuration
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+
+    # Utilities
+    "structlog>=23.2.0",
+    "platformdirs>=4.1.0",
+    "keyring>=24.3.0",
+    "psutil>=5.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-qt>=4.2.0",
+    "pytest-cov>=4.1.0",
+    "mypy>=1.7.0",
+    "ruff>=0.1.6",
+    "black>=23.11.0",
+]
+
+[project.scripts]
+live-dubbing = "live_dubbing.__main__:main"
+
+[project.gui-scripts]
+live-dubbing-gui = "live_dubbing.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.qss", "*.png", "*.ico", "py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = ["E501", "N802"]  # N802: Qt overrides use camelCase (closeEvent, paintEvent)
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "sounddevice"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pycaw.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pyaudiowpatch"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "scipy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "soundfile"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pydub.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "silero_vad"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "deep_translator.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "platformdirs"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "elevenlabs.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.pylint.messages_control]
+disable = [
+    "broad-exception-caught",  # W0718: intentional in playback/device code
+    "consider-using-enumerate",  # C0200: optional style
+    "no-name-in-module",  # E0611: PyQt6 uses dynamic exports
+    "import-outside-toplevel",  # C0415: asyncio in closeEvent is intentional
+    "line-too-long",  # C0301: use ruff/black; project uses 100 chars
+    "invalid-name",  # C0103: closeEvent is Qt override
+    "protected-access",  # W0212: orchestrator._audio_routing for VB-Cable
+    "unused-argument",  # W0613: event in pyqtSlot handlers
+    "unused-import",  # W0611: covered by ruff
+]

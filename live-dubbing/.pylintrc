@@ -1,0 +1,14 @@
+[MESSAGES CONTROL]
+disable=
+    broad-exception-caught,
+    consider-using-enumerate,
+    no-name-in-module,
+    import-outside-toplevel,
+    line-too-long,
+    invalid-name,
+    protected-access,
+    unused-argument,
+    unused-import
+
+[BASIC]
+max-line-length=100

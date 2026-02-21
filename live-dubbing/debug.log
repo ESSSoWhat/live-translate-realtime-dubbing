@@ -1,0 +1,981 @@
+2026-02-18 09:07:54 [info     ] Starting Live Dubbing application
+2026-02-18 09:07:54 [info     ] Settings loaded                path=C:\Users\son-l\AppData\Local\LiveDubbing\LiveDubbing\settings.json
+2026-02-18 09:07:54 [info     ] Initializing orchestrator
+2026-02-18 09:07:55 [info     ] Detected virtual audio devices count=57
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=88 name='VB-Audio Virtual Cable' output_id=126
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A1 (VB-Audio Vo' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out B2 (VB-Audio Vo' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A2 (VB-Audio Vo' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A4 (VB-Audio Vo' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A5 (VB-Audio Vo' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A3 (VB-Audio Vo' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out B3 (VB-Audio Vo' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out B1 (VB-Audio Vo' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter VAIO3 Input (VB-Aud' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 1 (VB-Audio Voic' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 5 (VB-Audio Voic' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 3 (VB-Audio Voic' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Input (VB-Audio Voi' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 2 (VB-Audio Voic' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter AUX Input (VB-Audio' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 4 (VB-Audio Voic' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A1 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out B2 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A2 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A4 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A5 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A3 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out B3 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out B1 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter VAIO3 Input (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 1 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 5 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 3 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Input (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 2 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter AUX Input (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 4 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter VAIO3 Input (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 1 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 5 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 3 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Input (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 2 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter AUX Input (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 4 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A1 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out B2 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A2 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A4 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A5 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out A3 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out B3 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Out B1 (VB-Audio Voicemeeter VAIO)' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter VAIO3 Input (VB-Audio Voicemeeter VAIO) [Loopback]' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 1 (VB-Audio Voicemeeter VAIO) [Loopback]' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 5 (VB-Audio Voicemeeter VAIO) [Loopback]' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 3 (VB-Audio Voicemeeter VAIO) [Loopback]' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter Input (VB-Audio Voicemeeter VAIO) [Loopback]' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 2 (VB-Audio Voicemeeter VAIO) [Loopback]' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter AUX Input (VB-Audio Voicemeeter VAIO) [Loopback]' output_id=None
+2026-02-18 09:07:55 [debug    ] Virtual device                 input_id=None name='Voicemeeter In 4 (VB-Audio Voicemeeter VAIO) [Loopback]' output_id=None
+2026-02-18 09:07:55 [info     ] ElevenLabs service initialized
+2026-02-18 09:07:55 [info     ] Enumerated audio sessions      count=2
+2026-02-18 09:07:55 [info     ] Combined audio sessions        active_count=2 total_count=89
+2026-02-18 09:07:55 [info     ] App state changed              new=READY old=INITIALIZING
+2026-02-18 09:07:55 [info     ] Orchestrator initialized successfully
+2026-02-18 09:08:07 [info     ] Starting translation           source_lang=auto target_app=chrome.exe target_lang=es use_fallback=True
+2026-02-18 09:08:07 [info     ] App state changed              new=RUNNING old=READY
+2026-02-18 09:08:07 [info     ] Translation state changed      new=WAITING_FOR_AUDIO old=IDLE
+2026-02-18 09:08:07 [info     ] Default WASAPI output device   index=93 name='VG279QM (NVIDIA High Definition Audio)'
+2026-02-18 09:08:07 [info     ] Found matching loopback device index=131 name='VG279QM (NVIDIA High Definition Audio) [Loopback]'
+2026-02-18 09:08:07 [info     ] Configured system loopback capture device_id=131 mode=system_loopback
+2026-02-18 09:08:07 [info     ] Capture mode set               mode=system_loopback
+2026-02-18 09:08:07 [info     ] Using system loopback capture  device_id=131
+2026-02-18 09:08:07 [info     ] Translation state changed      new=CLONING_VOICE old=WAITING_FOR_AUDIO
+2026-02-18 09:08:07 [info     ] Starting processing pipeline
+2026-02-18 09:08:07 [info     ] Silero VAD model loaded
+2026-02-18 09:08:07 [info     ] Started dynamic voice capture
+2026-02-18 09:08:07 [info     ] Started voice capture in background, using fallback voice for now fallback_voice=21m00Tcm4TlvDq8ikWAM
+2026-02-18 09:08:07 [info     ] Translation state changed      new=TRANSLATING old=CLONING_VOICE
+2026-02-18 09:08:07 [info     ] VAD stage started
+2026-02-18 09:08:07 [info     ] STT stage started              use_dubbing_api=False
+2026-02-18 09:08:07 [info     ] TTS stage started
+2026-02-18 09:08:07 [info     ] Output stage started
+2026-02-18 09:08:07 [info     ] Pipeline started               state=PROCESSING
+2026-02-18 09:08:07 [info     ] Processing pipeline started
+2026-02-18 09:08:07 [info     ] Starting audio capture         chunk_ms=100 device=131 sample_rate=16000
+2026-02-18 09:08:07 [info     ] Starting audio playback        device=21 sample_rate=24000
+2026-02-18 09:08:07 [info     ] Audio consumer started
+2026-02-18 09:08:07 [info     ] Playback stream started
+2026-02-18 09:08:08 [info     ] Using capture device           index=131 name='VG279QM (NVIDIA High Definition Audio) [Loopback]'
+2026-02-18 09:08:08 [info     ] Capture stream opened          device_rate=48000 target_rate=16000
+2026-02-18 09:08:09 [info     ] Audio chunk captured           chunk_num=1 max_amplitude=0.0568 rms_level=0.0186 samples=1600
+2026-02-18 09:08:09 [info     ] Audio chunk captured           chunk_num=2 max_amplitude=0.0710 rms_level=0.0232 samples=1600
+2026-02-18 09:08:09 [info     ] Audio chunk captured           chunk_num=3 max_amplitude=0.0600 rms_level=0.0202 samples=1600
+2026-02-18 09:08:09 [info     ] Audio consumer forwarding chunk count=1 has_callback=True
+2026-02-18 09:08:09 [debug    ] Invoking audio callback        chunk_bytes=6400 count=1 ts_ms=1771366088487
+2026-02-18 09:08:09 [info     ] Pipeline process_chunk         chunks_so_far=0 queue_size=0 state=PROCESSING
+2026-02-18 09:08:09 [info     ] Audio callback completed       count=1
+2026-02-18 09:08:09 [info     ] Audio consumer forwarding chunk count=2 has_callback=True
+2026-02-18 09:08:09 [debug    ] Invoking audio callback        chunk_bytes=6400 count=2 ts_ms=1771366089161
+2026-02-18 09:08:09 [info     ] Audio callback completed       count=2
+2026-02-18 09:08:09 [info     ] Audio consumer forwarding chunk count=3 has_callback=True
+2026-02-18 09:08:09 [debug    ] Invoking audio callback        chunk_bytes=6400 count=3 ts_ms=1771366089162
+2026-02-18 09:08:09 [info     ] Audio callback completed       count=3
+2026-02-18 09:08:09 [info     ] VAD processing chunk           queue_size=2 vad_chunk=1
+2026-02-18 09:08:09 [debug    ] VAD about to process           vad_chunk=1
+2026-02-18 09:08:09 [info     ] VAD chunk processed            audio_len=1600 audio_level=0.0186 is_speech=True speech_prob=0.831 threshold=0.08
+2026-02-18 09:08:09 [debug    ] VAD processed                  vad_chunk=1
+2026-02-18 09:08:09 [info     ] VAD processing chunk           queue_size=1 vad_chunk=2
+2026-02-18 09:08:09 [debug    ] VAD about to process           vad_chunk=2
+2026-02-18 09:08:09 [info     ] VAD chunk processed            audio_len=1600 audio_level=0.0232 is_speech=True speech_prob=0.935 threshold=0.08
+2026-02-18 09:08:09 [debug    ] VAD processed                  vad_chunk=2
+2026-02-18 09:08:09 [info     ] VAD processing chunk           queue_size=0 vad_chunk=3
+2026-02-18 09:08:09 [debug    ] VAD about to process           vad_chunk=3
+2026-02-18 09:08:09 [info     ] VAD chunk processed            audio_len=1600 audio_level=0.0202 is_speech=True speech_prob=0.996 threshold=0.08
+2026-02-18 09:08:09 [debug    ] VAD processed                  vad_chunk=3
+2026-02-18 09:08:09 [debug    ] Invoking audio callback        chunk_bytes=6400 count=4 ts_ms=1771366089316
+2026-02-18 09:08:09 [info     ] VAD processing chunk           queue_size=0 vad_chunk=4
+2026-02-18 09:08:09 [debug    ] VAD about to process           vad_chunk=4
+2026-02-18 09:08:09 [info     ] VAD chunk processed            audio_len=1600 audio_level=0.0175 is_speech=True speech_prob=0.996 threshold=0.08
+2026-02-18 09:08:09 [debug    ] VAD processed                  vad_chunk=4
+2026-02-18 09:08:09 [debug    ] Invoking audio callback        chunk_bytes=6400 count=5 ts_ms=1771366089379
+2026-02-18 09:08:09 [info     ] VAD processing chunk           queue_size=0 vad_chunk=5
+2026-02-18 09:08:09 [debug    ] VAD about to process           vad_chunk=5
+2026-02-18 09:08:09 [info     ] VAD chunk processed            audio_len=1600 audio_level=0.0204 is_speech=True speech_prob=0.997 threshold=0.08
+2026-02-18 09:08:09 [debug    ] VAD processed                  vad_chunk=5
+2026-02-18 09:08:09 [debug    ] Invoking audio callback        chunk_bytes=6400 count=6 ts_ms=1771366089505
+2026-02-18 09:08:09 [debug    ] VAD about to process           vad_chunk=6
+2026-02-18 09:08:09 [debug    ] VAD processed                  vad_chunk=6
+2026-02-18 09:08:09 [debug    ] Invoking audio callback        chunk_bytes=6400 count=7 ts_ms=1771366089584
+2026-02-18 09:08:09 [debug    ] VAD about to process           vad_chunk=7
+2026-02-18 09:08:09 [debug    ] VAD processed                  vad_chunk=7
+2026-02-18 09:08:09 [debug    ] Invoking audio callback        chunk_bytes=6400 count=8 ts_ms=1771366089695
+2026-02-18 09:08:09 [debug    ] VAD about to process           vad_chunk=8
+2026-02-18 09:08:09 [debug    ] VAD processed                  vad_chunk=8
+2026-02-18 09:08:09 [debug    ] Invoking audio callback        chunk_bytes=6400 count=9 ts_ms=1771366089790
+2026-02-18 09:08:09 [debug    ] VAD about to process           vad_chunk=9
+2026-02-18 09:08:09 [debug    ] VAD processed                  vad_chunk=9
+2026-02-18 09:08:09 [debug    ] Invoking audio callback        chunk_bytes=6400 count=10 ts_ms=1771366089899
+2026-02-18 09:08:09 [debug    ] VAD about to process           vad_chunk=10
+2026-02-18 09:08:09 [debug    ] VAD processed                  vad_chunk=10
+2026-02-18 09:08:10 [debug    ] Invoking audio callback        chunk_bytes=6400 count=11 ts_ms=1771366089994
+2026-02-18 09:08:10 [debug    ] VAD about to process           vad_chunk=11
+2026-02-18 09:08:10 [debug    ] VAD processed                  vad_chunk=11
+2026-02-18 09:08:10 [debug    ] Invoking audio callback        chunk_bytes=6400 count=12 ts_ms=1771366090088
+2026-02-18 09:08:10 [debug    ] VAD about to process           vad_chunk=12
+2026-02-18 09:08:10 [debug    ] VAD processed                  vad_chunk=12
+2026-02-18 09:08:10 [debug    ] Invoking audio callback        chunk_bytes=6400 count=13 ts_ms=1771366090198
+2026-02-18 09:08:10 [debug    ] VAD about to process           vad_chunk=13
+2026-02-18 09:08:10 [debug    ] VAD processed                  vad_chunk=13
+2026-02-18 09:08:10 [debug    ] Invoking audio callback        chunk_bytes=6400 count=14 ts_ms=1771366090292
+2026-02-18 09:08:10 [debug    ] VAD about to process           vad_chunk=14
+2026-02-18 09:08:10 [debug    ] VAD processed                  vad_chunk=14
+2026-02-18 09:08:10 [debug    ] Invoking audio callback        chunk_bytes=6400 count=15 ts_ms=1771366090388
+2026-02-18 09:08:10 [debug    ] VAD about to process           vad_chunk=15
+2026-02-18 09:08:10 [debug    ] VAD processed                  vad_chunk=15
+2026-02-18 09:08:10 [debug    ] Invoking audio callback        chunk_bytes=6400 count=16 ts_ms=1771366090498
+2026-02-18 09:08:10 [debug    ] VAD about to process           vad_chunk=16
+2026-02-18 09:08:10 [debug    ] VAD processed                  vad_chunk=16
+2026-02-18 09:08:10 [debug    ] Invoking audio callback        chunk_bytes=6400 count=17 ts_ms=1771366090592
+2026-02-18 09:08:10 [debug    ] VAD about to process           vad_chunk=17
+2026-02-18 09:08:10 [debug    ] VAD processed                  vad_chunk=17
+2026-02-18 09:08:10 [debug    ] Invoking audio callback        chunk_bytes=6400 count=18 ts_ms=1771366090702
+2026-02-18 09:08:10 [debug    ] VAD about to process           vad_chunk=18
+2026-02-18 09:08:10 [debug    ] VAD processed                  vad_chunk=18
+2026-02-18 09:08:10 [debug    ] Invoking audio callback        chunk_bytes=6400 count=19 ts_ms=1771366090782
+2026-02-18 09:08:10 [debug    ] VAD about to process           vad_chunk=19
+2026-02-18 09:08:10 [debug    ] VAD processed                  vad_chunk=19
+2026-02-18 09:08:10 [debug    ] Invoking audio callback        chunk_bytes=6400 count=20 ts_ms=1771366090906
+2026-02-18 09:08:10 [debug    ] VAD about to process           vad_chunk=20
+2026-02-18 09:08:10 [debug    ] VAD processed                  vad_chunk=20
+2026-02-18 09:08:11 [debug    ] Invoking audio callback        chunk_bytes=6400 count=21 ts_ms=1771366090984
+2026-02-18 09:08:11 [debug    ] VAD about to process           vad_chunk=21
+2026-02-18 09:08:11 [debug    ] VAD processed                  vad_chunk=21
+2026-02-18 09:08:11 [debug    ] Invoking audio callback        chunk_bytes=6400 count=22 ts_ms=1771366091092
+2026-02-18 09:08:11 [debug    ] VAD about to process           vad_chunk=22
+2026-02-18 09:08:11 [debug    ] VAD processed                  vad_chunk=22
+2026-02-18 09:08:11 [debug    ] Invoking audio callback        chunk_bytes=6400 count=23 ts_ms=1771366091187
+2026-02-18 09:08:11 [debug    ] VAD about to process           vad_chunk=23
+2026-02-18 09:08:11 [debug    ] VAD processed                  vad_chunk=23
+2026-02-18 09:08:11 [debug    ] Invoking audio callback        chunk_bytes=6400 count=24 ts_ms=1771366091297
+2026-02-18 09:08:11 [debug    ] VAD about to process           vad_chunk=24
+2026-02-18 09:08:11 [debug    ] VAD processed                  vad_chunk=24
+2026-02-18 09:08:11 [debug    ] Invoking audio callback        chunk_bytes=6400 count=25 ts_ms=1771366091390
+2026-02-18 09:08:11 [debug    ] VAD about to process           vad_chunk=25
+2026-02-18 09:08:11 [debug    ] VAD processed                  vad_chunk=25
+2026-02-18 09:08:11 [debug    ] Invoking audio callback        chunk_bytes=6400 count=26 ts_ms=1771366091502
+2026-02-18 09:08:11 [debug    ] VAD about to process           vad_chunk=26
+2026-02-18 09:08:11 [debug    ] VAD processed                  vad_chunk=26
+2026-02-18 09:08:11 [debug    ] Invoking audio callback        chunk_bytes=6400 count=27 ts_ms=1771366091595
+2026-02-18 09:08:11 [debug    ] VAD about to process           vad_chunk=27
+2026-02-18 09:08:11 [debug    ] VAD processed                  vad_chunk=27
+2026-02-18 09:08:11 [debug    ] Invoking audio callback        chunk_bytes=6400 count=28 ts_ms=1771366091689
+2026-02-18 09:08:11 [debug    ] VAD about to process           vad_chunk=28
+2026-02-18 09:08:11 [debug    ] VAD processed                  vad_chunk=28
+2026-02-18 09:08:11 [debug    ] Invoking audio callback        chunk_bytes=6400 count=29 ts_ms=1771366091800
+2026-02-18 09:08:11 [debug    ] VAD about to process           vad_chunk=29
+2026-02-18 09:08:11 [debug    ] VAD processed                  vad_chunk=29
+2026-02-18 09:08:11 [debug    ] Invoking audio callback        chunk_bytes=6400 count=30 ts_ms=1771366091894
+2026-02-18 09:08:11 [debug    ] VAD about to process           vad_chunk=30
+2026-02-18 09:08:11 [debug    ] VAD processed                  vad_chunk=30
+2026-02-18 09:08:12 [debug    ] Invoking audio callback        chunk_bytes=6400 count=31 ts_ms=1771366091989
+2026-02-18 09:08:12 [debug    ] VAD about to process           vad_chunk=31
+2026-02-18 09:08:12 [debug    ] VAD processed                  vad_chunk=31
+2026-02-18 09:08:12 [debug    ] Invoking audio callback        chunk_bytes=6400 count=32 ts_ms=1771366092100
+2026-02-18 09:08:12 [debug    ] VAD about to process           vad_chunk=32
+2026-02-18 09:08:12 [debug    ] VAD processed                  vad_chunk=32
+2026-02-18 09:08:12 [debug    ] Invoking audio callback        chunk_bytes=6400 count=33 ts_ms=1771366092193
+2026-02-18 09:08:12 [debug    ] VAD about to process           vad_chunk=33
+2026-02-18 09:08:12 [debug    ] VAD processed                  vad_chunk=33
+2026-02-18 09:08:12 [debug    ] Invoking audio callback        chunk_bytes=6400 count=34 ts_ms=1771366092288
+2026-02-18 09:08:12 [debug    ] VAD about to process           vad_chunk=34
+2026-02-18 09:08:12 [debug    ] VAD processed                  vad_chunk=34
+2026-02-18 09:08:12 [debug    ] Invoking audio callback        chunk_bytes=6400 count=35 ts_ms=1771366092399
+2026-02-18 09:08:12 [debug    ] VAD about to process           vad_chunk=35
+2026-02-18 09:08:12 [debug    ] VAD processed                  vad_chunk=35
+2026-02-18 09:08:12 [debug    ] Invoking audio callback        chunk_bytes=6400 count=36 ts_ms=1771366092493
+2026-02-18 09:08:12 [debug    ] VAD about to process           vad_chunk=36
+2026-02-18 09:08:12 [debug    ] VAD processed                  vad_chunk=36
+2026-02-18 09:08:12 [debug    ] Invoking audio callback        chunk_bytes=6400 count=37 ts_ms=1771366092587
+2026-02-18 09:08:12 [debug    ] VAD about to process           vad_chunk=37
+2026-02-18 09:08:12 [debug    ] VAD processed                  vad_chunk=37
+2026-02-18 09:08:12 [debug    ] Invoking audio callback        chunk_bytes=6400 count=38 ts_ms=1771366092699
+2026-02-18 09:08:12 [debug    ] VAD about to process           vad_chunk=38
+2026-02-18 09:08:12 [debug    ] VAD processed                  vad_chunk=38
+2026-02-18 09:08:12 [debug    ] Invoking audio callback        chunk_bytes=6400 count=39 ts_ms=1771366092792
+2026-02-18 09:08:12 [debug    ] VAD about to process           vad_chunk=39
+2026-02-18 09:08:12 [debug    ] VAD processed                  vad_chunk=39
+2026-02-18 09:08:12 [debug    ] Invoking audio callback        chunk_bytes=6400 count=40 ts_ms=1771366092887
+2026-02-18 09:08:12 [debug    ] VAD about to process           vad_chunk=40
+2026-02-18 09:08:12 [debug    ] VAD processed                  vad_chunk=40
+2026-02-18 09:08:13 [debug    ] Invoking audio callback        chunk_bytes=6400 count=41 ts_ms=1771366092997
+2026-02-18 09:08:13 [debug    ] VAD about to process           vad_chunk=41
+2026-02-18 09:08:13 [debug    ] VAD processed                  vad_chunk=41
+2026-02-18 09:08:13 [debug    ] Invoking audio callback        chunk_bytes=6400 count=42 ts_ms=1771366093091
+2026-02-18 09:08:13 [debug    ] VAD about to process           vad_chunk=42
+2026-02-18 09:08:13 [debug    ] VAD processed                  vad_chunk=42
+2026-02-18 09:08:13 [debug    ] Invoking audio callback        chunk_bytes=6400 count=43 ts_ms=1771366093200
+2026-02-18 09:08:13 [debug    ] VAD about to process           vad_chunk=43
+2026-02-18 09:08:13 [debug    ] VAD processed                  vad_chunk=43
+2026-02-18 09:08:13 [debug    ] Invoking audio callback        chunk_bytes=6400 count=44 ts_ms=1771366093294
+2026-02-18 09:08:13 [debug    ] VAD about to process           vad_chunk=44
+2026-02-18 09:08:13 [debug    ] VAD processed                  vad_chunk=44
+2026-02-18 09:08:13 [debug    ] Invoking audio callback        chunk_bytes=6400 count=45 ts_ms=1771366093389
+2026-02-18 09:08:13 [debug    ] VAD about to process           vad_chunk=45
+2026-02-18 09:08:13 [debug    ] VAD processed                  vad_chunk=45
+2026-02-18 09:08:13 [debug    ] Invoking audio callback        chunk_bytes=6400 count=46 ts_ms=1771366093501
+2026-02-18 09:08:13 [debug    ] VAD about to process           vad_chunk=46
+2026-02-18 09:08:13 [debug    ] VAD processed                  vad_chunk=46
+2026-02-18 09:08:13 [debug    ] Invoking audio callback        chunk_bytes=6400 count=47 ts_ms=1771366093595
+2026-02-18 09:08:13 [debug    ] VAD about to process           vad_chunk=47
+2026-02-18 09:08:13 [debug    ] VAD processed                  vad_chunk=47
+2026-02-18 09:08:13 [debug    ] Invoking audio callback        chunk_bytes=6400 count=48 ts_ms=1771366093690
+2026-02-18 09:08:13 [debug    ] VAD about to process           vad_chunk=48
+2026-02-18 09:08:13 [debug    ] VAD processed                  vad_chunk=48
+2026-02-18 09:08:13 [debug    ] Invoking audio callback        chunk_bytes=6400 count=49 ts_ms=1771366093800
+2026-02-18 09:08:13 [debug    ] VAD about to process           vad_chunk=49
+2026-02-18 09:08:13 [debug    ] VAD processed                  vad_chunk=49
+2026-02-18 09:08:13 [debug    ] Invoking audio callback        chunk_bytes=6400 count=50 ts_ms=1771366093894
+2026-02-18 09:08:13 [info     ] VAD processing chunk           queue_size=0 vad_chunk=50
+2026-02-18 09:08:13 [debug    ] VAD about to process           vad_chunk=50
+2026-02-18 09:08:13 [debug    ] VAD processed                  vad_chunk=50
+2026-02-18 09:08:13 [info     ] VAD status                     audio_level=0.0011 confidence=0.944 is_speech=True state=PROCESSING vad_chunks=50
+2026-02-18 09:08:14 [debug    ] Invoking audio callback        chunk_bytes=6400 count=51 ts_ms=1771366093988
+2026-02-18 09:08:14 [debug    ] VAD about to process           vad_chunk=51
+2026-02-18 09:08:14 [debug    ] VAD processed                  vad_chunk=51
+2026-02-18 09:08:14 [debug    ] Invoking audio callback        chunk_bytes=6400 count=52 ts_ms=1771366094096
+2026-02-18 09:08:14 [debug    ] VAD about to process           vad_chunk=52
+2026-02-18 09:08:14 [debug    ] VAD processed                  vad_chunk=52
+2026-02-18 09:08:14 [debug    ] Invoking audio callback        chunk_bytes=6400 count=53 ts_ms=1771366094190
+2026-02-18 09:08:14 [debug    ] VAD about to process           vad_chunk=53
+2026-02-18 09:08:14 [debug    ] VAD processed                  vad_chunk=53
+2026-02-18 09:08:14 [info     ] Enough audio captured for cloning duration_sec=5.099999999999998
+2026-02-18 09:08:14 [debug    ] Invoking audio callback        chunk_bytes=6400 count=54 ts_ms=1771366094301
+2026-02-18 09:08:14 [debug    ] Invoking audio callback        chunk_bytes=6400 count=55 ts_ms=1771366094395
+2026-02-18 09:08:14 [debug    ] Invoking audio callback        chunk_bytes=6400 count=56 ts_ms=1771366094488
+2026-02-18 09:08:14 [debug    ] VAD about to process           vad_chunk=54
+2026-02-18 09:08:14 [debug    ] VAD processed                  vad_chunk=54
+2026-02-18 09:08:14 [debug    ] Invoking audio callback        chunk_bytes=6400 count=57 ts_ms=1771366094598
+2026-02-18 09:08:14 [debug    ] VAD about to process           vad_chunk=55
+2026-02-18 09:08:14 [debug    ] VAD processed                  vad_chunk=55
+2026-02-18 09:08:14 [debug    ] VAD about to process           vad_chunk=56
+2026-02-18 09:08:14 [debug    ] VAD processed                  vad_chunk=56
+2026-02-18 09:08:14 [debug    ] VAD about to process           vad_chunk=57
+2026-02-18 09:08:14 [debug    ] VAD processed                  vad_chunk=57
+2026-02-18 09:08:14 [debug    ] Invoking audio callback        chunk_bytes=6400 count=58 ts_ms=1771366094692
+2026-02-18 09:08:14 [debug    ] VAD about to process           vad_chunk=58
+2026-02-18 09:08:14 [debug    ] VAD processed                  vad_chunk=58
+2026-02-18 09:08:14 [debug    ] Invoking audio callback        chunk_bytes=6400 count=59 ts_ms=1771366094801
+2026-02-18 09:08:14 [debug    ] VAD about to process           vad_chunk=59
+2026-02-18 09:08:14 [debug    ] VAD processed                  vad_chunk=59
+2026-02-18 09:08:14 [debug    ] Invoking audio callback        chunk_bytes=6400 count=60 ts_ms=1771366094895
+2026-02-18 09:08:14 [debug    ] VAD about to process           vad_chunk=60
+2026-02-18 09:08:14 [debug    ] VAD processed                  vad_chunk=60
+2026-02-18 09:08:15 [debug    ] Invoking audio callback        chunk_bytes=6400 count=61 ts_ms=1771366094990
+2026-02-18 09:08:15 [debug    ] VAD about to process           vad_chunk=61
+2026-02-18 09:08:15 [debug    ] VAD processed                  vad_chunk=61
+2026-02-18 09:08:15 [debug    ] Invoking audio callback        chunk_bytes=6400 count=62 ts_ms=1771366095100
+2026-02-18 09:08:15 [debug    ] VAD about to process           vad_chunk=62
+2026-02-18 09:08:15 [debug    ] VAD processed                  vad_chunk=62
+2026-02-18 09:08:15 [debug    ] Invoking audio callback        chunk_bytes=6400 count=63 ts_ms=1771366095195
+2026-02-18 09:08:15 [debug    ] VAD about to process           vad_chunk=63
+2026-02-18 09:08:15 [debug    ] VAD processed                  vad_chunk=63
+2026-02-18 09:08:15 [debug    ] Invoking audio callback        chunk_bytes=6400 count=64 ts_ms=1771366095289
+2026-02-18 09:08:15 [debug    ] VAD about to process           vad_chunk=64
+2026-02-18 09:08:15 [debug    ] VAD processed                  vad_chunk=64
+2026-02-18 09:08:15 [debug    ] Invoking audio callback        chunk_bytes=6400 count=65 ts_ms=1771366095399
+2026-02-18 09:08:15 [debug    ] VAD about to process           vad_chunk=65
+2026-02-18 09:08:15 [debug    ] VAD processed                  vad_chunk=65
+2026-02-18 09:08:15 [debug    ] Invoking audio callback        chunk_bytes=6400 count=66 ts_ms=1771366095494
+2026-02-18 09:08:15 [debug    ] VAD about to process           vad_chunk=66
+2026-02-18 09:08:15 [debug    ] VAD processed                  vad_chunk=66
+2026-02-18 09:08:15 [debug    ] Invoking audio callback        chunk_bytes=6400 count=67 ts_ms=1771366095589
+2026-02-18 09:08:15 [debug    ] VAD about to process           vad_chunk=67
+2026-02-18 09:08:15 [debug    ] VAD processed                  vad_chunk=67
+2026-02-18 09:08:15 [debug    ] Invoking audio callback        chunk_bytes=6400 count=68 ts_ms=1771366095700
+2026-02-18 09:08:15 [debug    ] VAD about to process           vad_chunk=68
+2026-02-18 09:08:15 [debug    ] VAD processed                  vad_chunk=68
+2026-02-18 09:08:15 [debug    ] Invoking audio callback        chunk_bytes=6400 count=69 ts_ms=1771366095793
+2026-02-18 09:08:15 [debug    ] VAD about to process           vad_chunk=69
+2026-02-18 09:08:15 [debug    ] VAD processed                  vad_chunk=69
+2026-02-18 09:08:15 [debug    ] Invoking audio callback        chunk_bytes=6400 count=70 ts_ms=1771366095888
+2026-02-18 09:08:15 [debug    ] VAD about to process           vad_chunk=70
+2026-02-18 09:08:15 [debug    ] VAD processed                  vad_chunk=70
+2026-02-18 09:08:16 [debug    ] Invoking audio callback        chunk_bytes=6400 count=71 ts_ms=1771366095999
+2026-02-18 09:08:16 [debug    ] VAD about to process           vad_chunk=71
+2026-02-18 09:08:16 [debug    ] VAD processed                  vad_chunk=71
+2026-02-18 09:08:16 [debug    ] Invoking audio callback        chunk_bytes=6400 count=72 ts_ms=1771366096092
+2026-02-18 09:08:16 [debug    ] VAD about to process           vad_chunk=72
+2026-02-18 09:08:16 [debug    ] VAD processed                  vad_chunk=72
+2026-02-18 09:08:16 [debug    ] Invoking audio callback        chunk_bytes=6400 count=73 ts_ms=1771366096187
+2026-02-18 09:08:16 [debug    ] VAD about to process           vad_chunk=73
+2026-02-18 09:08:16 [debug    ] VAD processed                  vad_chunk=73
+2026-02-18 09:08:16 [debug    ] Invoking audio callback        chunk_bytes=6400 count=74 ts_ms=1771366096295
+2026-02-18 09:08:16 [debug    ] VAD about to process           vad_chunk=74
+2026-02-18 09:08:16 [debug    ] VAD processed                  vad_chunk=74
+2026-02-18 09:08:16 [debug    ] Invoking audio callback        chunk_bytes=6400 count=75 ts_ms=1771366096388
+2026-02-18 09:08:16 [debug    ] VAD about to process           vad_chunk=75
+2026-02-18 09:08:16 [debug    ] VAD processed                  vad_chunk=75
+2026-02-18 09:08:16 [debug    ] Invoking audio callback        chunk_bytes=6400 count=76 ts_ms=1771366096499
+2026-02-18 09:08:16 [debug    ] VAD about to process           vad_chunk=76
+2026-02-18 09:08:16 [debug    ] VAD processed                  vad_chunk=76
+2026-02-18 09:08:16 [debug    ] Invoking audio callback        chunk_bytes=6400 count=77 ts_ms=1771366096592
+2026-02-18 09:08:16 [debug    ] VAD about to process           vad_chunk=77
+2026-02-18 09:08:16 [debug    ] VAD processed                  vad_chunk=77
+2026-02-18 09:08:16 [debug    ] Invoking audio callback        chunk_bytes=6400 count=78 ts_ms=1771366096703
+2026-02-18 09:08:16 [debug    ] VAD about to process           vad_chunk=78
+2026-02-18 09:08:16 [debug    ] VAD processed                  vad_chunk=78
+2026-02-18 09:08:16 [debug    ] Invoking audio callback        chunk_bytes=6400 count=79 ts_ms=1771366096781
+2026-02-18 09:08:16 [debug    ] VAD about to process           vad_chunk=79
+2026-02-18 09:08:16 [debug    ] VAD processed                  vad_chunk=79
+2026-02-18 09:08:16 [info     ] Voice cloned successfully      name=dynamic_clone_1771366094 voice_id=YPrWvwrEgUeSNAV76tNE
+2026-02-18 09:08:16 [info     ] Dynamic voice clone created    duration_sec=5.099999999999998 voice_id=YPrWvwrEgUeSNAV76tNE
+2026-02-18 09:08:16 [info     ] Voice clone ready, swapped from fallback voice_id=YPrWvwrEgUeSNAV76tNE
+2026-02-18 09:08:16 [debug    ] Invoking audio callback        chunk_bytes=6400 count=80 ts_ms=1771366096907
+2026-02-18 09:08:16 [debug    ] VAD about to process           vad_chunk=80
+2026-02-18 09:08:16 [debug    ] VAD processed                  vad_chunk=80
+2026-02-18 09:08:17 [debug    ] Invoking audio callback        chunk_bytes=6400 count=81 ts_ms=1771366096986
+2026-02-18 09:08:17 [debug    ] VAD about to process           vad_chunk=81
+2026-02-18 09:08:17 [debug    ] VAD processed                  vad_chunk=81
+2026-02-18 09:08:17 [debug    ] Invoking audio callback        chunk_bytes=6400 count=82 ts_ms=1771366097096
+2026-02-18 09:08:17 [debug    ] VAD about to process           vad_chunk=82
+2026-02-18 09:08:17 [debug    ] VAD processed                  vad_chunk=82
+2026-02-18 09:08:17 [debug    ] Invoking audio callback        chunk_bytes=6400 count=83 ts_ms=1771366097190
+2026-02-18 09:08:17 [debug    ] VAD about to process           vad_chunk=83
+2026-02-18 09:08:17 [debug    ] VAD processed                  vad_chunk=83
+2026-02-18 09:08:17 [debug    ] Invoking audio callback        chunk_bytes=6400 count=84 ts_ms=1771366097298
+2026-02-18 09:08:17 [debug    ] VAD about to process           vad_chunk=84
+2026-02-18 09:08:17 [debug    ] VAD processed                  vad_chunk=84
+2026-02-18 09:08:17 [debug    ] Invoking audio callback        chunk_bytes=6400 count=85 ts_ms=1771366097392
+2026-02-18 09:08:17 [debug    ] VAD about to process           vad_chunk=85
+2026-02-18 09:08:17 [debug    ] VAD processed                  vad_chunk=85
+2026-02-18 09:08:17 [debug    ] Invoking audio callback        chunk_bytes=6400 count=86 ts_ms=1771366097487
+2026-02-18 09:08:17 [debug    ] VAD about to process           vad_chunk=86
+2026-02-18 09:08:17 [debug    ] VAD processed                  vad_chunk=86
+2026-02-18 09:08:17 [debug    ] Invoking audio callback        chunk_bytes=6400 count=87 ts_ms=1771366097597
+2026-02-18 09:08:17 [debug    ] VAD about to process           vad_chunk=87
+2026-02-18 09:08:17 [debug    ] VAD processed                  vad_chunk=87
+2026-02-18 09:08:17 [debug    ] Invoking audio callback        chunk_bytes=6400 count=88 ts_ms=1771366097690
+2026-02-18 09:08:17 [debug    ] VAD about to process           vad_chunk=88
+2026-02-18 09:08:17 [debug    ] VAD processed                  vad_chunk=88
+2026-02-18 09:08:17 [debug    ] Invoking audio callback        chunk_bytes=6400 count=89 ts_ms=1771366097799
+2026-02-18 09:08:17 [debug    ] VAD about to process           vad_chunk=89
+2026-02-18 09:08:17 [debug    ] VAD processed                  vad_chunk=89
+2026-02-18 09:08:17 [debug    ] Invoking audio callback        chunk_bytes=6400 count=90 ts_ms=1771366097894
+2026-02-18 09:08:17 [debug    ] VAD about to process           vad_chunk=90
+2026-02-18 09:08:17 [debug    ] VAD processed                  vad_chunk=90
+2026-02-18 09:08:18 [debug    ] Invoking audio callback        chunk_bytes=6400 count=91 ts_ms=1771366097988
+2026-02-18 09:08:18 [debug    ] VAD about to process           vad_chunk=91
+2026-02-18 09:08:18 [debug    ] VAD processed                  vad_chunk=91
+2026-02-18 09:08:18 [debug    ] Invoking audio callback        chunk_bytes=6400 count=92 ts_ms=1771366098099
+2026-02-18 09:08:18 [debug    ] VAD about to process           vad_chunk=92
+2026-02-18 09:08:18 [debug    ] VAD processed                  vad_chunk=92
+2026-02-18 09:08:18 [debug    ] Invoking audio callback        chunk_bytes=6400 count=93 ts_ms=1771366098194
+2026-02-18 09:08:18 [debug    ] VAD about to process           vad_chunk=93
+2026-02-18 09:08:18 [debug    ] VAD processed                  vad_chunk=93
+2026-02-18 09:08:18 [debug    ] Invoking audio callback        chunk_bytes=6400 count=94 ts_ms=1771366098289
+2026-02-18 09:08:18 [debug    ] VAD about to process           vad_chunk=94
+2026-02-18 09:08:18 [debug    ] VAD processed                  vad_chunk=94
+2026-02-18 09:08:18 [debug    ] Invoking audio callback        chunk_bytes=6400 count=95 ts_ms=1771366098399
+2026-02-18 09:08:18 [debug    ] VAD about to process           vad_chunk=95
+2026-02-18 09:08:18 [debug    ] VAD processed                  vad_chunk=95
+2026-02-18 09:08:18 [debug    ] Invoking audio callback        chunk_bytes=6400 count=96 ts_ms=1771366098493
+2026-02-18 09:08:18 [debug    ] VAD about to process           vad_chunk=96
+2026-02-18 09:08:18 [debug    ] VAD processed                  vad_chunk=96
+2026-02-18 09:08:18 [debug    ] Invoking audio callback        chunk_bytes=6400 count=97 ts_ms=1771366098586
+2026-02-18 09:08:18 [debug    ] VAD about to process           vad_chunk=97
+2026-02-18 09:08:18 [debug    ] VAD processed                  vad_chunk=97
+2026-02-18 09:08:18 [debug    ] Invoking audio callback        chunk_bytes=6400 count=98 ts_ms=1771366098697
+2026-02-18 09:08:18 [debug    ] VAD about to process           vad_chunk=98
+2026-02-18 09:08:18 [debug    ] VAD processed                  vad_chunk=98
+2026-02-18 09:08:18 [debug    ] Invoking audio callback        chunk_bytes=6400 count=99 ts_ms=1771366098790
+2026-02-18 09:08:18 [debug    ] VAD about to process           vad_chunk=99
+2026-02-18 09:08:18 [debug    ] VAD processed                  vad_chunk=99
+2026-02-18 09:08:18 [info     ] Audio chunk captured           chunk_num=100 max_amplitude=0.1888 rms_level=0.0637 samples=1600
+2026-02-18 09:08:18 [info     ] Audio consumer forwarding chunk count=100 has_callback=True
+2026-02-18 09:08:18 [debug    ] Invoking audio callback        chunk_bytes=6400 count=100 ts_ms=1771366098900
+2026-02-18 09:08:18 [info     ] Audio callback completed       count=100
+2026-02-18 09:08:18 [info     ] VAD processing chunk           queue_size=0 vad_chunk=100
+2026-02-18 09:08:18 [debug    ] VAD about to process           vad_chunk=100
+2026-02-18 09:08:18 [info     ] VAD chunk processed            audio_len=1600 audio_level=0.0637 is_speech=True speech_prob=0.994 threshold=0.08
+2026-02-18 09:08:18 [debug    ] VAD processed                  vad_chunk=100
+2026-02-18 09:08:18 [info     ] VAD status                     audio_level=0.0637 confidence=0.994 is_speech=True state=PROCESSING vad_chunks=100
+2026-02-18 09:08:18 [info     ] VAD PROCESSING                 buffer_sec=10.0 chunks=100 is_speech=True
+2026-02-18 09:08:19 [debug    ] Invoking audio callback        chunk_bytes=6400 count=101 ts_ms=1771366098992
+2026-02-18 09:08:19 [info     ] Pipeline process_chunk         chunks_so_far=100 queue_size=0 state=PROCESSING
+2026-02-18 09:08:19 [debug    ] VAD about to process           vad_chunk=101
+2026-02-18 09:08:19 [debug    ] VAD processed                  vad_chunk=101
+2026-02-18 09:08:19 [info     ] Sent speech to STT             duration_sec=10.1 reason='max buffer' samples=161600
+2026-02-18 09:08:19 [info     ] STT processing chunk           duration_sec=10.1 samples=161600 use_dubbing=False
+2026-02-18 09:08:19 [debug    ] Invoking audio callback        chunk_bytes=6400 count=102 ts_ms=1771366099087
+2026-02-18 09:08:19 [debug    ] Invoking audio callback        chunk_bytes=6400 count=103 ts_ms=1771366099197
+2026-02-18 09:08:19 [debug    ] VAD about to process           vad_chunk=102
+2026-02-18 09:08:19 [debug    ] VAD processed                  vad_chunk=102
+2026-02-18 09:08:19 [debug    ] VAD about to process           vad_chunk=103
+2026-02-18 09:08:19 [debug    ] VAD processed                  vad_chunk=103
+2026-02-18 09:08:19 [debug    ] Invoking audio callback        chunk_bytes=6400 count=104 ts_ms=1771366099291
+2026-02-18 09:08:19 [debug    ] VAD about to process           vad_chunk=104
+2026-02-18 09:08:19 [debug    ] VAD processed                  vad_chunk=104
+2026-02-18 09:08:19 [debug    ] Invoking audio callback        chunk_bytes=6400 count=105 ts_ms=1771366099400
+2026-02-18 09:08:19 [debug    ] VAD about to process           vad_chunk=105
+2026-02-18 09:08:19 [debug    ] VAD processed                  vad_chunk=105
+2026-02-18 09:08:19 [debug    ] Invoking audio callback        chunk_bytes=6400 count=106 ts_ms=1771366099493
+2026-02-18 09:08:19 [debug    ] VAD about to process           vad_chunk=106
+2026-02-18 09:08:19 [debug    ] VAD processed                  vad_chunk=106
+2026-02-18 09:08:19 [debug    ] Invoking audio callback        chunk_bytes=6400 count=107 ts_ms=1771366099587
+2026-02-18 09:08:19 [debug    ] VAD about to process           vad_chunk=107
+2026-02-18 09:08:19 [debug    ] VAD processed                  vad_chunk=107
+2026-02-18 09:08:19 [debug    ] Invoking audio callback        chunk_bytes=6400 count=108 ts_ms=1771366099697
+2026-02-18 09:08:19 [debug    ] VAD about to process           vad_chunk=108
+2026-02-18 09:08:19 [debug    ] VAD processed                  vad_chunk=108
+2026-02-18 09:08:19 [debug    ] Invoking audio callback        chunk_bytes=6400 count=109 ts_ms=1771366099792
+2026-02-18 09:08:19 [debug    ] VAD about to process           vad_chunk=109
+2026-02-18 09:08:19 [debug    ] VAD processed                  vad_chunk=109
+2026-02-18 09:08:19 [debug    ] Invoking audio callback        chunk_bytes=6400 count=110 ts_ms=1771366099901
+2026-02-18 09:08:19 [debug    ] VAD about to process           vad_chunk=110
+2026-02-18 09:08:19 [debug    ] VAD processed                  vad_chunk=110
+2026-02-18 09:08:20 [debug    ] Invoking audio callback        chunk_bytes=6400 count=111 ts_ms=1771366099995
+2026-02-18 09:08:20 [debug    ] VAD about to process           vad_chunk=111
+2026-02-18 09:08:20 [debug    ] VAD processed                  vad_chunk=111
+2026-02-18 09:08:20 [debug    ] Invoking audio callback        chunk_bytes=6400 count=112 ts_ms=1771366100089
+2026-02-18 09:08:20 [debug    ] VAD about to process           vad_chunk=112
+2026-02-18 09:08:20 [debug    ] VAD processed                  vad_chunk=112
+2026-02-18 09:08:20 [debug    ] Invoking audio callback        chunk_bytes=6400 count=113 ts_ms=1771366100198
+2026-02-18 09:08:20 [debug    ] VAD about to process           vad_chunk=113
+2026-02-18 09:08:20 [debug    ] VAD processed                  vad_chunk=113
+2026-02-18 09:08:20 [debug    ] Invoking audio callback        chunk_bytes=6400 count=114 ts_ms=1771366100293
+2026-02-18 09:08:20 [debug    ] VAD about to process           vad_chunk=114
+2026-02-18 09:08:20 [debug    ] VAD processed                  vad_chunk=114
+2026-02-18 09:08:20 [debug    ] Invoking audio callback        chunk_bytes=6400 count=115 ts_ms=1771366100387
+2026-02-18 09:08:20 [debug    ] VAD about to process           vad_chunk=115
+2026-02-18 09:08:20 [debug    ] VAD processed                  vad_chunk=115
+2026-02-18 09:08:20 [debug    ] Invoking audio callback        chunk_bytes=6400 count=116 ts_ms=1771366100497
+2026-02-18 09:08:20 [debug    ] VAD about to process           vad_chunk=116
+2026-02-18 09:08:20 [debug    ] VAD processed                  vad_chunk=116
+2026-02-18 09:08:20 [debug    ] Invoking audio callback        chunk_bytes=6400 count=117 ts_ms=1771366100590
+2026-02-18 09:08:20 [debug    ] VAD about to process           vad_chunk=117
+2026-02-18 09:08:20 [debug    ] VAD processed                  vad_chunk=117
+2026-02-18 09:08:20 [debug    ] Invoking audio callback        chunk_bytes=6400 count=118 ts_ms=1771366100700
+2026-02-18 09:08:20 [debug    ] VAD about to process           vad_chunk=118
+2026-02-18 09:08:20 [debug    ] VAD processed                  vad_chunk=118
+2026-02-18 09:08:20 [debug    ] Invoking audio callback        chunk_bytes=6400 count=119 ts_ms=1771366100795
+2026-02-18 09:08:20 [debug    ] VAD about to process           vad_chunk=119
+2026-02-18 09:08:20 [debug    ] VAD processed                  vad_chunk=119
+2026-02-18 09:08:20 [info     ] Transcription completed        text_len=176
+2026-02-18 09:08:20 [debug    ] Transcription received         text="That's true. And I got the audio. I'm part- partia"
+2026-02-18 09:08:20 [info     ] Translating for TTS            len=176 source=eng target=es
+2026-02-18 09:08:21 [debug    ] OPENAI_API_KEY not set, skipping OpenAI translation
+2026-02-18 09:08:21 [debug    ] Invoking audio callback        chunk_bytes=6400 count=120 ts_ms=1771366100889
+2026-02-18 09:08:21 [debug    ] Invoking audio callback        chunk_bytes=6400 count=121 ts_ms=1771366101002
+2026-02-18 09:08:21 [debug    ] Invoking audio callback        chunk_bytes=6400 count=122 ts_ms=1771366101135
+2026-02-18 09:08:21 [debug    ] Invoking audio callback        chunk_bytes=6400 count=123 ts_ms=1771366101173
+2026-02-18 09:08:21 [debug    ] Invoking audio callback        chunk_bytes=6400 count=124 ts_ms=1771366101300
+2026-02-18 09:08:21 [debug    ] VAD about to process           vad_chunk=120
+2026-02-18 09:08:21 [debug    ] VAD processed                  vad_chunk=120
+2026-02-18 09:08:21 [debug    ] VAD about to process           vad_chunk=121
+2026-02-18 09:08:21 [debug    ] VAD processed                  vad_chunk=121
+2026-02-18 09:08:21 [debug    ] VAD about to process           vad_chunk=122
+2026-02-18 09:08:21 [debug    ] VAD processed                  vad_chunk=122
+2026-02-18 09:08:21 [debug    ] VAD about to process           vad_chunk=123
+2026-02-18 09:08:21 [debug    ] VAD processed                  vad_chunk=123
+2026-02-18 09:08:21 [debug    ] VAD about to process           vad_chunk=124
+2026-02-18 09:08:21 [debug    ] VAD processed                  vad_chunk=124
+2026-02-18 09:08:21 [debug    ] Invoking audio callback        chunk_bytes=6400 count=125 ts_ms=1771366101395
+2026-02-18 09:08:21 [debug    ] VAD about to process           vad_chunk=125
+2026-02-18 09:08:21 [debug    ] VAD processed                  vad_chunk=125
+2026-02-18 09:08:21 [debug    ] Invoking audio callback        chunk_bytes=6400 count=126 ts_ms=1771366101489
+2026-02-18 09:08:21 [debug    ] VAD about to process           vad_chunk=126
+2026-02-18 09:08:21 [debug    ] VAD processed                  vad_chunk=126
+2026-02-18 09:08:21 [debug    ] Invoking audio callback        chunk_bytes=6400 count=127 ts_ms=1771366101599
+2026-02-18 09:08:21 [debug    ] VAD about to process           vad_chunk=127
+2026-02-18 09:08:21 [debug    ] VAD processed                  vad_chunk=127
+2026-02-18 09:08:21 [debug    ] Invoking audio callback        chunk_bytes=6400 count=128 ts_ms=1771366101692
+2026-02-18 09:08:21 [debug    ] VAD about to process           vad_chunk=128
+2026-02-18 09:08:21 [debug    ] VAD processed                  vad_chunk=128
+2026-02-18 09:08:21 [debug    ] Invoking audio callback        chunk_bytes=6400 count=129 ts_ms=1771366101787
+2026-02-18 09:08:21 [debug    ] VAD about to process           vad_chunk=129
+2026-02-18 09:08:21 [debug    ] VAD processed                  vad_chunk=129
+2026-02-18 09:08:21 [debug    ] Invoking audio callback        chunk_bytes=6400 count=130 ts_ms=1771366101897
+2026-02-18 09:08:21 [debug    ] VAD about to process           vad_chunk=130
+2026-02-18 09:08:21 [debug    ] VAD processed                  vad_chunk=130
+2026-02-18 09:08:22 [debug    ] Invoking audio callback        chunk_bytes=6400 count=131 ts_ms=1771366101991
+2026-02-18 09:08:22 [debug    ] VAD about to process           vad_chunk=131
+2026-02-18 09:08:22 [debug    ] VAD processed                  vad_chunk=131
+2026-02-18 09:08:22 [debug    ] Invoking audio callback        chunk_bytes=6400 count=132 ts_ms=1771366102102
+2026-02-18 09:08:22 [debug    ] VAD about to process           vad_chunk=132
+2026-02-18 09:08:22 [debug    ] VAD processed                  vad_chunk=132
+2026-02-18 09:08:22 [debug    ] Invoking audio callback        chunk_bytes=6400 count=133 ts_ms=1771366102180
+2026-02-18 09:08:22 [debug    ] VAD about to process           vad_chunk=133
+2026-02-18 09:08:22 [debug    ] VAD processed                  vad_chunk=133
+2026-02-18 09:08:22 [debug    ] Invoking audio callback        chunk_bytes=6400 count=134 ts_ms=1771366102306
+2026-02-18 09:08:22 [debug    ] VAD about to process           vad_chunk=134
+2026-02-18 09:08:22 [debug    ] VAD processed                  vad_chunk=134
+2026-02-18 09:08:22 [debug    ] Invoking audio callback        chunk_bytes=6400 count=135 ts_ms=1771366102385
+2026-02-18 09:08:22 [debug    ] VAD about to process           vad_chunk=135
+2026-02-18 09:08:22 [debug    ] VAD processed                  vad_chunk=135
+2026-02-18 09:08:22 [debug    ] Invoking audio callback        chunk_bytes=6400 count=136 ts_ms=1771366102494
+2026-02-18 09:08:22 [debug    ] VAD about to process           vad_chunk=136
+2026-02-18 09:08:22 [debug    ] VAD processed                  vad_chunk=136
+2026-02-18 09:08:22 [debug    ] Invoking audio callback        chunk_bytes=6400 count=137 ts_ms=1771366102587
+2026-02-18 09:08:22 [debug    ] VAD about to process           vad_chunk=137
+2026-02-18 09:08:22 [debug    ] VAD processed                  vad_chunk=137
+2026-02-18 09:08:22 [debug    ] Invoking audio callback        chunk_bytes=6400 count=138 ts_ms=1771366102698
+2026-02-18 09:08:22 [debug    ] VAD about to process           vad_chunk=138
+2026-02-18 09:08:22 [debug    ] VAD processed                  vad_chunk=138
+2026-02-18 09:08:22 [debug    ] Invoking audio callback        chunk_bytes=6400 count=139 ts_ms=1771366102792
+2026-02-18 09:08:22 [debug    ] VAD about to process           vad_chunk=139
+2026-02-18 09:08:22 [debug    ] VAD processed                  vad_chunk=139
+2026-02-18 09:08:22 [debug    ] Invoking audio callback        chunk_bytes=6400 count=140 ts_ms=1771366102901
+2026-02-18 09:08:22 [debug    ] VAD about to process           vad_chunk=140
+2026-02-18 09:08:22 [debug    ] VAD processed                  vad_chunk=140
+2026-02-18 09:08:23 [debug    ] Invoking audio callback        chunk_bytes=6400 count=141 ts_ms=1771366102995
+2026-02-18 09:08:23 [debug    ] VAD about to process           vad_chunk=141
+2026-02-18 09:08:23 [debug    ] VAD processed                  vad_chunk=141
+2026-02-18 09:08:23 [debug    ] Invoking audio callback        chunk_bytes=6400 count=142 ts_ms=1771366103089
+2026-02-18 09:08:23 [debug    ] VAD about to process           vad_chunk=142
+2026-02-18 09:08:23 [debug    ] VAD processed                  vad_chunk=142
+2026-02-18 09:08:23 [debug    ] Invoking audio callback        chunk_bytes=6400 count=143 ts_ms=1771366103199
+2026-02-18 09:08:23 [debug    ] VAD about to process           vad_chunk=143
+2026-02-18 09:08:23 [debug    ] VAD processed                  vad_chunk=143
+2026-02-18 09:08:23 [debug    ] Invoking audio callback        chunk_bytes=6400 count=144 ts_ms=1771366103291
+2026-02-18 09:08:23 [debug    ] VAD about to process           vad_chunk=144
+2026-02-18 09:08:23 [debug    ] VAD processed                  vad_chunk=144
+2026-02-18 09:08:23 [debug    ] Invoking audio callback        chunk_bytes=6400 count=145 ts_ms=1771366103401
+2026-02-18 09:08:23 [debug    ] VAD about to process           vad_chunk=145
+2026-02-18 09:08:23 [debug    ] VAD processed                  vad_chunk=145
+2026-02-18 09:08:23 [debug    ] Invoking audio callback        chunk_bytes=6400 count=146 ts_ms=1771366103454
+2026-02-18 09:08:23 [debug    ] VAD about to process           vad_chunk=146
+2026-02-18 09:08:23 [debug    ] VAD processed                  vad_chunk=146
+2026-02-18 09:08:23 [debug    ] Invoking audio callback        chunk_bytes=6400 count=147 ts_ms=1771366103552
+2026-02-18 09:08:23 [debug    ] VAD about to process           vad_chunk=147
+2026-02-18 09:08:23 [debug    ] VAD processed                  vad_chunk=147
+2026-02-18 09:08:23 [debug    ] Invoking audio callback        chunk_bytes=6400 count=148 ts_ms=1771366103653
+2026-02-18 09:08:23 [debug    ] VAD about to process           vad_chunk=148
+2026-02-18 09:08:23 [debug    ] VAD processed                  vad_chunk=148
+2026-02-18 09:08:23 [debug    ] Invoking audio callback        chunk_bytes=6400 count=149 ts_ms=1771366103810
+2026-02-18 09:08:23 [debug    ] VAD about to process           vad_chunk=149
+2026-02-18 09:08:23 [debug    ] VAD processed                  vad_chunk=149
+2026-02-18 09:08:23 [debug    ] Invoking audio callback        chunk_bytes=6400 count=150 ts_ms=1771366103889
+2026-02-18 09:08:23 [info     ] VAD processing chunk           queue_size=0 vad_chunk=150
+2026-02-18 09:08:23 [debug    ] VAD about to process           vad_chunk=150
+2026-02-18 09:08:23 [debug    ] VAD processed                  vad_chunk=150
+2026-02-18 09:08:23 [info     ] VAD status                     audio_level=0.0279 confidence=1.000 is_speech=True state=PROCESSING vad_chunks=150
+2026-02-18 09:08:24 [debug    ] Invoking audio callback        chunk_bytes=6400 count=151 ts_ms=1771366103999
+2026-02-18 09:08:24 [debug    ] VAD about to process           vad_chunk=151
+2026-02-18 09:08:24 [debug    ] VAD processed                  vad_chunk=151
+2026-02-18 09:08:24 [debug    ] Invoking audio callback        chunk_bytes=6400 count=152 ts_ms=1771366104094
+2026-02-18 09:08:24 [debug    ] VAD about to process           vad_chunk=152
+2026-02-18 09:08:24 [debug    ] VAD processed                  vad_chunk=152
+2026-02-18 09:08:24 [debug    ] Invoking audio callback        chunk_bytes=6400 count=153 ts_ms=1771366104188
+2026-02-18 09:08:24 [debug    ] VAD about to process           vad_chunk=153
+2026-02-18 09:08:24 [debug    ] VAD processed                  vad_chunk=153
+2026-02-18 09:08:24 [debug    ] Invoking audio callback        chunk_bytes=6400 count=154 ts_ms=1771366104298
+2026-02-18 09:08:24 [debug    ] VAD about to process           vad_chunk=154
+2026-02-18 09:08:24 [debug    ] VAD processed                  vad_chunk=154
+2026-02-18 09:08:24 [debug    ] Invoking audio callback        chunk_bytes=6400 count=155 ts_ms=1771366104392
+2026-02-18 09:08:24 [debug    ] VAD about to process           vad_chunk=155
+2026-02-18 09:08:24 [debug    ] VAD processed                  vad_chunk=155
+2026-02-18 09:08:24 [debug    ] Invoking audio callback        chunk_bytes=6400 count=156 ts_ms=1771366104487
+2026-02-18 09:08:24 [debug    ] VAD about to process           vad_chunk=156
+2026-02-18 09:08:24 [debug    ] VAD processed                  vad_chunk=156
+2026-02-18 09:08:24 [debug    ] Invoking audio callback        chunk_bytes=6400 count=157 ts_ms=1771366104597
+2026-02-18 09:08:24 [debug    ] VAD about to process           vad_chunk=157
+2026-02-18 09:08:24 [debug    ] VAD processed                  vad_chunk=157
+2026-02-18 09:08:24 [debug    ] Invoking audio callback        chunk_bytes=6400 count=158 ts_ms=1771366104693
+2026-02-18 09:08:24 [debug    ] VAD about to process           vad_chunk=158
+2026-02-18 09:08:24 [debug    ] VAD processed                  vad_chunk=158
+2026-02-18 09:08:24 [debug    ] Invoking audio callback        chunk_bytes=6400 count=159 ts_ms=1771366104786
+2026-02-18 09:08:24 [debug    ] VAD about to process           vad_chunk=159
+2026-02-18 09:08:24 [debug    ] VAD processed                  vad_chunk=159
+2026-02-18 09:08:24 [debug    ] Invoking audio callback        chunk_bytes=6400 count=160 ts_ms=1771366104894
+2026-02-18 09:08:24 [debug    ] VAD about to process           vad_chunk=160
+2026-02-18 09:08:24 [debug    ] VAD processed                  vad_chunk=160
+2026-02-18 09:08:25 [debug    ] Invoking audio callback        chunk_bytes=6400 count=161 ts_ms=1771366104988
+2026-02-18 09:08:25 [debug    ] VAD about to process           vad_chunk=161
+2026-02-18 09:08:25 [debug    ] VAD processed                  vad_chunk=161
+2026-02-18 09:08:25 [debug    ] Invoking audio callback        chunk_bytes=6400 count=162 ts_ms=1771366105098
+2026-02-18 09:08:25 [debug    ] VAD about to process           vad_chunk=162
+2026-02-18 09:08:25 [debug    ] VAD processed                  vad_chunk=162
+2026-02-18 09:08:25 [debug    ] Invoking audio callback        chunk_bytes=6400 count=163 ts_ms=1771366105193
+2026-02-18 09:08:25 [debug    ] VAD about to process           vad_chunk=163
+2026-02-18 09:08:25 [debug    ] VAD processed                  vad_chunk=163
+2026-02-18 09:08:25 [debug    ] Invoking audio callback        chunk_bytes=6400 count=164 ts_ms=1771366105287
+2026-02-18 09:08:25 [debug    ] VAD about to process           vad_chunk=164
+2026-02-18 09:08:25 [debug    ] VAD processed                  vad_chunk=164
+2026-02-18 09:08:25 [debug    ] Invoking audio callback        chunk_bytes=6400 count=165 ts_ms=1771366105397
+2026-02-18 09:08:25 [debug    ] VAD about to process           vad_chunk=165
+2026-02-18 09:08:25 [debug    ] VAD processed                  vad_chunk=165
+2026-02-18 09:08:25 [debug    ] Invoking audio callback        chunk_bytes=6400 count=166 ts_ms=1771366105492
+2026-02-18 09:08:25 [debug    ] VAD about to process           vad_chunk=166
+2026-02-18 09:08:25 [debug    ] VAD processed                  vad_chunk=166
+2026-02-18 09:08:25 [debug    ] Invoking audio callback        chunk_bytes=6400 count=167 ts_ms=1771366105587
+2026-02-18 09:08:25 [debug    ] VAD about to process           vad_chunk=167
+2026-02-18 09:08:25 [debug    ] VAD processed                  vad_chunk=167
+2026-02-18 09:08:25 [debug    ] Invoking audio callback        chunk_bytes=6400 count=168 ts_ms=1771366105695
+2026-02-18 09:08:25 [debug    ] VAD about to process           vad_chunk=168
+2026-02-18 09:08:25 [debug    ] VAD processed                  vad_chunk=168
+2026-02-18 09:08:25 [debug    ] Invoking audio callback        chunk_bytes=6400 count=169 ts_ms=1771366105790
+2026-02-18 09:08:25 [debug    ] VAD about to process           vad_chunk=169
+2026-02-18 09:08:25 [debug    ] VAD processed                  vad_chunk=169
+2026-02-18 09:08:25 [debug    ] Invoking audio callback        chunk_bytes=6400 count=170 ts_ms=1771366105902
+2026-02-18 09:08:25 [debug    ] VAD about to process           vad_chunk=170
+2026-02-18 09:08:25 [debug    ] VAD processed                  vad_chunk=170
+2026-02-18 09:08:25 [debug    ] Invoking audio callback        chunk_bytes=6400 count=171 ts_ms=1771366105980
+2026-02-18 09:08:25 [debug    ] VAD about to process           vad_chunk=171
+2026-02-18 09:08:25 [debug    ] VAD processed                  vad_chunk=171
+2026-02-18 09:08:26 [debug    ] Invoking audio callback        chunk_bytes=6400 count=172 ts_ms=1771366106106
+2026-02-18 09:08:26 [debug    ] VAD about to process           vad_chunk=172
+2026-02-18 09:08:26 [debug    ] VAD processed                  vad_chunk=172
+2026-02-18 09:08:26 [info     ] Translation completed (Google) original_len=176 target_lang=es translated_len=178
+2026-02-18 09:08:26 [info     ] Queued for TTS                 text_len=178
+2026-02-18 09:08:28 [info     ] Audio chunk captured           chunk_num=200 max_amplitude=0.0267 rms_level=0.0079 samples=1600
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=173 ts_ms=1771366106183
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=174 ts_ms=1771366106292
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=175 ts_ms=1771366106386
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=176 ts_ms=1771366106495
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=177 ts_ms=1771366106590
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=178 ts_ms=1771366106701
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=179 ts_ms=1771366106795
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=180 ts_ms=1771366106890
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=181 ts_ms=1771366107000
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=182 ts_ms=1771366107095
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=183 ts_ms=1771366107188
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=184 ts_ms=1771366107298
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=185 ts_ms=1771366107394
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=186 ts_ms=1771366107488
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=187 ts_ms=1771366107598
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=188 ts_ms=1771366107691
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=189 ts_ms=1771366107803
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=190 ts_ms=1771366107881
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=191 ts_ms=1771366108007
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=192 ts_ms=1771366108087
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=193 ts_ms=1771366108197
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=194 ts_ms=1771366108290
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=195 ts_ms=1771366108401
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=196 ts_ms=1771366108495
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=197 ts_ms=1771366108589
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=198 ts_ms=1771366108699
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=199 ts_ms=1771366108794
+2026-02-18 09:08:29 [info     ] Audio consumer forwarding chunk count=200 has_callback=True
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=200 ts_ms=1771366108889
+2026-02-18 09:08:29 [info     ] Audio callback completed       count=200
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=201 ts_ms=1771366108999
+2026-02-18 09:08:29 [info     ] Pipeline process_chunk         chunks_so_far=200 queue_size=28 state=PROCESSING
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=202 ts_ms=1771366109094
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=203 ts_ms=1771366109188
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=204 ts_ms=1771366109299
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=205 ts_ms=1771366109394
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=206 ts_ms=1771366109488
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=207 ts_ms=1771366109598
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=208 ts_ms=1771366109692
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=209 ts_ms=1771366109787
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=173
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=173
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=174
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=174
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=175
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=175
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=176
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=176
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=177
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=177
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=178
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=178
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=179
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=179
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=180
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=180
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=181
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=181
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=182
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=182
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=183
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=183
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=184
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=184
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=185
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=185
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=186
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=186
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=187
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=187
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=188
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=188
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=189
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=189
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=190
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=190
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=191
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=191
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=192
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=192
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=193
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=193
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=194
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=194
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=195
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=195
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=196
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=196
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=197
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=197
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=198
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=198
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=199
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=199
+2026-02-18 09:08:29 [info     ] VAD processing chunk           queue_size=9 vad_chunk=200
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=200
+2026-02-18 09:08:29 [info     ] VAD chunk processed            audio_len=1600 audio_level=0.0079 is_speech=True speech_prob=0.999 threshold=0.08
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=200
+2026-02-18 09:08:29 [info     ] VAD status                     audio_level=0.0079 confidence=0.999 is_speech=True state=PROCESSING vad_chunks=200
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=201
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=201
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=202
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=202
+2026-02-18 09:08:29 [info     ] Sent speech to STT             duration_sec=10.1 reason='max buffer' samples=161600
+2026-02-18 09:08:29 [info     ] STT processing chunk           duration_sec=10.1 samples=161600 use_dubbing=False
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=203
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=203
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=204
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=204
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=205
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=205
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=206
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=206
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=207
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=207
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=208
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=208
+2026-02-18 09:08:29 [debug    ] VAD about to process           vad_chunk=209
+2026-02-18 09:08:29 [debug    ] VAD processed                  vad_chunk=209
+2026-02-18 09:08:29 [debug    ] Invoking audio callback        chunk_bytes=6400 count=210 ts_ms=1771366109898
+2026-02-18 09:08:30 [debug    ] Invoking audio callback        chunk_bytes=6400 count=211 ts_ms=1771366109992
+2026-02-18 09:08:30 [debug    ] Invoking audio callback        chunk_bytes=6400 count=212 ts_ms=1771366110086
+2026-02-18 09:08:30 [debug    ] Invoking audio callback        chunk_bytes=6400 count=213 ts_ms=1771366110195
+2026-02-18 09:08:30 [debug    ] Invoking audio callback        chunk_bytes=6400 count=214 ts_ms=1771366110289
+2026-02-18 09:08:30 [debug    ] Invoking audio callback        chunk_bytes=6400 count=215 ts_ms=1771366110400
+2026-02-18 09:08:30 [debug    ] Invoking audio callback        chunk_bytes=6400 count=216 ts_ms=1771366110494
+2026-02-18 09:08:30 [debug    ] Invoking audio callback        chunk_bytes=6400 count=217 ts_ms=1771366110588
+2026-02-18 09:08:30 [debug    ] Invoking audio callback        chunk_bytes=6400 count=218 ts_ms=1771366110698
+2026-02-18 09:08:30 [debug    ] Invoking audio callback        chunk_bytes=6400 count=219 ts_ms=1771366110792
+2026-02-18 09:08:30 [debug    ] Invoking audio callback        chunk_bytes=6400 count=220 ts_ms=1771366110887
+2026-02-18 09:08:31 [debug    ] Invoking audio callback        chunk_bytes=6400 count=221 ts_ms=1771366110997
+2026-02-18 09:08:31 [debug    ] Invoking audio callback        chunk_bytes=6400 count=222 ts_ms=1771366111092
+2026-02-18 09:08:31 [debug    ] Invoking audio callback        chunk_bytes=6400 count=223 ts_ms=1771366111187
+2026-02-18 09:08:31 [debug    ] Invoking audio callback        chunk_bytes=6400 count=224 ts_ms=1771366111298
+2026-02-18 09:08:31 [debug    ] Invoking audio callback        chunk_bytes=6400 count=225 ts_ms=1771366111392
+2026-02-18 09:08:31 [debug    ] Invoking audio callback        chunk_bytes=6400 count=226 ts_ms=1771366111487
+2026-02-18 09:08:31 [debug    ] Invoking audio callback        chunk_bytes=6400 count=227 ts_ms=1771366111597
+2026-02-18 09:08:31 [debug    ] Invoking audio callback        chunk_bytes=6400 count=228 ts_ms=1771366111691
+2026-02-18 09:08:31 [debug    ] Invoking audio callback        chunk_bytes=6400 count=229 ts_ms=1771366111802
+2026-02-18 09:08:31 [debug    ] Invoking audio callback        chunk_bytes=6400 count=230 ts_ms=1771366111880
+2026-02-18 09:08:32 [debug    ] Invoking audio callback        chunk_bytes=6400 count=231 ts_ms=1771366112005
+2026-02-18 09:08:32 [debug    ] Invoking audio callback        chunk_bytes=6400 count=232 ts_ms=1771366112085
+2026-02-18 09:08:32 [info     ] Transcription completed        text_len=222
+2026-02-18 09:08:32 [debug    ] Transcription received         text="doing chores. Yep. They're doing work. They're mul"
+2026-02-18 09:08:32 [info     ] Translating for TTS            len=222 source=eng target=es
+2026-02-18 09:08:32 [debug    ] OPENAI_API_KEY not set, skipping OpenAI translation
+2026-02-18 09:08:32 [debug    ] Invoking audio callback        chunk_bytes=6400 count=233 ts_ms=1771366112194
+2026-02-18 09:08:32 [debug    ] Invoking audio callback        chunk_bytes=6400 count=234 ts_ms=1771366112288
+2026-02-18 09:08:32 [debug    ] Invoking audio callback        chunk_bytes=6400 count=235 ts_ms=1771366112398
+2026-02-18 09:08:32 [debug    ] Invoking audio callback        chunk_bytes=6400 count=236 ts_ms=1771366112491
+2026-02-18 09:08:32 [debug    ] Invoking audio callback        chunk_bytes=6400 count=237 ts_ms=1771366112603
+2026-02-18 09:08:32 [debug    ] Invoking audio callback        chunk_bytes=6400 count=238 ts_ms=1771366112681
+2026-02-18 09:08:32 [debug    ] Invoking audio callback        chunk_bytes=6400 count=239 ts_ms=1771366112807
+2026-02-18 09:08:32 [debug    ] Invoking audio callback        chunk_bytes=6400 count=240 ts_ms=1771366112887
+2026-02-18 09:08:33 [debug    ] Invoking audio callback        chunk_bytes=6400 count=241 ts_ms=1771366112997
+2026-02-18 09:08:33 [debug    ] Invoking audio callback        chunk_bytes=6400 count=242 ts_ms=1771366113091
+2026-02-18 09:08:33 [debug    ] Invoking audio callback        chunk_bytes=6400 count=243 ts_ms=1771366113202
+2026-02-18 09:08:33 [debug    ] Invoking audio callback        chunk_bytes=6400 count=244 ts_ms=1771366113281
+2026-02-18 09:08:33 [debug    ] Invoking audio callback        chunk_bytes=6400 count=245 ts_ms=1771366113407
+2026-02-18 09:08:33 [debug    ] Invoking audio callback        chunk_bytes=6400 count=246 ts_ms=1771366113486
+2026-02-18 09:08:33 [debug    ] Invoking audio callback        chunk_bytes=6400 count=247 ts_ms=1771366113596
+2026-02-18 09:08:33 [debug    ] Invoking audio callback        chunk_bytes=6400 count=248 ts_ms=1771366113691
+2026-02-18 09:08:33 [debug    ] Invoking audio callback        chunk_bytes=6400 count=249 ts_ms=1771366113802
+2026-02-18 09:08:33 [debug    ] Invoking audio callback        chunk_bytes=6400 count=250 ts_ms=1771366113882
+2026-02-18 09:08:34 [debug    ] Invoking audio callback        chunk_bytes=6400 count=251 ts_ms=1771366113992
+2026-02-18 09:08:34 [debug    ] Invoking audio callback        chunk_bytes=6400 count=252 ts_ms=1771366114086
+2026-02-18 09:08:34 [debug    ] Invoking audio callback        chunk_bytes=6400 count=253 ts_ms=1771366114197
+2026-02-18 09:08:34 [debug    ] Invoking audio callback        chunk_bytes=6400 count=254 ts_ms=1771366114292
+2026-02-18 09:08:34 [debug    ] Invoking audio callback        chunk_bytes=6400 count=255 ts_ms=1771366114387
+2026-02-18 09:08:34 [debug    ] Invoking audio callback        chunk_bytes=6400 count=256 ts_ms=1771366114498
+2026-02-18 09:08:34 [debug    ] Invoking audio callback        chunk_bytes=6400 count=257 ts_ms=1771366114593
+2026-02-18 09:08:34 [info     ] Translation completed (Google) original_len=222 target_lang=es translated_len=229
+2026-02-18 09:08:34 [info     ] Queued for TTS                 text_len=229
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=258 ts_ms=1771366114687
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=259 ts_ms=1771366114798
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=260 ts_ms=1771366114892
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=261 ts_ms=1771366114988
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=262 ts_ms=1771366115099
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=263 ts_ms=1771366115194
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=264 ts_ms=1771366115288
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=265 ts_ms=1771366115397
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=266 ts_ms=1771366115489
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=267 ts_ms=1771366115598
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=268 ts_ms=1771366115691
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=269 ts_ms=1771366115787
+2026-02-18 09:08:35 [debug    ] Invoking audio callback        chunk_bytes=6400 count=270 ts_ms=1771366115898
+2026-02-18 09:08:36 [debug    ] Invoking audio callback        chunk_bytes=6400 count=271 ts_ms=1771366115992
+2026-02-18 09:08:36 [debug    ] Invoking audio callback        chunk_bytes=6400 count=272 ts_ms=1771366116087
+2026-02-18 09:08:36 [debug    ] Invoking audio callback        chunk_bytes=6400 count=273 ts_ms=1771366116198
+2026-02-18 09:08:36 [debug    ] Invoking audio callback        chunk_bytes=6400 count=274 ts_ms=1771366116291
+2026-02-18 09:08:36 [debug    ] Invoking audio callback        chunk_bytes=6400 count=275 ts_ms=1771366116400
+2026-02-18 09:08:36 [debug    ] Invoking audio callback        chunk_bytes=6400 count=276 ts_ms=1771366116493
+2026-02-18 09:08:36 [debug    ] Invoking audio callback        chunk_bytes=6400 count=277 ts_ms=1771366116588
+2026-02-18 09:08:36 [debug    ] Invoking audio callback        chunk_bytes=6400 count=278 ts_ms=1771366116697
+2026-02-18 09:08:36 [debug    ] Invoking audio callback        chunk_bytes=6400 count=279 ts_ms=1771366116790
+2026-02-18 09:08:36 [debug    ] Invoking audio callback        chunk_bytes=6400 count=280 ts_ms=1771366116899
+2026-02-18 09:08:37 [debug    ] Invoking audio callback        chunk_bytes=6400 count=281 ts_ms=1771366116994
+2026-02-18 09:08:37 [debug    ] Invoking audio callback        chunk_bytes=6400 count=282 ts_ms=1771366117088
+2026-02-18 09:08:37 [debug    ] Invoking audio callback        chunk_bytes=6400 count=283 ts_ms=1771366117198
+2026-02-18 09:08:37 [debug    ] Invoking audio callback        chunk_bytes=6400 count=284 ts_ms=1771366117291
+2026-02-18 09:08:37 [debug    ] Invoking audio callback        chunk_bytes=6400 count=285 ts_ms=1771366117386
+2026-02-18 09:08:37 [debug    ] Invoking audio callback        chunk_bytes=6400 count=286 ts_ms=1771366117497
+2026-02-18 09:08:37 [debug    ] Invoking audio callback        chunk_bytes=6400 count=287 ts_ms=1771366117590
+2026-02-18 09:08:37 [debug    ] Invoking audio callback        chunk_bytes=6400 count=288 ts_ms=1771366117699
+2026-02-18 09:08:37 [debug    ] Invoking audio callback        chunk_bytes=6400 count=289 ts_ms=1771366117793
+2026-02-18 09:08:37 [debug    ] Invoking audio callback        chunk_bytes=6400 count=290 ts_ms=1771366117888
+2026-02-18 09:08:38 [debug    ] Invoking audio callback        chunk_bytes=6400 count=291 ts_ms=1771366117998
+2026-02-18 09:08:38 [debug    ] Invoking audio callback        chunk_bytes=6400 count=292 ts_ms=1771366118092
+2026-02-18 09:08:38 [debug    ] Invoking audio callback        chunk_bytes=6400 count=293 ts_ms=1771366118187
+2026-02-18 09:08:38 [debug    ] Invoking audio callback        chunk_bytes=6400 count=294 ts_ms=1771366118298
+2026-02-18 09:08:38 [debug    ] Invoking audio callback        chunk_bytes=6400 count=295 ts_ms=1771366118393
+2026-02-18 09:08:38 [debug    ] Invoking audio callback        chunk_bytes=6400 count=296 ts_ms=1771366118487
+2026-02-18 09:08:38 [debug    ] Invoking audio callback        chunk_bytes=6400 count=297 ts_ms=1771366118597
+2026-02-18 09:08:38 [debug    ] Invoking audio callback        chunk_bytes=6400 count=298 ts_ms=1771366118691
+2026-02-18 09:08:38 [debug    ] Invoking audio callback        chunk_bytes=6400 count=299 ts_ms=1771366118802
+2026-02-18 09:08:38 [info     ] Audio chunk captured           chunk_num=300 max_amplitude=0.0771 rms_level=0.0240 samples=1600
+2026-02-18 09:08:38 [info     ] Audio consumer forwarding chunk count=300 has_callback=True
+2026-02-18 09:08:38 [debug    ] Invoking audio callback        chunk_bytes=6400 count=300 ts_ms=1771366118879
+2026-02-18 09:08:38 [info     ] Audio callback completed       count=300
+2026-02-18 09:08:39 [debug    ] Invoking audio callback        chunk_bytes=6400 count=301 ts_ms=1771366119003
+2026-02-18 09:08:39 [info     ] Pipeline process_chunk         chunks_so_far=300 queue_size=0 state=PROCESSING
+2026-02-18 09:08:39 [debug    ] Invoking audio callback        chunk_bytes=6400 count=302 ts_ms=1771366119082
+2026-02-18 09:08:39 [debug    ] Invoking audio callback        chunk_bytes=6400 count=303 ts_ms=1771366119193
+2026-02-18 09:08:39 [debug    ] Invoking audio callback        chunk_bytes=6400 count=304 ts_ms=1771366119286
+2026-02-18 09:08:39 [debug    ] Invoking audio callback        chunk_bytes=6400 count=305 ts_ms=1771366119397
+2026-02-18 09:08:39 [debug    ] Invoking audio callback        chunk_bytes=6400 count=306 ts_ms=1771366119492
+2026-02-18 09:08:39 [debug    ] Invoking audio callback        chunk_bytes=6400 count=307 ts_ms=1771366119584
+2026-02-18 09:08:39 [debug    ] Invoking audio callback        chunk_bytes=6400 count=308 ts_ms=1771366119693
+2026-02-18 09:08:39 [debug    ] Invoking audio callback        chunk_bytes=6400 count=309 ts_ms=1771366119788
+2026-02-18 09:08:39 [debug    ] Invoking audio callback        chunk_bytes=6400 count=310 ts_ms=1771366119898
+2026-02-18 09:08:40 [debug    ] Invoking audio callback        chunk_bytes=6400 count=311 ts_ms=1771366119993
+2026-02-18 09:08:40 [debug    ] Invoking audio callback        chunk_bytes=6400 count=312 ts_ms=1771366120087
+2026-02-18 09:08:40 [debug    ] Invoking audio callback        chunk_bytes=6400 count=313 ts_ms=1771366120197
+2026-02-18 09:08:40 [debug    ] Invoking audio callback        chunk_bytes=6400 count=314 ts_ms=1771366120292
+2026-02-18 09:08:40 [debug    ] Invoking audio callback        chunk_bytes=6400 count=315 ts_ms=1771366120387
+2026-02-18 09:08:40 [debug    ] Invoking audio callback        chunk_bytes=6400 count=316 ts_ms=1771366120498
+2026-02-18 09:08:40 [debug    ] Invoking audio callback        chunk_bytes=6400 count=317 ts_ms=1771366120592
+2026-02-18 09:08:40 [debug    ] Invoking audio callback        chunk_bytes=6400 count=318 ts_ms=1771366120685
+2026-02-18 09:08:40 [debug    ] Invoking audio callback        chunk_bytes=6400 count=319 ts_ms=1771366120795
+2026-02-18 09:08:40 [debug    ] Invoking audio callback        chunk_bytes=6400 count=320 ts_ms=1771366120890
+2026-02-18 09:08:41 [debug    ] Invoking audio callback        chunk_bytes=6400 count=321 ts_ms=1771366120999
+2026-02-18 09:08:41 [debug    ] Invoking audio callback        chunk_bytes=6400 count=322 ts_ms=1771366121093
+2026-02-18 09:08:41 [debug    ] Invoking audio callback        chunk_bytes=6400 count=323 ts_ms=1771366121188
+2026-02-18 09:08:41 [debug    ] Invoking audio callback        chunk_bytes=6400 count=324 ts_ms=1771366121297
+2026-02-18 09:08:41 [debug    ] Invoking audio callback        chunk_bytes=6400 count=325 ts_ms=1771366121390
+2026-02-18 09:08:41 [debug    ] Invoking audio callback        chunk_bytes=6400 count=326 ts_ms=1771366121499
+2026-02-18 09:08:41 [debug    ] Invoking audio callback        chunk_bytes=6400 count=327 ts_ms=1771366121594
+2026-02-18 09:08:41 [debug    ] Invoking audio callback        chunk_bytes=6400 count=328 ts_ms=1771366121688
+2026-02-18 09:08:41 [debug    ] Invoking audio callback        chunk_bytes=6400 count=329 ts_ms=1771366121798
+2026-02-18 09:08:41 [debug    ] Invoking audio callback        chunk_bytes=6400 count=330 ts_ms=1771366121892
+2026-02-18 09:08:42 [debug    ] Invoking audio callback        chunk_bytes=6400 count=331 ts_ms=1771366121987
+2026-02-18 09:08:42 [debug    ] Invoking audio callback        chunk_bytes=6400 count=332 ts_ms=1771366122096
+2026-02-18 09:08:42 [debug    ] Invoking audio callback        chunk_bytes=6400 count=333 ts_ms=1771366122189
+2026-02-18 09:08:42 [debug    ] Invoking audio callback        chunk_bytes=6400 count=334 ts_ms=1771366122297
+2026-02-18 09:08:42 [debug    ] Invoking audio callback        chunk_bytes=6400 count=335 ts_ms=1771366122393
+2026-02-18 09:08:42 [debug    ] Invoking audio callback        chunk_bytes=6400 count=336 ts_ms=1771366122487
+2026-02-18 09:08:42 [debug    ] Invoking audio callback        chunk_bytes=6400 count=337 ts_ms=1771366122598
+2026-02-18 09:08:42 [debug    ] Invoking audio callback        chunk_bytes=6400 count=338 ts_ms=1771366122692
+2026-02-18 09:08:42 [debug    ] Invoking audio callback        chunk_bytes=6400 count=339 ts_ms=1771366122786
+2026-02-18 09:08:42 [debug    ] Invoking audio callback        chunk_bytes=6400 count=340 ts_ms=1771366122898
+2026-02-18 09:08:43 [debug    ] Invoking audio callback        chunk_bytes=6400 count=341 ts_ms=1771366122989
+2026-02-18 09:08:43 [debug    ] Invoking audio callback        chunk_bytes=6400 count=342 ts_ms=1771366123096
+2026-02-18 09:08:43 [debug    ] Invoking audio callback        chunk_bytes=6400 count=343 ts_ms=1771366123190
+2026-02-18 09:08:43 [debug    ] Invoking audio callback        chunk_bytes=6400 count=344 ts_ms=1771366123301
+2026-02-18 09:08:43 [debug    ] Invoking audio callback        chunk_bytes=6400 count=345 ts_ms=1771366123396
+2026-02-18 09:08:43 [debug    ] Invoking audio callback        chunk_bytes=6400 count=346 ts_ms=1771366123491
+2026-02-18 09:08:43 [debug    ] Invoking audio callback        chunk_bytes=6400 count=347 ts_ms=1771366123585
+2026-02-18 09:08:43 [debug    ] Invoking audio callback        chunk_bytes=6400 count=348 ts_ms=1771366123697
+2026-02-18 09:08:43 [debug    ] Invoking audio callback        chunk_bytes=6400 count=349 ts_ms=1771366123791
+2026-02-18 09:08:43 [debug    ] Invoking audio callback        chunk_bytes=6400 count=350 ts_ms=1771366123885
+2026-02-18 09:08:44 [debug    ] Invoking audio callback        chunk_bytes=6400 count=351 ts_ms=1771366123996
+2026-02-18 09:08:44 [debug    ] Invoking audio callback        chunk_bytes=6400 count=352 ts_ms=1771366124091
+2026-02-18 09:08:44 [debug    ] Invoking audio callback        chunk_bytes=6400 count=353 ts_ms=1771366124200
+2026-02-18 09:08:44 [debug    ] Invoking audio callback        chunk_bytes=6400 count=354 ts_ms=1771366124294
+2026-02-18 09:08:44 [debug    ] Invoking audio callback        chunk_bytes=6400 count=355 ts_ms=1771366124389
+2026-02-18 09:08:44 [debug    ] Invoking audio callback        chunk_bytes=6400 count=356 ts_ms=1771366124500
+2026-02-18 09:08:44 [debug    ] Invoking audio callback        chunk_bytes=6400 count=357 ts_ms=1771366124594
+2026-02-18 09:08:44 [debug    ] Invoking audio callback        chunk_bytes=6400 count=358 ts_ms=1771366124689
+2026-02-18 09:08:44 [debug    ] Invoking audio callback        chunk_bytes=6400 count=359 ts_ms=1771366124798
+2026-02-18 09:08:44 [debug    ] Invoking audio callback        chunk_bytes=6400 count=360 ts_ms=1771366124893
+2026-02-18 09:08:45 [debug    ] Invoking audio callback        chunk_bytes=6400 count=361 ts_ms=1771366124987
+2026-02-18 09:08:45 [debug    ] Invoking audio callback        chunk_bytes=6400 count=362 ts_ms=1771366125097
+2026-02-18 09:08:45 [debug    ] Invoking audio callback        chunk_bytes=6400 count=363 ts_ms=1771366125192
+2026-02-18 09:08:45 [debug    ] Invoking audio callback        chunk_bytes=6400 count=364 ts_ms=1771366125286
+2026-02-18 09:08:45 [debug    ] Invoking audio callback        chunk_bytes=6400 count=365 ts_ms=1771366125397
+2026-02-18 09:08:45 [debug    ] Invoking audio callback        chunk_bytes=6400 count=366 ts_ms=1771366125492
+2026-02-18 09:08:45 [debug    ] Invoking audio callback        chunk_bytes=6400 count=367 ts_ms=1771366125586
+2026-02-18 09:08:45 [debug    ] Invoking audio callback        chunk_bytes=6400 count=368 ts_ms=1771366125697
+2026-02-18 09:08:45 [debug    ] Invoking audio callback        chunk_bytes=6400 count=369 ts_ms=1771366125792
+2026-02-18 09:08:45 [debug    ] Invoking audio callback        chunk_bytes=6400 count=370 ts_ms=1771366125887
+2026-02-18 09:08:46 [debug    ] Invoking audio callback        chunk_bytes=6400 count=371 ts_ms=1771366125997
+2026-02-18 09:08:46 [debug    ] Invoking audio callback        chunk_bytes=6400 count=372 ts_ms=1771366126093
+2026-02-18 09:08:46 [debug    ] Invoking audio callback        chunk_bytes=6400 count=373 ts_ms=1771366126188
+2026-02-18 09:08:46 [debug    ] Invoking audio callback        chunk_bytes=6400 count=374 ts_ms=1771366126298
+2026-02-18 09:08:46 [debug    ] Invoking audio callback        chunk_bytes=6400 count=375 ts_ms=1771366126391
+2026-02-18 09:08:46 [debug    ] Invoking audio callback        chunk_bytes=6400 count=376 ts_ms=1771366126486
+2026-02-18 09:08:46 [debug    ] Invoking audio callback        chunk_bytes=6400 count=377 ts_ms=1771366126595
+2026-02-18 09:08:46 [debug    ] Invoking audio callback        chunk_bytes=6400 count=378 ts_ms=1771366126690
+2026-02-18 09:08:46 [debug    ] Invoking audio callback        chunk_bytes=6400 count=379 ts_ms=1771366126799
+2026-02-18 09:08:46 [debug    ] Invoking audio callback        chunk_bytes=6400 count=380 ts_ms=1771366126894
+2026-02-18 09:08:47 [debug    ] Invoking audio callback        chunk_bytes=6400 count=381 ts_ms=1771366126988
+2026-02-18 09:08:47 [debug    ] Invoking audio callback        chunk_bytes=6400 count=382 ts_ms=1771366127098
+2026-02-18 09:08:47 [info     ] Stopping translation
+2026-02-18 09:08:47 [info     ] App state changed              new=STOPPING old=RUNNING
+2026-02-18 09:08:47 [info     ] Stopping audio capture
+2026-02-18 09:08:47 [info     ] Routing deactivated            pid=1896
+2026-02-18 09:08:47 [info     ] Stopping processing pipeline
+2026-02-18 09:08:47 [info     ] VAD stage stopped
+2026-02-18 09:08:47 [info     ] STT stage stopped
+2026-02-18 09:08:47 [info     ] TTS stage stopped
+2026-02-18 09:08:47 [info     ] Output stage stopped
+2026-02-18 09:08:47 [info     ] Pipeline stopped
+2026-02-18 09:08:47 [info     ] Stopping audio playback
+2026-02-18 09:08:50 [info     ] Translation state changed      new=IDLE old=TRANSLATING
+2026-02-18 09:08:50 [info     ] App state changed              new=READY old=STOPPING
+2026-02-18 09:13:43 [info     ] Settings saved                 path=C:\Users\son-l\AppData\Local\LiveDubbing\LiveDubbing\settings.json
+2026-02-18 09:13:43 [info     ] Output device set              device_id=33
+2026-02-18 09:13:48 [info     ] Shutting down application
+2026-02-18 09:13:48 [error    ] Async worker error             error='Event loop stopped before Future completed.'
+Traceback (most recent call last):
+  File "S:\Coding project\live-dubbing\src\live_dubbing\app.py", line 41, in run
+    self._loop.run_until_complete(self._run_orchestrator())
+  File "C:\Users\son-l\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 652, in run_until_complete
+    raise RuntimeError('Event loop stopped before Future completed.')
+RuntimeError: Event loop stopped before Future completed.
+2026-02-18 09:13:48 [info     ] Settings saved                 path=C:\Users\son-l\AppData\Local\LiveDubbing\LiveDubbing\settings.json
+2026-02-18 09:13:48 [info     ] Application shutdown complete
+Using cache found in C:\Users\son-l/.cache\torch\hub\snakers4_silero-vad_master

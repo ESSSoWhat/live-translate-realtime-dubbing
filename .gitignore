@@ -1,0 +1,35 @@
+# Build output
+build/
+dist/
+*.spec
+
+# FFmpeg (embedded repo - use submodule or system install)
+ffmpeg/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+
+# Environment
+.env
+*.env.local
+
+# IDE
+.vscode/
+*.code-workspace
+
+# Windows
+nul
+Thumbs.db
+Desktop.ini
+
+# Claude
+.claude/settings.local.json
