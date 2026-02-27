@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 import structlog
 
-from live_dubbing.processing.speaker_id import SpeakerIdentifier
 from live_dubbing.services.elevenlabs_service import ElevenLabsService
 
 if TYPE_CHECKING:
@@ -64,6 +63,11 @@ class VoiceCloneManager:
             max_sample_duration_sec: Maximum audio to capture for cloning
             voice_store: Optional persistent store for voice metadata
         """
+        # Lazy import to avoid circular import:
+        # voice_cloning → processing.speaker_id → processing.__init__
+        # → processing.pipeline → voice_cloning (not done yet!)
+        from live_dubbing.processing.speaker_id import SpeakerIdentifier  # noqa: PLC0415
+
         self._service = elevenlabs_service
         self._min_sample_duration = min_sample_duration_sec
         self._max_sample_duration = max_sample_duration_sec

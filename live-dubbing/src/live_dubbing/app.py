@@ -141,6 +141,25 @@ class Application:
         if icon_path.exists():
             self._qt_app.setWindowIcon(QIcon(str(icon_path)))
 
+        # ── Auth gate ────────────────────────────────────────────────────
+        # Show login dialog whenever there is no valid (non-expired) JWT stored.
+        # The dialog stores the new tokens in settings (keyring) on success.
+        from PyQt6.QtWidgets import QDialog  # noqa: PLC0415
+        from live_dubbing.gui.widgets.login_dialog import LoginDialog  # noqa: PLC0415
+
+        _auth_response: dict = {}
+        if not self._settings.is_token_valid():
+            _login = LoginDialog(self._settings, parent=None)
+            if _login.exec() != QDialog.DialogCode.Accepted:
+                logger.info("Login cancelled; exiting")
+                return 0
+            _auth_response = getattr(_login, "auth_response", {})
+            logger.info(
+                "User authenticated",
+                email=_auth_response.get("email", "?"),
+                tier=_auth_response.get("tier", "?"),
+            )
+
         # Create event bus for component communication
         self._event_bus = EventBus()
 
@@ -159,6 +178,7 @@ class Application:
             event_bus=self._event_bus,
             settings=self._settings,
             async_worker=self._async_worker,
+            auth_response=_auth_response,
         )
         self._main_window.show()
         self._main_window.raise_()

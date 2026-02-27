@@ -1,0 +1,73 @@
+-- Live Translate — Supabase schema
+-- Run this in the Supabase SQL Editor
+
+-- ── Tier limits (config table) ───────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tier_limits (
+    tier                TEXT PRIMARY KEY,
+    dubbing_seconds     INT  NOT NULL,
+    tts_chars           INT  NOT NULL,
+    stt_seconds         INT  NOT NULL,
+    translation_chars   INT  NOT NULL,
+    voice_clones        INT  NOT NULL,
+    price_monthly_usd   NUMERIC(10,2) NOT NULL DEFAULT 0,
+    stripe_price_id     TEXT
+);
+
+INSERT INTO tier_limits VALUES
+  ('free',    1800,   50000,  1800,   50000,   1,  0.00,  NULL),
+  ('starter', 18000,  500000, 18000,  500000,  5,  9.00,  NULL),  -- fill in Stripe price IDs
+  ('pro',     72000,  2000000,72000,  2000000, 20, 29.00,  NULL)
+ON CONFLICT (tier) DO NOTHING;
+
+-- ── Users ────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS users (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    supabase_uid        UUID NOT NULL UNIQUE,
+    email               TEXT NOT NULL UNIQUE,
+    stripe_customer_id  TEXT,
+    tier                TEXT NOT NULL DEFAULT 'free' REFERENCES tier_limits(tier),
+    subscription_status TEXT NOT NULL DEFAULT 'active',
+    subscription_id     TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_supabase_uid ON users(supabase_uid);
+CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users(stripe_customer_id);
+
+-- ── Usage records (one row per user per billing month) ────────────────────────
+CREATE TABLE IF NOT EXISTS usage_records (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    period_start        DATE NOT NULL,
+    period_end          DATE NOT NULL,
+    dubbing_seconds     INT NOT NULL DEFAULT 0,
+    tts_chars           INT NOT NULL DEFAULT 0,
+    stt_seconds         INT NOT NULL DEFAULT 0,
+    translation_chars   INT NOT NULL DEFAULT 0,
+    voice_clones        INT NOT NULL DEFAULT 0,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_user_period ON usage_records(user_id, period_start DESC);
+
+-- ── Row-level security (RLS) ─────────────────────────────────────────────────
+-- Backend uses the service role key which bypasses RLS.
+-- These policies protect direct client access (e.g. Supabase Studio).
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE usage_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tier_limits ENABLE ROW LEVEL SECURITY;
+
+-- Service role can do everything (RLS is bypassed for service role)
+-- Authenticated users can only read their own data (safety net)
+CREATE POLICY users_select_own ON users
+    FOR SELECT USING (auth.uid() = supabase_uid);
+
+CREATE POLICY usage_select_own ON usage_records
+    FOR SELECT USING (
+        user_id = (SELECT id FROM users WHERE supabase_uid = auth.uid())
+    );
+
+CREATE POLICY tier_limits_public_read ON tier_limits
+    FOR SELECT USING (true);

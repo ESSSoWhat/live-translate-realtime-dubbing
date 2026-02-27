@@ -46,10 +46,13 @@ from live_dubbing.core.orchestrator import Orchestrator
 from live_dubbing.core.state import AppState, TranslationState
 from live_dubbing.gui.widgets.app_selector import AppSelectorWidget
 from live_dubbing.gui.widgets.audio_meter import AudioMeter
+from live_dubbing.core.mic_translator import MicTranslator
 from live_dubbing.gui.widgets.debug_window import DebugWindow
 from live_dubbing.gui.widgets.language_panel import LanguagePanel
+from live_dubbing.gui.widgets.mic_translate_panel import MicTranslatePanel
 from live_dubbing.gui.widgets.status_bar import StatusBar
 from live_dubbing.gui.widgets.dubbed_window import DubbedWindow
+from live_dubbing.gui.widgets.usage_meter import UsageMeterWidget
 from live_dubbing.gui.widgets.vb_cable_wizard import VBCableSetupWizard
 
 logger = structlog.get_logger(__name__)
@@ -71,6 +74,7 @@ class MainWindow(QMainWindow):
         event_bus: EventBus,
         settings: AppSettings,
         async_worker: AsyncWorker | None = None,
+        auth_response: dict | None = None,
         parent: QWidget | None = None,
     ) -> None:
         """Initialize the main window with orchestrator, event bus, and settings."""
@@ -79,6 +83,7 @@ class MainWindow(QMainWindow):
         self._event_bus = event_bus
         self._settings = settings
         self._async_worker = async_worker
+        self._auth_response: dict = auth_response or {}
 
         self._is_running = False
         self._unsubscribers: list = []
@@ -87,6 +92,7 @@ class MainWindow(QMainWindow):
         self._setup_window()
         self._setup_ui()
         self._setup_debug_window()
+        self._setup_mic_translate_panel()
         self._setup_menus()
         self._setup_shortcuts()
         self._connect_events()
@@ -94,6 +100,15 @@ class MainWindow(QMainWindow):
 
         # Populate saved voices on startup
         self._refresh_voice_list()
+
+        # Kick off usage meter polling (token is valid by this point in normal flow)
+        tier = self._auth_response.get("tier", "free")
+        self._usage_meter.set_tier(tier)
+        # Pre-populate display from login snapshot if available
+        login_usage = self._auth_response.get("usage")
+        if login_usage and isinstance(login_usage, dict):
+            self._usage_meter._on_usage_fetched(login_usage)
+        self._usage_meter.start_auto_refresh()
 
     def _setup_window(self) -> None:
         """Configure window properties."""
@@ -585,7 +600,12 @@ class MainWindow(QMainWindow):
 
         # Detachable dubbed window (created lazily but configured now)
         self._dubbed_window: DubbedWindow | None = None
-        self._dubbed_detached = False
+        self._dubbed_detached = self._settings.ui.dubbed_window_detached
+
+        # Usage meter — quota progress + Upgrade button
+        self._usage_meter = UsageMeterWidget(self._settings)
+        self._usage_meter.upgrade_requested.connect(self._on_upgrade_requested)
+        main_layout.addWidget(self._usage_meter)
 
         # Status bar
         self._status_bar = StatusBar()
@@ -672,6 +692,23 @@ class MainWindow(QMainWindow):
             Qt.DockWidgetArea.RightDockWidgetArea, self._debug_window
         )
 
+    def _setup_mic_translate_panel(self) -> None:
+        """Set up the Mic Translate dock widget."""
+        self._mic_translator = MicTranslator(
+            settings=self._settings,
+            event_bus=self._event_bus,
+        )
+        self._mic_panel = MicTranslatePanel(
+            mic_translator=self._mic_translator,
+            orchestrator=self._orchestrator,
+            event_bus=self._event_bus,
+            settings=self._settings,
+            async_worker=self._async_worker,
+            parent=self,
+        )
+        self._mic_panel.hide()  # Hidden by default
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._mic_panel)
+
     def _setup_menus(self) -> None:
         """Set up menu bar with Settings, Debug, and Help menus."""
         menu_bar = self.menuBar()
@@ -685,6 +722,17 @@ class MainWindow(QMainWindow):
             if api_keys_action is not None:
                 api_keys_action.triggered.connect(self._open_settings)
 
+        # Account menu
+        account_menu = menu_bar.addMenu("&Account")
+        if account_menu is not None:
+            portal_action = account_menu.addAction("Manage Subscription…")
+            if portal_action is not None:
+                portal_action.triggered.connect(self._open_account_portal)
+            account_menu.addSeparator()
+            sign_out_action = account_menu.addAction("Sign Out")
+            if sign_out_action is not None:
+                sign_out_action.triggered.connect(self._on_sign_out)
+
         # Debug menu
         debug_menu = menu_bar.addMenu("&Debug")
         if debug_menu is None:
@@ -695,6 +743,19 @@ class MainWindow(QMainWindow):
             self._toggle_debug_action.setChecked(False)
             self._toggle_debug_action.triggered.connect(self._toggle_debug_window)
             self._toggle_debug_action.setShortcut("Ctrl+D")
+
+        # Tools menu — Mic Translate
+        tools_menu = menu_bar.addMenu("&Tools")
+        if tools_menu is not None:
+            self._toggle_mic_action = tools_menu.addAction("Mic Translate")
+            if self._toggle_mic_action is not None:
+                self._toggle_mic_action.setCheckable(True)
+                self._toggle_mic_action.setChecked(False)
+                self._toggle_mic_action.setShortcut("Ctrl+M")
+                self._toggle_mic_action.setToolTip(
+                    "Translate your microphone in real-time and output via VB-Cable"
+                )
+                self._toggle_mic_action.triggered.connect(self._toggle_mic_panel)
 
         # Help menu
         help_menu = menu_bar.addMenu("&Help")
@@ -726,6 +787,14 @@ class MainWindow(QMainWindow):
             self._debug_window.show()
         else:
             self._debug_window.hide()
+
+    @pyqtSlot(bool)
+    def _toggle_mic_panel(self, checked: bool) -> None:
+        """Toggle Mic Translate panel visibility."""
+        if checked:
+            self._mic_panel.show()
+        else:
+            self._mic_panel.hide()
 
     def _open_settings(self) -> None:
         """Open the settings dialog for API key configuration."""
@@ -867,6 +936,20 @@ class MainWindow(QMainWindow):
                 "API Key Not Configured",
                 "Please configure your ElevenLabs API key.\n\n"
                 "Go to Settings > API Keys to enter your key.",
+            )
+            return
+
+        # Client-side quota pre-check (backend also enforces via HTTP 402)
+        if self._settings.is_token_valid() and self._usage_meter.is_quota_exceeded():
+            import webbrowser  # noqa: PLC0415
+            QMessageBox.warning(
+                self,
+                "Monthly Quota Exhausted",
+                f"You have used all your dubbing minutes for this month.\n\n"
+                "Opening the upgrade page in your browser…",
+            )
+            webbrowser.open(
+                self._usage_meter._checkout_url or "https://livetranslate.app/upgrade"
             )
             return
 
@@ -1030,8 +1113,11 @@ class MainWindow(QMainWindow):
         self._refresh_sessions()
         self._status_bar.set_app_state(AppState.READY)
 
-        # Show API banner if key is missing
-        has_key = bool(self._settings.get_elevenlabs_api_key())
+        # Show API banner only when neither backend auth nor a direct API key is present
+        has_key = (
+            bool(self._settings.get_elevenlabs_api_key())
+            or self._settings.is_token_valid()
+        )
         self._api_banner.setVisible(not has_key)
         self._status_bar.set_api_status(has_key)
 
@@ -1281,6 +1367,36 @@ class MainWindow(QMainWindow):
                 f"{count} voice{'s' if count != 1 else ''}"
             )
 
+    # ── Account / Billing ────────────────────────────────────────────────
+
+    def _on_upgrade_requested(self, url: str) -> None:
+        """Handle upgrade request signal from usage meter."""
+        import webbrowser  # noqa: PLC0415
+        webbrowser.open(url)
+
+    def _open_account_portal(self) -> None:
+        """Open the Stripe Customer Portal (or upgrade page) in the browser."""
+        import webbrowser  # noqa: PLC0415
+        # Use checkout URL stored by the usage meter if available,
+        # otherwise fall back to the static upgrade page.
+        url = self._usage_meter._checkout_url or "https://livetranslate.app/upgrade"
+        webbrowser.open(url)
+
+    def _on_sign_out(self) -> None:
+        """Clear stored auth tokens and quit so the auth gate runs on next launch."""
+        reply = QMessageBox.question(
+            self,
+            "Sign Out",
+            "Are you sure you want to sign out?\n\n"
+            "The application will close. You will need to log in again on next launch.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._usage_meter.stop_auto_refresh()
+            self._settings.clear_auth_tokens()
+            logger.info("User signed out; quitting")
+            QApplication.quit()
+
     # ── Dubbed window pop-out / customization ────────────────────────────
 
     def _apply_dubbed_font(self, size: int) -> None:
@@ -1428,13 +1544,17 @@ class MainWindow(QMainWindow):
             self._async_worker.run_coroutine(
                 self._orchestrator.stop_translation()
             )
+        # Stop mic translator if active
+        if self._mic_translator.is_running and self._async_worker:
+            self._async_worker.run_coroutine(self._mic_translator.stop())
+        self._usage_meter.stop_auto_refresh()
         self._settings.ui.window_x = self.x()
         self._settings.ui.window_y = self.y()
         self._settings.ui.window_width = self.width()
         self._settings.ui.window_height = self.height()
 
         # Save dubbed window state
-        self._settings.ui.dubbed_detached = self._dubbed_detached
+        self._settings.ui.dubbed_window_detached = self._dubbed_detached
         if self._dubbed_window is not None:
             self._dubbed_window._save_geometry()
             self._dubbed_window.close()

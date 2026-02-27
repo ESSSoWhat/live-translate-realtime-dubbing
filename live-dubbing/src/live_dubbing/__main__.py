@@ -168,6 +168,12 @@ def _configure_pydub_ffmpeg() -> None:
         )
 
 
+def _load_env_early() -> None:
+    """Load .env file early so Supabase config is available for login dialog."""
+    from live_dubbing.config.settings import _load_env_file
+    _load_env_file()
+
+
 def main() -> NoReturn:
     """Main entry point for the application."""
     # Ensure we're on Windows
@@ -177,6 +183,9 @@ def main() -> NoReturn:
 
     # Fix stdio FIRST — everything else may log or print
     _fix_stdio_for_windowed_app()
+
+    # Load .env early for Supabase config
+    _load_env_early()
 
     # Set up file logging so all output is captured
     _setup_file_logging()

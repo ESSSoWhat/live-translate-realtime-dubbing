@@ -24,6 +24,7 @@ OutputBaseFilename=LiveTranslate-{#MyAppVersion}-Setup
 SetupIconFile=src\live_dubbing\gui\assets\logo.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
+DiskSpanning=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible

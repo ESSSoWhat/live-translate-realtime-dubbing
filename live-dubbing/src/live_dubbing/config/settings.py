@@ -14,14 +14,19 @@ logger = structlog.get_logger(__name__)
 
 
 def _load_env_file() -> None:
-    """Load OPENAI_API_KEY and ELEVENLABS_API_KEY from .env if not set.
+    """Load API keys and Supabase config from .env if not set.
 
     Searches (in order): next to the running executable (for installed apps),
     current working directory, package root, and one level up.
     """
     import sys
 
-    wanted = {"OPENAI_API_KEY", "ELEVENLABS_API_KEY"}
+    wanted = {
+        "OPENAI_API_KEY",
+        "ELEVENLABS_API_KEY",
+        "LIVE_TRANSLATE_SUPABASE_URL",
+        "LIVE_TRANSLATE_SUPABASE_ANON_KEY",
+    }
     missing = [k for k in wanted if not os.environ.get(k)]
     if not missing:
         return
@@ -168,9 +173,81 @@ class AppSettings(BaseModel):
     enable_debug_logging: bool = False
     max_latency_warning_ms: int = Field(default=2000, ge=500, le=10000)
 
+    # Backend URL (can be overridden by LIVE_TRANSLATE_BACKEND_URL env var)
+    backend_base_url: str = "https://api.livetranslate.app"
+
     # API keys are stored separately for security
     _elevenlabs_api_key: str | None = None
     _openai_api_key: str | None = None
+
+    # Auth tokens (stored in Windows Credential Manager via keyring)
+    _access_token: str | None = None
+    _refresh_token: str | None = None
+
+    def get_backend_url(self) -> str:
+        """Return backend URL, allowing env override for dev/testing."""
+        return os.environ.get("LIVE_TRANSLATE_BACKEND_URL", self.backend_base_url)
+
+    def get_access_token(self) -> str | None:
+        """Get JWT access token from in-memory cache or keyring."""
+        if self._access_token:
+            return self._access_token
+        try:
+            import keyring
+            return keyring.get_password("LiveDubbing", "access_token")
+        except Exception:
+            return None
+
+    def get_refresh_token(self) -> str | None:
+        """Get JWT refresh token from in-memory cache or keyring."""
+        if self._refresh_token:
+            return self._refresh_token
+        try:
+            import keyring
+            return keyring.get_password("LiveDubbing", "refresh_token")
+        except Exception:
+            return None
+
+    def set_auth_tokens(self, access_token: str, refresh_token: str) -> None:
+        """Store both JWT tokens in memory and Windows Credential Manager."""
+        self._access_token = access_token
+        self._refresh_token = refresh_token
+        try:
+            import keyring
+            keyring.set_password("LiveDubbing", "access_token", access_token)
+            keyring.set_password("LiveDubbing", "refresh_token", refresh_token)
+        except Exception as e:
+            logger.warning("Failed to store auth tokens in keyring", error=str(e))
+
+    def clear_auth_tokens(self) -> None:
+        """Remove stored tokens on logout."""
+        self._access_token = None
+        self._refresh_token = None
+        try:
+            import keyring
+            keyring.delete_password("LiveDubbing", "access_token")
+            keyring.delete_password("LiveDubbing", "refresh_token")
+        except Exception:
+            pass
+
+    def is_token_valid(self) -> bool:
+        """Quick check: token exists and is not expired (reads exp claim)."""
+        token = self.get_access_token()
+        if not token:
+            return False
+        try:
+            import base64, json as _json
+            # Decode without verifying signature (server verifies)
+            parts = token.split(".")
+            if len(parts) != 3:
+                return False
+            padded = parts[1] + "=" * (-len(parts[1]) % 4)
+            payload = _json.loads(base64.urlsafe_b64decode(padded))
+            import time
+            # Consider token expired 5 min early to allow silent refresh
+            return payload.get("exp", 0) > time.time() + 300
+        except Exception:
+            return False
 
     def get_elevenlabs_api_key(self) -> str | None:
         """Get ElevenLabs API key (env, then in-memory, then keyring)."""

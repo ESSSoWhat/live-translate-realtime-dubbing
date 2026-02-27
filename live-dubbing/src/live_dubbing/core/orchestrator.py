@@ -4,6 +4,7 @@ Core Orchestrator - Coordinates all subsystems and manages application state.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import structlog
@@ -64,7 +65,7 @@ class Orchestrator:
         # Runtime state
         self._vb_cable_installed = False
         self._is_initialized = False
-        self._event_unsubscribers: list[callable] = []
+        self._event_unsubscribers: list[Callable[[], None]] = []
 
     async def initialize(self) -> None:
         """Initialize all subsystems."""
@@ -156,9 +157,15 @@ class Orchestrator:
         )
 
     async def _init_elevenlabs(self) -> None:
-        """Initialize ElevenLabs service."""
+        """Initialize ElevenLabs service or BackendProxyService.
+
+        Prefers direct ElevenLabs access when API key is available (faster,
+        no backend dependency). Falls back to BackendProxyService when only
+        auth token is present (production / monetised path).
+        """
         from live_dubbing.services.elevenlabs_service import ElevenLabsService
 
+        # ── Direct ElevenLabs access (preferred when API key available) ───
         api_key = self._settings.get_elevenlabs_api_key()
         if api_key:
             openai_key = self._settings.get_openai_api_key()
@@ -166,9 +173,26 @@ class Orchestrator:
                 api_key=api_key,
                 openai_api_key=openai_key,
             )
-            logger.info("ElevenLabs service initialized")
-        else:
-            logger.warning("ElevenLabs API key not configured")
+            logger.info("ElevenLabs service initialised (direct API key)")
+            return
+
+        # ── Monetised path: use backend proxy ────────────────────────────
+        if self._settings.is_token_valid():
+            from live_dubbing.services.backend_service import BackendProxyService
+
+            def _on_token_refreshed(access: str, refresh: str) -> None:
+                self._settings.set_auth_tokens(access, refresh)
+
+            self._elevenlabs_service = BackendProxyService(
+                base_url=self._settings.get_backend_url(),
+                access_token=self._settings.get_access_token() or "",
+                refresh_token=self._settings.get_refresh_token() or "",
+                on_token_refreshed=_on_token_refreshed,
+            )
+            logger.info("Backend proxy service initialised")
+            return
+
+        logger.warning("No ElevenLabs API key or auth token configured")
 
     async def reinit_elevenlabs(self) -> None:
         """Re-read API keys from settings and recreate the ElevenLabs service."""
@@ -491,6 +515,11 @@ class Orchestrator:
         if self._processing_pipeline:
             return self._processing_pipeline.get_queue_depths()
         return {"vad": 0, "stt": 0, "tts": 0, "output": 0}
+
+    @property
+    def elevenlabs_service(self):
+        """Expose the active ElevenLabs / BackendProxy service for other components."""
+        return self._elevenlabs_service
 
     @property
     def is_vb_cable_installed(self) -> bool:

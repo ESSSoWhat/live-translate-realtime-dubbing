@@ -53,6 +53,12 @@ class EventType(Enum):
     LATENCY_UPDATE = auto()
     STATS_UPDATE = auto()
 
+    # Mic translation
+    MIC_TRANSLATE_STARTED = auto()
+    MIC_TRANSLATE_STOPPED = auto()
+    MIC_TRANSCRIPTION_UPDATE = auto()
+    MIC_TRANSLATION_UPDATE = auto()
+
 
 @dataclass
 class Event:
