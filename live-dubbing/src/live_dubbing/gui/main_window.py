@@ -728,6 +728,9 @@ class MainWindow(QMainWindow):
             portal_action = account_menu.addAction("Manage Subscription…")
             if portal_action is not None:
                 portal_action.triggered.connect(self._open_account_portal)
+            account_web_action = account_menu.addAction("Manage account on web")
+            if account_web_action is not None:
+                account_web_action.triggered.connect(self._open_account_on_web)
             account_menu.addSeparator()
             sign_out_action = account_menu.addAction("Sign Out")
             if sign_out_action is not None:
@@ -760,6 +763,13 @@ class MainWindow(QMainWindow):
         # Help menu
         help_menu = menu_bar.addMenu("&Help")
         if help_menu is not None:
+            website_action = help_menu.addAction("Open &Website")
+            if website_action is not None:
+                website_action.triggered.connect(self._open_website)
+            download_action = help_menu.addAction("&Download Live Translate")
+            if download_action is not None:
+                download_action.triggered.connect(self._open_download)
+            help_menu.addSeparator()
             about_action = help_menu.addAction("&About Live Translate")
             if about_action is not None:
                 about_action.triggered.connect(self._show_about_dialog)
@@ -814,6 +824,8 @@ class MainWindow(QMainWindow):
 
     def _show_about_dialog(self) -> None:
         """Show the About dialog with credits."""
+        website_url = self._settings.get_website_url()
+        download_url = self._settings.get_download_url()
         QMessageBox.about(
             self,
             "About Live Translate",
@@ -821,6 +833,10 @@ class MainWindow(QMainWindow):
             "<p>Version 0.1.0</p>"
             "<p>Real-time audio translation and voice-cloned dubbing "
             "for Windows applications.</p>"
+            "<p>Official website: "
+            f'<a href="{website_url}">{website_url}</a></p>'
+            "<p>Download: "
+            f'<a href="{download_url}">Get the latest version</a></p>'
             "<hr>"
             "<p><b>Powered by</b></p>"
             "<p>Voice cloning &amp; text-to-speech by "
@@ -949,7 +965,7 @@ class MainWindow(QMainWindow):
                 "Opening the upgrade page in your browser…",
             )
             webbrowser.open(
-                self._usage_meter._checkout_url or "https://livetranslate.app/upgrade"
+                self._usage_meter._checkout_url or self._settings.get_upgrade_url()
             )
             return
 
@@ -1378,9 +1394,24 @@ class MainWindow(QMainWindow):
         """Open the Stripe Customer Portal (or upgrade page) in the browser."""
         import webbrowser  # noqa: PLC0415
         # Use checkout URL stored by the usage meter if available,
-        # otherwise fall back to the static upgrade page.
-        url = self._usage_meter._checkout_url or "https://livetranslate.app/upgrade"
+        # otherwise fall back to the website upgrade page.
+        url = self._usage_meter._checkout_url or self._settings.get_upgrade_url()
         webbrowser.open(url)
+
+    def _open_website(self) -> None:
+        """Open the Live Translate website in the default browser."""
+        import webbrowser  # noqa: PLC0415
+        webbrowser.open(self._settings.get_website_url())
+
+    def _open_account_on_web(self) -> None:
+        """Open the account/dashboard page on the official website."""
+        import webbrowser  # noqa: PLC0415
+        webbrowser.open(self._settings.get_account_url())
+
+    def _open_download(self) -> None:
+        """Open the app download page on the official website."""
+        import webbrowser  # noqa: PLC0415
+        webbrowser.open(self._settings.get_download_url())
 
     def _on_sign_out(self) -> None:
         """Clear stored auth tokens and quit so the auth gate runs on next launch."""

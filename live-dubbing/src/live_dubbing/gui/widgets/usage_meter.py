@@ -26,8 +26,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-UPGRADE_URL = "https://livetranslate.app/upgrade"  # deep-link fallback
-
 
 class _UsageFetcher(QThread):
     """Background thread to fetch usage without blocking the UI."""
@@ -195,6 +193,6 @@ class UsageMeterWidget(QFrame):
         return limit > 0 and used >= limit
 
     def _on_upgrade_clicked(self) -> None:
-        url = self._checkout_url or UPGRADE_URL
+        url = self._checkout_url or self._settings.get_upgrade_url()
         self.upgrade_requested.emit(url)
         webbrowser.open(url)

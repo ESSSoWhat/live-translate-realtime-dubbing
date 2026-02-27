@@ -175,6 +175,8 @@ class AppSettings(BaseModel):
 
     # Backend URL (can be overridden by LIVE_TRANSLATE_BACKEND_URL env var)
     backend_base_url: str = "https://api.livetranslate.app"
+    # Website for upgrade, account, and help (LIVE_TRANSLATE_WEBSITE_URL env override)
+    website_base_url: str = "https://www.livetranslate.net"
 
     # API keys are stored separately for security
     _elevenlabs_api_key: str | None = None
@@ -187,6 +189,26 @@ class AppSettings(BaseModel):
     def get_backend_url(self) -> str:
         """Return backend URL, allowing env override for dev/testing."""
         return os.environ.get("LIVE_TRANSLATE_BACKEND_URL", self.backend_base_url)
+
+    def get_website_url(self) -> str:
+        """Return website base URL (e.g. for Open Website menu)."""
+        return os.environ.get("LIVE_TRANSLATE_WEBSITE_URL", self.website_base_url).rstrip("/")
+
+    def get_upgrade_url(self) -> str:
+        """Return upgrade/subscription page URL on the website."""
+        return f"{self.get_website_url()}/upgrade"
+
+    def get_signin_url(self) -> str:
+        """Return sign-in / registration page URL on the website."""
+        return f"{self.get_website_url()}/login"
+
+    def get_account_url(self) -> str:
+        """Return account/dashboard page URL on the website."""
+        return f"{self.get_website_url()}/account"
+
+    def get_download_url(self) -> str:
+        """Return app download page URL on the website."""
+        return f"{self.get_website_url()}/download"
 
     def get_access_token(self) -> str | None:
         """Get JWT access token from in-memory cache or keyring."""

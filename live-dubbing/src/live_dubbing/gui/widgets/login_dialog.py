@@ -809,6 +809,14 @@ class LoginDialog(QDialog):
         bottom.addStretch()
         layout.addLayout(bottom)
 
+        web_row = QHBoxLayout()
+        web_row.addWidget(QLabel("Prefer the web?"))
+        signin_web_btn = self._link_button("Sign in or create account on the web")
+        signin_web_btn.clicked.connect(self._open_signin_on_web)
+        web_row.addWidget(signin_web_btn)
+        web_row.addStretch()
+        layout.addLayout(web_row)
+
         return page
 
     def _build_register_page(self) -> QWidget:
@@ -848,6 +856,14 @@ class LoginDialog(QDialog):
         bottom.addStretch()
         layout.addLayout(bottom)
 
+        web_row = QHBoxLayout()
+        web_row.addWidget(QLabel("Prefer the web?"))
+        signin_web_btn = self._link_button("Sign in or create account on the web")
+        signin_web_btn.clicked.connect(self._open_signin_on_web)
+        web_row.addWidget(signin_web_btn)
+        web_row.addStretch()
+        layout.addLayout(web_row)
+
         return page
 
     # ── Actions ───────────────────────────────────────────────────────────────
@@ -882,6 +898,10 @@ class LoginDialog(QDialog):
         assert self._error_label is not None
         self._error_label.setText(message)
         self._error_label.show()        # Show AFTER _set_busy so it stays visible
+
+    def _open_signin_on_web(self) -> None:
+        """Open the official website sign-in page in the default browser."""
+        webbrowser.open(self._settings.get_signin_url())
 
     def _on_auth_success(self, data: dict) -> None:
         access = data.get("access_token")
