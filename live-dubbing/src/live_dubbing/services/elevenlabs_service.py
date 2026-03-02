@@ -133,6 +133,7 @@ class ElevenLabsService:
         audio_data: bytes,
         name: str,
         description: str | None = None,
+        _retry_after_cleanup: bool = True,
     ) -> str:
         """
         Clone a voice from audio data using Instant Voice Cloning.
@@ -141,6 +142,7 @@ class ElevenLabsService:
             audio_data: Audio bytes (WAV or MP3)
             name: Name for the cloned voice
             description: Optional description
+            _retry_after_cleanup: Internal flag to prevent infinite recursion
 
         Returns:
             Voice ID of the cloned voice
@@ -162,8 +164,53 @@ class ElevenLabsService:
             return str(voice.voice_id)
 
         except Exception as e:
-            logger.exception("Failed to clone voice", error=str(e))
+            error_str = str(e)
+            # Handle voice limit reached by deleting old cloned voices
+            if "voice_limit_reached" in error_str and _retry_after_cleanup:
+                logger.warning("Voice limit reached, cleaning up old cloned voices...")
+                deleted = await self._cleanup_old_cloned_voices(keep_count=25)
+                if deleted > 0:
+                    logger.info("Deleted old voices, retrying clone", deleted_count=deleted)
+                    return await self.clone_voice(
+                        audio_data, name, description, _retry_after_cleanup=False
+                    )
+            logger.exception("Failed to clone voice", error=error_str)
             raise
+
+    async def _cleanup_old_cloned_voices(self, keep_count: int = 25) -> int:
+        """
+        Delete old cloned voices to make room for new ones.
+
+        Args:
+            keep_count: Number of cloned voices to keep (delete oldest beyond this)
+
+        Returns:
+            Number of voices deleted
+        """
+        try:
+            voices = await self.list_voices()
+            # Filter to only cloned voices (category == "cloned")
+            cloned = [v for v in voices if v.category == "cloned"]
+
+            if len(cloned) <= keep_count:
+                logger.info("Not enough cloned voices to cleanup", count=len(cloned))
+                return 0
+
+            # Sort by name (which often contains timestamp) and delete oldest
+            # Delete voices beyond keep_count
+            to_delete = cloned[keep_count:]
+            deleted = 0
+
+            for voice in to_delete:
+                if await self.delete_voice(voice.voice_id):
+                    deleted += 1
+
+            logger.info("Cleaned up old cloned voices", deleted=deleted, kept=keep_count)
+            return deleted
+
+        except Exception as e:
+            logger.exception("Failed to cleanup old voices", error=str(e))
+            return 0
 
     async def clone_voice_from_file(
         self,

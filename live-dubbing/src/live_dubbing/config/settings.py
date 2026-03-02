@@ -3,6 +3,7 @@
 import contextlib
 import json
 import os
+import re
 from enum import Enum
 from pathlib import Path
 
@@ -11,6 +12,23 @@ from platformdirs import user_config_dir
 from pydantic import BaseModel, Field
 
 logger = structlog.get_logger(__name__)
+
+
+def redact_secrets(text: str) -> str:
+    """Replace API keys, tokens, and other secrets in strings (e.g. error messages)."""
+    if not text:
+        return text
+    # JWT (three base64url segments)
+    text = re.sub(
+        r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
+        "[REDACTED]",
+        text,
+    )
+    # OpenAI-style sk- keys
+    text = re.sub(r"sk-[A-Za-z0-9]{20,}", "[REDACTED]", text)
+    # Generic long hex/alnum strings that might be API keys (e.g. 32+ chars)
+    text = re.sub(r"\b[a-fA-F0-9]{32,}\b", "[REDACTED]", text)
+    return text
 
 
 def _load_env_file() -> None:
@@ -33,8 +51,10 @@ def _load_env_file() -> None:
 
     # Directories to search for .env
     pkg_root = Path(__file__).resolve().parents[2]
+    exe_dir = Path(sys.executable).resolve().parent
     search_dirs = [
-        Path(sys.executable).resolve().parent,  # next to exe (installed app)
+        exe_dir,  # next to exe (installed app)
+        exe_dir / "_internal",  # PyInstaller one-dir mode puts datas here
         Path.cwd(),
         pkg_root,
         pkg_root.parent,
@@ -239,7 +259,26 @@ class AppSettings(BaseModel):
             keyring.set_password("LiveDubbing", "access_token", access_token)
             keyring.set_password("LiveDubbing", "refresh_token", refresh_token)
         except Exception as e:
-            logger.warning("Failed to store auth tokens in keyring", error=str(e))
+            logger.warning("Failed to store auth tokens in keyring", error=redact_secrets(str(e)))
+
+    def set_cached_user_info(self, user_id: str, tier: str) -> None:
+        """Store user_id and tier in keyring for use when resuming with valid token."""
+        try:
+            import keyring
+            keyring.set_password("LiveDubbing", "auth_user_id", user_id)
+            keyring.set_password("LiveDubbing", "auth_tier", tier)
+        except Exception as e:
+            logger.warning("Failed to store cached user info in keyring", error=redact_secrets(str(e)))
+
+    def get_cached_auth_response(self) -> dict:
+        """Return a minimal auth dict (user_id, tier, usage=None) from keyring when token is valid."""
+        try:
+            import keyring
+            user_id = keyring.get_password("LiveDubbing", "auth_user_id") or ""
+            tier = keyring.get_password("LiveDubbing", "auth_tier") or "free"
+            return {"user_id": user_id, "tier": tier, "usage": None}
+        except Exception:
+            return {}
 
     def clear_auth_tokens(self) -> None:
         """Remove stored tokens on logout."""
@@ -249,6 +288,8 @@ class AppSettings(BaseModel):
             import keyring
             keyring.delete_password("LiveDubbing", "access_token")
             keyring.delete_password("LiveDubbing", "refresh_token")
+            keyring.delete_password("LiveDubbing", "auth_user_id")
+            keyring.delete_password("LiveDubbing", "auth_tier")
         except Exception:
             pass
 
@@ -293,7 +334,7 @@ class AppSettings(BaseModel):
 
             keyring.set_password("LiveDubbing", "elevenlabs_api_key", api_key)
         except Exception as e:
-            logger.warning("Failed to store API key in keyring", error=str(e))
+            logger.warning("Failed to store API key in keyring", error=redact_secrets(str(e)))
 
     def get_openai_api_key(self) -> str | None:
         """Get OpenAI API key (env, then in-memory, then keyring)."""
@@ -316,7 +357,7 @@ class AppSettings(BaseModel):
             import keyring
             keyring.set_password("LiveDubbing", "openai_api_key", api_key)
         except Exception as e:
-            logger.warning("Failed to store OpenAI key in keyring", error=str(e))
+            logger.warning("Failed to store OpenAI key in keyring", error=redact_secrets(str(e)))
 
     def set_openai_api_key_from_env(self) -> None:
         """Load OpenAI key from .env then OPENAI_API_KEY env (in-memory)."""
@@ -353,7 +394,7 @@ class ConfigManager:
             except Exception as e:
                 logger.warning(
                     "Failed to load config, using defaults",
-                    error=str(e),
+                    error=redact_secrets(str(e)),
                     path=str(self.config_file),
                 )
                 return AppSettings()
@@ -375,7 +416,7 @@ class ConfigManager:
             )
             logger.info("Settings saved", path=str(self.config_file))
         except Exception as e:
-            logger.exception("Failed to save settings", error=str(e))
+            logger.exception("Failed to save settings", error=redact_secrets(str(e)))
 
     def reset(self) -> AppSettings:
         """Reset settings to defaults."""
