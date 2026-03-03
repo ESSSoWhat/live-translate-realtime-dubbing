@@ -35,6 +35,20 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_supabase_uid ON users(supabase_uid);
 CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users(stripe_customer_id);
 
+-- Trigger to auto-update updated_at on users
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+CREATE TRIGGER update_users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- ── Usage records (one row per user per billing month) ────────────────────────
 CREATE TABLE IF NOT EXISTS usage_records (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -47,16 +61,31 @@ CREATE TABLE IF NOT EXISTS usage_records (
     translation_chars   INT NOT NULL DEFAULT 0,
     voice_clones        INT NOT NULL DEFAULT 0,
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(user_id, period_start)
+    UNIQUE(user_id, period_start),
+    CONSTRAINT chk_period_end_after_start CHECK (period_end >= period_start)
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_user_period ON usage_records(user_id, period_start DESC);
+
+-- ── Cloned voice ownership (ElevenLabs voice_id → user who created it) ───────
+CREATE TABLE IF NOT EXISTS user_voices (
+    voice_id     TEXT NOT NULL PRIMARY KEY,
+    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_user_voices_user_id ON user_voices(user_id);
+
+DROP TRIGGER IF EXISTS update_usage_records_updated_at ON usage_records;
+CREATE TRIGGER update_usage_records_updated_at
+    BEFORE UPDATE ON usage_records
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ── Row-level security (RLS) ─────────────────────────────────────────────────
 -- Backend uses the service role key which bypasses RLS.
 -- These policies protect direct client access (e.g. Supabase Studio).
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE usage_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_voices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tier_limits ENABLE ROW LEVEL SECURITY;
 
 -- Service role can do everything (RLS is bypassed for service role)
@@ -65,6 +94,11 @@ CREATE POLICY users_select_own ON users
     FOR SELECT USING (auth.uid() = supabase_uid);
 
 CREATE POLICY usage_select_own ON usage_records
+    FOR SELECT USING (
+        user_id = (SELECT id FROM users WHERE supabase_uid = auth.uid())
+    );
+
+CREATE POLICY user_voices_select_own ON user_voices
     FOR SELECT USING (
         user_id = (SELECT id FROM users WHERE supabase_uid = auth.uid())
     );

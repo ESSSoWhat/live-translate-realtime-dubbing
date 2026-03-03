@@ -1,6 +1,6 @@
 """Main application window."""  # noqa: D200
 
-# pylint: disable=E0611,W0611,C0415,C0301,C0103,W0212,W0613,W0718
+# pylint: disable=E0611,W0611,C0415,C0301,C0103,W0212,W0613,W0718,W0201,C0302,C0413,C0412,W1309
 
 from __future__ import annotations
 
@@ -68,6 +68,8 @@ class MainWindow(QMainWindow):
     - Bottom: Live transcription/translation display
     """
 
+    _usage_meter: UsageMeterWidget
+
     def __init__(
         self,
         orchestrator: Orchestrator,
@@ -88,6 +90,11 @@ class MainWindow(QMainWindow):
         self._is_running = False
         self._unsubscribers: list = []
         self._use_system_fallback = False  # Track if using system loopback
+        self._dubbed_window: DubbedWindow | None = None
+        self._dubbed_detached = self._settings.ui.dubbed_window_detached
+
+        # Usage meter created here so mypy sees the attribute; _setup_ui() adds it to layout
+        self._usage_meter: UsageMeterWidget = UsageMeterWidget(self._settings)
 
         self._setup_window()
         self._setup_ui()
@@ -103,12 +110,13 @@ class MainWindow(QMainWindow):
 
         # Kick off usage meter polling (token is valid by this point in normal flow)
         tier = self._auth_response.get("tier", "free")
-        self._usage_meter.set_tier(tier)
+        meter: UsageMeterWidget = self._usage_meter  # type: ignore[has-type]
+        meter.set_tier(tier)
         # Pre-populate display from login snapshot if available
         login_usage = self._auth_response.get("usage")
         if login_usage and isinstance(login_usage, dict):
-            self._usage_meter._on_usage_fetched(login_usage)
-        self._usage_meter.start_auto_refresh()
+            meter._on_usage_fetched(login_usage)
+        meter.start_auto_refresh()
 
     def _setup_window(self) -> None:
         """Configure window properties."""
@@ -254,6 +262,24 @@ class MainWindow(QMainWindow):
             self._on_output_device_changed
         )
         device_row.addWidget(self._output_device_combo)
+
+        # Output volume slider
+        device_row.addSpacing(15)
+        device_row.addWidget(QLabel("Volume:"))
+        self._volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self._volume_slider.setMinimum(0)
+        self._volume_slider.setMaximum(100)
+        self._volume_slider.setValue(int(self._settings.audio.output_volume * 100))
+        self._volume_slider.setMinimumWidth(80)
+        self._volume_slider.setMaximumWidth(120)
+        self._volume_slider.setToolTip("TTS output volume (0–100%)")
+        self._volume_slider.valueChanged.connect(self._on_volume_changed)
+        device_row.addWidget(self._volume_slider)
+        self._volume_label = QLabel(f"{int(self._settings.audio.output_volume * 100)}%")
+        self._volume_label.setMinimumWidth(32)
+        self._volume_label.setStyleSheet("color: #888; font-size: 11px;")
+        device_row.addWidget(self._volume_label)
+
         device_row.addStretch()
         main_layout.addWidget(device_group)
 
@@ -514,6 +540,24 @@ class MainWindow(QMainWindow):
         self._delete_voice_btn.clicked.connect(self._on_delete_voice_clicked)
         voice_btn_layout.addWidget(self._delete_voice_btn)
 
+        self._rename_voice_btn = QPushButton("Rename")
+        self._rename_voice_btn.setMinimumHeight(28)
+        self._rename_voice_btn.setToolTip("Rename selected voice in library")
+        self._rename_voice_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #555;
+                color: white;
+                border-radius: 4px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover { background-color: #666; }
+            QPushButton:disabled { background-color: #555; }
+            """
+        )
+        self._rename_voice_btn.clicked.connect(self._on_rename_voice_clicked)
+        voice_btn_layout.addWidget(self._rename_voice_btn)
+
         voice_btn_layout.addStretch()
         voice_layout.addLayout(voice_btn_layout)
         control_layout.addWidget(voice_group)
@@ -599,11 +643,8 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(output_splitter, 1)
 
         # Detachable dubbed window (created lazily but configured now)
-        self._dubbed_window: DubbedWindow | None = None
-        self._dubbed_detached = self._settings.ui.dubbed_window_detached
-
-        # Usage meter — quota progress + Upgrade button
-        self._usage_meter = UsageMeterWidget(self._settings)
+        # _dubbed_window and _dubbed_detached set in __init__
+        # Usage meter — quota progress + Upgrade button (widget created in __init__)
         self._usage_meter.upgrade_requested.connect(self._on_upgrade_requested)
         main_layout.addWidget(self._usage_meter)
 
@@ -730,7 +771,7 @@ class MainWindow(QMainWindow):
                 portal_action.triggered.connect(self._open_account_portal)
             account_web_action = account_menu.addAction("Manage account on web")
             if account_web_action is not None:
-                account_web_action.triggered.connect(self._open_account_on_web)
+                account_web_action.triggered.connect(self._open_account_on_web)  # type: ignore[attr-defined]
             account_menu.addSeparator()
             sign_out_action = account_menu.addAction("Sign Out")
             if sign_out_action is not None:
@@ -934,6 +975,17 @@ class MainWindow(QMainWindow):
                 "Error handling output device change", error=str(e)
             )
 
+    def _on_volume_changed(self, value: int) -> None:
+        """Update output volume from slider and persist."""
+        volume = value / 100.0
+        self._volume_label.setText(f"{value}%")
+        self._orchestrator.set_output_volume(volume)
+        self._settings.audio.output_volume = volume
+        try:
+            ConfigManager().save(self._settings)
+        except Exception as e:
+            logger.warning("Could not save volume setting", error=str(e))
+
     @pyqtSlot()
     def _on_start_clicked(self) -> None:
         """Handle start button click."""
@@ -950,7 +1002,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "API Key Not Configured",
-                "Please configure your ElevenLabs API key.\n\n"
+                "Please configure your ElevenLabs API key.\n\n"  # noqa: F541
                 "Go to Settings > API Keys to enter your key.",
             )
             return
@@ -961,7 +1013,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Monthly Quota Exhausted",
-                f"You have used all your dubbing minutes for this month.\n\n"
+                "You have used all your dubbing minutes for this month.\n\n"
                 "Opening the upgrade page in your browser…",
             )
             webbrowser.open(
@@ -1195,9 +1247,9 @@ class MainWindow(QMainWindow):
     @pyqtSlot(object)
     def _on_clone_failed(self, event: Event) -> None:
         """Handle voice clone failure."""
-        _error = event.data.get("error", "Unknown error")
+        error_msg = event.data.get("error", "Unknown error")
         self._clone_progress.setValue(0)
-        self._clone_progress.setFormat("Clone failed")
+        self._clone_progress.setFormat(f"Clone failed: {error_msg}")
         # Re-enable buttons
         self._capture_voice_btn.setText("Capture Voice")
         self._capture_voice_btn.setEnabled(True)
@@ -1381,6 +1433,36 @@ class MainWindow(QMainWindow):
             count = self._voice_list.count()
             self._voice_count_label.setText(
                 f"{count} voice{'s' if count != 1 else ''}"
+            )
+
+    def _on_rename_voice_clicked(self) -> None:
+        """Rename the currently selected voice in the library."""
+        item = self._voice_list.currentItem()
+        if not item:
+            QMessageBox.information(
+                self,
+                "No Voice Selected",
+                "Select a voice from the list first.",
+            )
+            return
+
+        voice_id = item.data(Qt.ItemDataRole.UserRole)
+        current_name = item.data(Qt.ItemDataRole.UserRole + 1) or "Voice"
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Voice",
+            "New name for this voice:",
+            text=current_name,
+        )
+        if not ok or not new_name.strip():
+            return
+        if self._orchestrator.rename_voice(voice_id, new_name.strip()):
+            QTimer.singleShot(0, self._refresh_voice_list)
+        else:
+            QMessageBox.warning(
+                self,
+                "Rename Failed",
+                "Could not rename the voice. It may have been removed.",
             )
 
     # ── Account / Billing ────────────────────────────────────────────────

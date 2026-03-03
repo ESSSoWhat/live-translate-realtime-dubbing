@@ -169,6 +169,22 @@ Settings are stored in `%APPDATA%/LiveDubbing/settings.json`
 pytest tests/
 ```
 
+### Release smoke test
+
+Before releasing a build, verify on a Windows machine:
+
+1. **Build with CPU-only PyTorch** (avoids `c10_cuda.dll` load errors on machines without CUDA):
+   ```bash
+   pip uninstall -y torch torchaudio
+   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+   pyinstaller spec.spec
+   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+   ```
+2. Start the app (`live-dubbing` or run the built installer).
+2. Ensure VB-Cable is installed (Status bar shows "VB-Cable: OK").
+3. **App dubbing**: Select an app from the dropdown, set its Windows output to "CABLE Input", start translation; confirm dubbed audio plays on the selected output device.
+4. **Mic translate**: Open Tools → Mic Translate; select microphone, target language, and **Output device = CABLE Input**; start; speak into the mic; confirm translated audio is heard in another app (e.g. set Discord/Zoom input to "CABLE Output") and optionally on Monitor output.
+
 ### Code Style
 
 ```bash

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -332,6 +332,29 @@ class VoiceCloneManager:
     def get_all_cached_voices(self) -> list[ClonedVoice]:
         """Get all cached voices."""
         return list(self._voice_cache.values())
+
+    def rename_voice(self, voice_id: str, new_name: str) -> bool:
+        """
+        Rename a cloned voice (display name only).
+
+        Args:
+            voice_id: Voice ID to rename
+            new_name: New display name
+
+        Returns:
+            True if the voice was found and renamed
+        """
+        voice = self._voice_cache.get(voice_id)
+        if not voice:
+            return False
+        name = new_name.strip()
+        if not name:
+            return False
+        if self._voice_store and not self._voice_store.update_name(voice_id, name):
+            return False
+        self._voice_cache[voice_id] = replace(voice, name=name)
+        logger.info("Voice renamed", voice_id=voice_id, new_name=name)
+        return True
 
     async def cleanup_voice(self, voice_id: str) -> bool:
         """

@@ -154,9 +154,23 @@ class Application:
                 logger.info("Login cancelled; exiting")
                 return 0
             _auth_response = getattr(_login, "auth_response", {})
+            self._settings.set_cached_user_info(
+                _auth_response.get("user_id", ""),
+                _auth_response.get("tier", "free"),
+            )
+        else:
+            _auth_response = self._settings.get_cached_auth_response()
+
+        def _log_user_id(val: str) -> str:
+            if not val:
+                return "?"
+            import hashlib
+            return hashlib.sha256(val.encode()).hexdigest()[:12]
+
+        if _auth_response:
             logger.info(
                 "User authenticated",
-                email=_auth_response.get("email", "?"),
+                user_id_hash=_log_user_id(_auth_response.get("user_id", "")),
                 tier=_auth_response.get("tier", "?"),
             )
 

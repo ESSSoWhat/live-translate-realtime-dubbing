@@ -24,9 +24,13 @@ Usage::
 from __future__ import annotations
 
 import json
-import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+class _ReusableHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
 
 # ── HTML served to Chrome after Supabase redirects back ─────────────────────
 
@@ -68,6 +72,16 @@ _CAPTURE_HTML = """\
       method:  'POST',
       headers: {'Content-Type': 'application/json'},
       body:    JSON.stringify({access_token: access, refresh_token: refresh})
+    }).then(function(r) {
+      if (!r.ok) {
+        document.getElementById('card').className = 'card error';
+        document.getElementById('title').textContent = 'Sign-in failed';
+        document.getElementById('sub').textContent = 'Error signing in. Please try again.';
+      }
+    }).catch(function(err) {
+      document.getElementById('card').className = 'card error';
+      document.getElementById('title').textContent = 'Sign-in failed';
+      document.getElementById('sub').textContent = 'Error signing in. Please try again.';
     });
     return;
   }
@@ -152,7 +166,7 @@ class OAuthCallbackServer:
 
     @property
     def redirect_uri(self) -> str:
-        """Full callback URL to pass as the OAuth redirect_uri."""
+        """Return the full callback URL to pass as the OAuth redirect_uri."""
         return f"http://localhost:{self._port}/"
 
     def start(self) -> int:
@@ -162,17 +176,12 @@ class OAuthCallbackServer:
         Returns:
             The port number the server is listening on.
         """
-        # Pick a free ephemeral port
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            self._port = s.getsockname()[1]
-
         outer_self = self
 
         class _Handler(BaseHTTPRequestHandler):
             """Minimal handler: serve capture HTML on GET, accept tokens on POST."""
 
-            def log_message(self, fmt: str, *args: object) -> None:  # type: ignore[override]
+            def log_message(self, fmt: str, *args: object) -> None:  # type: ignore[override]  # pylint: disable=arguments-differ
                 pass  # Suppress server access logs
 
             def do_GET(self) -> None:  # noqa: N802
@@ -187,7 +196,12 @@ class OAuthCallbackServer:
 
             def do_POST(self) -> None:  # noqa: N802
                 if self.path == "/finish":
-                    length = int(self.headers.get("Content-Length", "0"))
+                    try:
+                        length = int(self.headers.get("Content-Length", "0"))
+                    except (ValueError, TypeError):
+                        length = 0
+                    if length < 0 or length > 1024 * 1024:
+                        length = 0
                     raw = self.rfile.read(length)
                     try:
                         data = json.loads(raw)
@@ -207,7 +221,8 @@ class OAuthCallbackServer:
                     self.send_response(404)
                     self.end_headers()
 
-        self._server = HTTPServer(("127.0.0.1", self._port), _Handler)
+        self._server = _ReusableHTTPServer(("127.0.0.1", 0), _Handler)
+        self._port = self._server.server_address[1]
         self._thread = threading.Thread(
             target=self._server.serve_forever, daemon=True, name="oauth-cb"
         )
@@ -221,16 +236,20 @@ class OAuthCallbackServer:
         Returns:
             ``{"access_token": str, "refresh_token": str}`` on success, or
             ``None`` if timeout elapsed without a callback.
+
+        Raises:
+            ValueError: If the browser sent invalid JSON or a parse error occurred.
         """
         self._ready.wait(timeout=timeout)
+        if self._error:
+            raise ValueError(self._error)
         return self._result
 
     def stop(self) -> None:
         """Shut down the HTTP server."""
+        import contextlib
         srv = self._server
         self._server = None
         if srv is not None:
-            try:
+            with contextlib.suppress(Exception):
                 srv.shutdown()
-            except Exception:
-                pass

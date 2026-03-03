@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     supabase_url: str
     supabase_service_role_key: str
     supabase_jwt_secret: str
+    supabase_db_url: str = ""  # Direct PostgreSQL connection for usage tracking (asyncpg)
 
     # ElevenLabs (server-side only)
     elevenlabs_api_key: str

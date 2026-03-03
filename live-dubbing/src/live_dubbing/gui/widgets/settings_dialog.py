@@ -8,10 +8,8 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QVBoxLayout,
 )
 
@@ -19,6 +17,9 @@ if TYPE_CHECKING:
     from PyQt6.QtWidgets import QWidget
 
     from live_dubbing.config.settings import AppSettings
+
+# Shown when a key is already configured; actual key is never displayed.
+API_KEY_PLACEHOLDER = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
 
 
 class SettingsDialog(QDialog):
@@ -49,35 +50,17 @@ class SettingsDialog(QDialog):
 
         # ElevenLabs
         api_layout.addWidget(QLabel("ElevenLabs API Key:"))
-        el_row = QHBoxLayout()
         self._elevenlabs_input = QLineEdit()
         self._elevenlabs_input.setEchoMode(QLineEdit.EchoMode.Password)
         self._elevenlabs_input.setPlaceholderText("Enter your ElevenLabs API key")
-        el_row.addWidget(self._elevenlabs_input)
-        self._el_toggle = QPushButton("Show")
-        self._el_toggle.setFixedWidth(50)
-        self._el_toggle.setCheckable(True)
-        self._el_toggle.toggled.connect(
-            lambda checked: self._toggle_visibility(self._elevenlabs_input, self._el_toggle, checked)
-        )
-        el_row.addWidget(self._el_toggle)
-        api_layout.addLayout(el_row)
+        api_layout.addWidget(self._elevenlabs_input)
 
         # OpenAI
         api_layout.addWidget(QLabel("OpenAI API Key:"))
-        oa_row = QHBoxLayout()
         self._openai_input = QLineEdit()
         self._openai_input.setEchoMode(QLineEdit.EchoMode.Password)
         self._openai_input.setPlaceholderText("Enter your OpenAI API key")
-        oa_row.addWidget(self._openai_input)
-        self._oa_toggle = QPushButton("Show")
-        self._oa_toggle.setFixedWidth(50)
-        self._oa_toggle.setCheckable(True)
-        self._oa_toggle.toggled.connect(
-            lambda checked: self._toggle_visibility(self._openai_input, self._oa_toggle, checked)
-        )
-        oa_row.addWidget(self._oa_toggle)
-        api_layout.addLayout(oa_row)
+        api_layout.addWidget(self._openai_input)
 
         info_label = QLabel(
             "Keys are stored securely in Windows Credential Manager."
@@ -96,29 +79,20 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def _toggle_visibility(
-        self, line_edit: QLineEdit, button: QPushButton, show: bool
-    ) -> None:
-        if show:
-            line_edit.setEchoMode(QLineEdit.EchoMode.Normal)
-            button.setText("Hide")
-        else:
-            line_edit.setEchoMode(QLineEdit.EchoMode.Password)
-            button.setText("Show")
-
     def _load_current_keys(self) -> None:
-        el_key = self._settings.get_elevenlabs_api_key() or ""
-        oa_key = self._settings.get_openai_api_key() or ""
-        self._elevenlabs_input.setText(el_key)
-        self._openai_input.setText(oa_key)
+        """Load state: show placeholder when a key exists so the key is never visible."""
+        el_key = self._settings.get_elevenlabs_api_key()
+        oa_key = self._settings.get_openai_api_key()
+        self._elevenlabs_input.setText(API_KEY_PLACEHOLDER if el_key else "")
+        self._openai_input.setText(API_KEY_PLACEHOLDER if oa_key else "")
 
     def _on_save(self) -> None:
         el_key = self._elevenlabs_input.text().strip()
         oa_key = self._openai_input.text().strip()
-
-        if el_key:
+        # Only update when user changed the value; placeholder means keep existing
+        if el_key != API_KEY_PLACEHOLDER:
             self._settings.set_elevenlabs_api_key(el_key)
-        if oa_key:
+        if oa_key != API_KEY_PLACEHOLDER:
             self._settings.set_openai_api_key(oa_key)
 
         self._saved = True

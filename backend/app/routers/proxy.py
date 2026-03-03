@@ -1,5 +1,6 @@
 """
 Proxy endpoints — forward requests to ElevenLabs/OpenAI after quota checks.
+
 API keys live only here on the server and are never sent to the desktop app.
 """
 
@@ -13,7 +14,7 @@ import httpx
 import structlog
 from elevenlabs import AsyncElevenLabs
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.config import get_settings
 from app.dependencies import get_current_user
@@ -24,12 +25,13 @@ from app.models.responses import (
     TranslationResponse,
     VoiceItem,
 )
-from app.services.usage import QuotaExceededError, check_quota, record_usage
+from app.services.supabase_client import get_supabase
+from app.services.usage import QuotaExceededError, check_and_record_quota
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/proxy", tags=["proxy"])
 
-UPGRADE_URL = "https://livetranslate.app/upgrade"  # TODO: replace with real URL
+UPGRADE_URL = "https://www.livetranslate.net/upgrade"
 
 
 def _elevenlabs() -> AsyncElevenLabs:
@@ -55,22 +57,22 @@ def _quota_error(exc: QuotaExceededError) -> HTTPException:
 @router.post("/transcribe", response_model=TranscriptionResponse)
 async def transcribe(
     background_tasks: BackgroundTasks,
-    audio: UploadFile = File(...),
-    language: str = Form(default="auto"),
-    user: dict = Depends(get_current_user),
+    audio: UploadFile = File(...),  # noqa: B008
+    language: str = Form(default="auto"),  # noqa: B008
+    user: dict = Depends(get_current_user),  # noqa: B008
 ) -> TranscriptionResponse:
     audio_bytes = await audio.read()
     duration_seconds = max(1, len(audio_bytes) // 32000)  # rough estimate at 16kHz/16bit
 
     try:
-        await check_quota(user["id"], "stt", duration_seconds)
+        await check_and_record_quota(user["id"], "stt", duration_seconds)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
 
     client = _elevenlabs()
     try:
         result = await asyncio.to_thread(
-            client._client.speech_to_text.convert,  # type: ignore[attr-defined]
+            client._client.speech_to_text.convert,  # pylint: disable=no-member
             audio=io.BytesIO(audio_bytes),
             model_id="scribe_v1",
             language_code=None if language == "auto" else language,
@@ -78,8 +80,6 @@ async def transcribe(
     except Exception as exc:
         logger.error("ElevenLabs STT error", error=str(exc))
         raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
-
-    background_tasks.add_task(record_usage, user["id"], "stt", duration_seconds)
 
     return TranscriptionResponse(
         text=result.text,
@@ -93,19 +93,19 @@ async def transcribe(
 async def synthesize(
     body: SynthesizeRequest,
     background_tasks: BackgroundTasks,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     char_count = len(body.text)
 
     try:
-        await check_quota(user["id"], "tts", char_count)
+        await check_and_record_quota(user["id"], "tts", char_count)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
 
     client = _elevenlabs()
     try:
         audio_bytes = await asyncio.to_thread(
-            client._client.text_to_speech.convert,  # type: ignore[attr-defined]
+            client._client.text_to_speech.convert,  # pylint: disable=no-member
             voice_id=body.voice_id,
             text=body.text,
             model_id=body.model_id,
@@ -117,8 +117,6 @@ async def synthesize(
         logger.error("ElevenLabs TTS error", error=str(exc))
         raise HTTPException(status_code=502, detail=f"Synthesis failed: {exc}") from exc
 
-    background_tasks.add_task(record_usage, user["id"], "tts", char_count)
-
     return StreamingResponse(io.BytesIO(audio_data), media_type="audio/mpeg")
 
 
@@ -126,16 +124,14 @@ async def synthesize(
 async def synthesize_stream(
     body: SynthesizeRequest,
     background_tasks: BackgroundTasks,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     char_count = len(body.text)
 
     try:
-        await check_quota(user["id"], "tts", char_count)
+        await check_and_record_quota(user["id"], "tts", char_count)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
-
-    background_tasks.add_task(record_usage, user["id"], "tts", char_count)
 
     cfg = get_settings()
 
@@ -156,10 +152,15 @@ async def synthesize_stream(
                 },
             ) as response:
                 if response.status_code != 200:
-                    logger.error("ElevenLabs stream error", status=response.status_code)
-                    return
+                    err_body = await response.aread()
+                    logger.error("ElevenLabs stream error", status=response.status_code, body=err_body[:500])
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=err_body.decode("utf-8", errors="replace") if err_body else "Stream failed",
+                    )
                 async for chunk in response.aiter_bytes(chunk_size=4096):
                     yield chunk
+        # Quota already reserved by check_and_record_quota at request start
 
     return StreamingResponse(_stream_chunks(), media_type="audio/mpeg")
 
@@ -170,12 +171,12 @@ async def synthesize_stream(
 async def translate(
     body: TranslateRequest,
     background_tasks: BackgroundTasks,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),  # noqa: B008
 ) -> TranslationResponse:
     char_count = len(body.text)
 
     try:
-        await check_quota(user["id"], "translate", char_count)
+        await check_and_record_quota(user["id"], "translate", char_count)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
 
@@ -206,8 +207,8 @@ async def translate(
         except Exception as exc:
             logger.warning("OpenAI translation failed, falling back", error=str(exc))
 
-    if translated == body.text and cfg.openai_api_key == "":
-        # Google Translate fallback
+    if translated == body.text:
+        # Google Translate fallback (e.g. when OpenAI not configured or failed)
         try:
             from deep_translator import GoogleTranslator
             translated = await asyncio.to_thread(
@@ -217,18 +218,16 @@ async def translate(
         except Exception as exc:
             logger.error("Google Translate fallback failed", error=str(exc))
 
-    background_tasks.add_task(record_usage, user["id"], "translate", char_count)
-
     return TranslationResponse(translated_text=translated, source_language=source_lang)
 
 
 # ── Voice Management ─────────────────────────────────────────────────────────
 
 @router.get("/voices", response_model=list[VoiceItem])
-async def list_voices(user: dict = Depends(get_current_user)) -> list[VoiceItem]:
+async def list_voices(user: dict = Depends(get_current_user)) -> list[VoiceItem]:  # noqa: B008
     client = _elevenlabs()
     try:
-        result = await asyncio.to_thread(client._client.voices.get_all)  # type: ignore[attr-defined]
+        result = await asyncio.to_thread(client._client.voices.get_all)  # pylint: disable=no-member
         return [
             VoiceItem(voice_id=v.voice_id, name=v.name, category=v.category or "premade")
             for v in result.voices
@@ -237,25 +236,38 @@ async def list_voices(user: dict = Depends(get_current_user)) -> list[VoiceItem]
         raise HTTPException(status_code=502, detail=f"Failed to list voices: {exc}") from exc
 
 
-@router.delete("/voices/{voice_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_voice(voice_id: str, user: dict = Depends(get_current_user)) -> None:
+@router.delete("/voices/{voice_id}")
+async def delete_voice(voice_id: str, user: dict = Depends(get_current_user)) -> Response:  # noqa: B008
     client = _elevenlabs()
     try:
-        await asyncio.to_thread(client._client.voices.delete, voice_id)  # type: ignore[attr-defined]
+        all_voices = await asyncio.to_thread(client._client.voices.get_all)  # pylint: disable=no-member
+        voice_meta = next((v for v in all_voices.voices if v.voice_id == voice_id), None)
+        if voice_meta is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice not found")
+        if getattr(voice_meta, "category", None) == "premade":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot delete premium or system voices")
+        sb = await get_supabase()
+        row = await sb.table("user_voices").select("user_id").eq("voice_id", voice_id).maybe_single().execute()
+        if not row.data or str(row.data.get("user_id")) != str(user["id"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to delete this voice")
+        await asyncio.to_thread(client._client.voices.delete, voice_id)  # pylint: disable=no-member
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to delete voice: {exc}") from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/clone-voice", response_model=CloneVoiceResponse)
 async def clone_voice(
     background_tasks: BackgroundTasks,
-    audio: UploadFile = File(...),
-    name: str = Form(...),
-    description: str = Form(default=""),
-    user: dict = Depends(get_current_user),
+    audio: UploadFile = File(...),  # noqa: B008
+    name: str = Form(...),  # noqa: B008
+    description: str = Form(default=""),  # noqa: B008
+    user: dict = Depends(get_current_user),  # noqa: B008
 ) -> CloneVoiceResponse:
     try:
-        await check_quota(user["id"], "clone", 1)
+        await check_and_record_quota(user["id"], "clone", 1)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
 
@@ -264,7 +276,7 @@ async def clone_voice(
 
     try:
         voice = await asyncio.to_thread(
-            client._client.voices.ivc.create,  # type: ignore[attr-defined]
+            client._client.voices.ivc.create,  # pylint: disable=no-member
             name=name,
             description=description,
             files=[("audio", (audio.filename or "audio.wav", audio_bytes, "audio/wav"))],
@@ -272,6 +284,10 @@ async def clone_voice(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Voice cloning failed: {exc}") from exc
 
-    background_tasks.add_task(record_usage, user["id"], "clone", 1)
+    sb = await get_supabase()
+    await sb.table("user_voices").insert({
+        "voice_id": voice.voice_id,
+        "user_id": user["id"],
+    }).execute()
 
     return CloneVoiceResponse(voice_id=voice.voice_id, name=voice.name)

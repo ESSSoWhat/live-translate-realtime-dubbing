@@ -1,0 +1,2 @@
+# Dev and test dependencies for backend
+pytest==8.3.4

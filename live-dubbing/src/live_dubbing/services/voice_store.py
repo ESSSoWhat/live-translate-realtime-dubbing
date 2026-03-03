@@ -76,6 +76,23 @@ class VoiceStore:
                 logger.warning("Skipping invalid voice entry", entry=entry)
         return voices
 
+    def update_name(self, voice_id: str, new_name: str) -> bool:
+        """Update the display name of a stored voice. Returns True if updated."""
+        voices = self.load_all()
+        for v in voices:
+            if v.voice_id == voice_id:
+                updated = ClonedVoice(
+                    voice_id=v.voice_id,
+                    name=new_name.strip(),
+                    created_at=v.created_at,
+                    sample_duration_sec=v.sample_duration_sec,
+                    is_dynamic=v.is_dynamic,
+                    speaker_id=v.speaker_id,
+                )
+                self.save(updated)
+                return True
+        return False
+
     def delete(self, voice_id: str) -> None:
         """Remove a voice from the store."""
         data = self._read()

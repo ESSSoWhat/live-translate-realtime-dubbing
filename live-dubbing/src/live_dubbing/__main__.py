@@ -209,6 +209,18 @@ def main() -> NoReturn:
         import torch  # noqa: F401
     except ImportError:
         pass
+    except OSError as e:
+        # CUDA DLL (c10_cuda.dll) can fail on machines without matching CUDA runtime.
+        # The app only needs CPU (Silero VAD). Rebuild with CPU-only PyTorch:
+        #   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+        # then run PyInstaller again.
+        logging.getLogger(__name__).critical(
+            "PyTorch failed to load (often due to CUDA DLL). "
+            "This build may have been made with CUDA-enabled PyTorch. "
+            "Use a build made with CPU-only PyTorch, or run from source with: "
+            "pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu"
+        )
+        raise SystemExit(1) from e
 
     # Import here to avoid circular imports and speed up --help
     from live_dubbing.app import Application

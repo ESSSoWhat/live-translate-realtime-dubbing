@@ -1,10 +1,12 @@
+# pylint: disable=import-error
 """
 Tests for Voice Activity Detection module.
 """
-# mypy: disable-error-code="import-untyped"
+# mypy: disable-error-code="import-untyped,import-not-found"
+# pyright: reportMissingImports=false
 
-import pytest
-import numpy as np
+import pytest  # type: ignore[import-not-found]
+import numpy as np  # type: ignore[import-not-found]
 
 # Skip tests if torch is not available
 pytest.importorskip("torch")
@@ -15,7 +17,7 @@ class TestSileroVAD:
 
     def test_vad_initialization(self):
         """VAD initializes with correct parameters."""
-        from live_dubbing.processing.vad import SileroVAD
+        from live_dubbing.processing.vad import SileroVAD  # type: ignore[import-not-found]
 
         vad = SileroVAD(threshold=0.6, sample_rate=16000)
         assert vad.threshold == 0.6
@@ -24,7 +26,7 @@ class TestSileroVAD:
 
     def test_vad_threshold_setter(self):
         """VAD threshold can be updated."""
-        from live_dubbing.processing.vad import SileroVAD
+        from live_dubbing.processing.vad import SileroVAD  # type: ignore[import-not-found]
 
         vad = SileroVAD(threshold=0.5)
         vad.threshold = 0.8
@@ -39,7 +41,7 @@ class TestSileroVAD:
 
     def test_vad_result_dataclass(self):
         """Assert that VADResult dataclass works correctly."""
-        from live_dubbing.processing.vad import VADResult
+        from live_dubbing.processing.vad import VADResult  # type: ignore[import-not-found]
 
         result = VADResult(
             is_speech=True,
@@ -53,7 +55,7 @@ class TestSileroVAD:
 
     def test_speech_segment_dataclass(self):
         """Assert that SpeechSegment dataclass works correctly."""
-        from live_dubbing.processing.vad import SpeechSegment
+        from live_dubbing.processing.vad import SpeechSegment  # type: ignore[import-not-found]
 
         audio = np.zeros(1600, dtype=np.float32)
         segment = SpeechSegment(
@@ -69,7 +71,7 @@ class TestSileroVAD:
 
     def test_vad_reset_state(self):
         """VAD state can be reset."""
-        from live_dubbing.processing.vad import SileroVAD
+        from live_dubbing.processing.vad import SileroVAD  # type: ignore[import-not-found]
 
         vad = SileroVAD()
         vad._is_speaking = True
@@ -88,7 +90,7 @@ class TestVADWithMock:
 
     def test_process_silence(self, sample_silence):
         """VAD correctly identifies silence."""
-        from live_dubbing.processing.vad import SileroVAD
+        from live_dubbing.processing.vad import SileroVAD  # type: ignore[import-not-found]
 
         vad = SileroVAD(threshold=0.5)
 
@@ -112,7 +114,7 @@ class TestVADWithMock:
 
     def test_process_speech(self, sample_speech_audio):
         """VAD correctly identifies speech."""
-        from live_dubbing.processing.vad import SileroVAD
+        from live_dubbing.processing.vad import SileroVAD  # type: ignore[import-not-found]
 
         vad = SileroVAD(threshold=0.5)
 

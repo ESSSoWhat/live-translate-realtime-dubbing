@@ -45,7 +45,7 @@ def get_input_devices() -> list[tuple[str, str]]:
         _api_indices: set[int] = set()
         api_indices: set[int] | None
         try:
-            for api_idx in range(sd.query_hostapis().__len__()):  # type: ignore[union-attr]
+            for api_idx in range(len(sd.query_hostapis())):
                 api_info = sd.query_hostapis(api_idx)
                 if isinstance(api_info, dict) and api_info.get("name", "") in preferred_apis:
                     _api_indices.add(api_idx)
@@ -60,9 +60,8 @@ def get_input_devices() -> list[tuple[str, str]]:
                 if dev.get("max_input_channels", 0) <= 0:
                     continue  # Output-only device
 
-                if api_indices is not None:
-                    if dev.get("hostapi", -1) not in api_indices:
-                        continue
+                if api_indices is not None and dev.get("hostapi", -1) not in api_indices:
+                    continue
 
                 name = dev.get("name", f"Device {i}")
                 if isinstance(name, bytes):
@@ -142,7 +141,11 @@ class MicCapture:
             return
 
         self._callback = on_audio_chunk
-        self._device_index = int(device_id) if device_id else None
+        try:
+            self._device_index = int(device_id) if device_id else None
+        except (ValueError, TypeError):
+            logger.warning("invalid device_id: must be an integer or empty", device_id=device_id)
+            self._device_index = None
 
         logger.info(
             "Starting mic capture",
@@ -182,6 +185,10 @@ class MicCapture:
         # Cancel consumer task
         if self._consumer_task and not self._consumer_task.done():
             self._consumer_task.cancel()
+            try:
+                await self._consumer_task
+            except asyncio.CancelledError:
+                pass
             self._consumer_task = None
 
         # Close sounddevice stream
@@ -207,6 +214,7 @@ class MicCapture:
 
     @property
     def sample_rate(self) -> int:
+        """Return the configured sample rate in Hz."""
         return self._sample_rate
 
     # ── Private helpers ──────────────────────────────────────────────────
@@ -218,11 +226,7 @@ class MicCapture:
         time_info: object,
         status: sd.CallbackFlags,
     ) -> None:
-        """sounddevice audio callback — runs in a C-level audio thread.
-
-        Converts the incoming block to mono float32 bytes and pushes it onto
-        the thread-safe queue for the async consumer to drain.
-        """
+        """Runs in a C-level audio thread; converts block to mono float32 and enqueues."""
         if not self._is_capturing.is_set():
             return
 

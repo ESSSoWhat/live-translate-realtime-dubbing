@@ -135,6 +135,7 @@ class AudioConfig(BaseModel):
     sample_rate: int = Field(default=16000, ge=8000, le=48000)
     chunk_size_ms: int = Field(default=100, ge=50, le=500)
     buffer_size_ms: int = Field(default=500, ge=100, le=2000)
+    output_volume: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class VoiceCloneConfig(BaseModel):
@@ -299,13 +300,13 @@ class AppSettings(BaseModel):
         if not token:
             return False
         try:
-            import base64, json as _json
+            import base64
             # Decode without verifying signature (server verifies)
             parts = token.split(".")
             if len(parts) != 3:
                 return False
             padded = parts[1] + "=" * (-len(parts[1]) % 4)
-            payload = _json.loads(base64.urlsafe_b64decode(padded))
+            payload = json.loads(base64.urlsafe_b64decode(padded))
             import time
             # Consider token expired 5 min early to allow silent refresh
             return payload.get("exp", 0) > time.time() + 300

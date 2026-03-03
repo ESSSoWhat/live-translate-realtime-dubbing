@@ -3,9 +3,9 @@
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+from slowapi import Limiter, _rate_limit_exceeded_handler  # type: ignore[import-not-found]  # pylint: disable=import-error
+from slowapi.errors import RateLimitExceeded  # type: ignore[import-not-found]  # pylint: disable=import-error
+from slowapi.util import get_remote_address  # type: ignore[import-not-found]  # pylint: disable=import-error
 
 from app.config import get_settings
 from app.routers import auth, billing, proxy, user
@@ -16,9 +16,10 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 def create_app() -> FastAPI:
+    """Create and configure the FastAPI application instance."""
     cfg = get_settings()
 
-    app = FastAPI(
+    application = FastAPI(
         title="Live Translate API",
         version="1.0.0",
         docs_url=None if cfg.is_production else "/docs",
@@ -26,35 +27,46 @@ def create_app() -> FastAPI:
     )
 
     # Rate limiting
-    app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    application.state.limiter = limiter
+    application.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # CORS (desktop app uses custom protocol, but allow localhost for dev)
-    origins = cfg.backend_cors_origins.split(",") if cfg.backend_cors_origins != "*" else ["*"]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # When BACKEND_CORS_ORIGINS is "*" with allow_credentials=True, use regex to echo origin
+    if cfg.backend_cors_origins == "*":
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=[],
+            allow_origin_regex=".*",
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    else:
+        origins = [o.strip() for o in cfg.backend_cors_origins.split(",") if o.strip()]
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # Routers
     prefix = "/api/v1"
-    app.include_router(auth.router, prefix=prefix)
-    app.include_router(user.router, prefix=prefix)
-    app.include_router(proxy.router, prefix=prefix)
-    app.include_router(billing.router, prefix=prefix)
+    application.include_router(auth.router, prefix=prefix)
+    application.include_router(user.router, prefix=prefix)
+    application.include_router(proxy.router, prefix=prefix)
+    application.include_router(billing.router, prefix=prefix)
 
-    @app.get("/health")
+    @application.get("/health")
     async def health() -> dict:
         return {"status": "ok"}
 
-    @app.on_event("startup")
+    @application.on_event("startup")
     async def on_startup() -> None:
         logger.info("Live Translate API starting", env=cfg.backend_env)
 
-    return app
+    return application
 
 
 app = create_app()

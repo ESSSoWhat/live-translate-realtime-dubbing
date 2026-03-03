@@ -1,11 +1,13 @@
 """Pydantic response models for all API endpoints."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 
 # ── Auth ────────────────────────────────────────────────────────────────────
 
 class TokenResponse(BaseModel):
+    """Auth token pair and metadata."""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -13,6 +15,8 @@ class TokenResponse(BaseModel):
 
 
 class AuthResponse(BaseModel):
+    """Full auth response with user and usage snapshot."""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -26,6 +30,8 @@ class AuthResponse(BaseModel):
 # ── Usage ────────────────────────────────────────────────────────────────────
 
 class UsageSnapshot(BaseModel):
+    """Current period usage and limits."""
+
     dubbing_seconds_used: int
     dubbing_seconds_limit: int
     tts_chars_used: int
@@ -40,6 +46,8 @@ class UsageSnapshot(BaseModel):
 # ── User ────────────────────────────────────────────────────────────────────
 
 class UserProfile(BaseModel):
+    """User profile with subscription and usage."""
+
     user_id: str
     email: str
     tier: str
@@ -50,22 +58,30 @@ class UserProfile(BaseModel):
 # ── Proxy ────────────────────────────────────────────────────────────────────
 
 class TranscriptionResponse(BaseModel):
+    """STT result with optional confidence."""
+
     text: str
     language_code: str
     confidence: float | None = None
 
 
 class TranslationResponse(BaseModel):
+    """Translated text and source language."""
+
     translated_text: str
     source_language: str
 
 
 class CloneVoiceResponse(BaseModel):
+    """Created voice id and name."""
+
     voice_id: str
     name: str
 
 
 class VoiceItem(BaseModel):
+    """Voice list item."""
+
     voice_id: str
     name: str
     category: str
@@ -74,25 +90,39 @@ class VoiceItem(BaseModel):
 # ── Billing ──────────────────────────────────────────────────────────────────
 
 class CheckoutResponse(BaseModel):
+    """Stripe checkout session URL."""
+
     checkout_url: str
 
 
 class PortalResponse(BaseModel):
+    """Stripe customer portal URL."""
+
     portal_url: str
 
 
 class PlanInfo(BaseModel):
+    """Plan tier and limits for display."""
+
     tier: str
     price_monthly_usd: float
-    dubbing_minutes: int
+    dubbing_seconds: int
     tts_chars: int
     voice_clones: int
     stripe_price_id: str | None
+
+    @computed_field(deprecated=True)
+    @property
+    def dubbing_minutes(self) -> int:
+        """Deprecated. Use dubbing_seconds. Kept for backward compatibility."""
+        return self.dubbing_seconds // 60
 
 
 # ── Errors ──────────────────────────────────────────────────────────────────
 
 class ErrorResponse(BaseModel):
+    """Structured error with optional upgrade URL."""
+
     error: str
     message: str
     upgrade_url: str | None = None

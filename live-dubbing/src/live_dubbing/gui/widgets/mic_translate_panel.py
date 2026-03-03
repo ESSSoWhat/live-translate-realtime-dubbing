@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QProgressBar,
@@ -144,7 +145,10 @@ class MicTranslatePanel(QDockWidget):
         self._output_combo.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        self._output_combo.setToolTip("Virtual cable input for other apps (Discord, Zoom)")
+        self._output_combo.setToolTip(
+            "Plays as virtual microphone for other apps (e.g. Discord, Zoom). "
+            "Select CABLE Input (VB-Cable) so other apps receive translated audio as mic input."
+        )
         out_row.addWidget(self._output_combo, 1)
         config_layout.addLayout(out_row)
 
@@ -181,6 +185,11 @@ class MicTranslatePanel(QDockWidget):
         self._refresh_voice_btn.setToolTip("Refresh voice list")
         self._refresh_voice_btn.clicked.connect(self._populate_voices)
         voice_row.addWidget(self._refresh_voice_btn)
+        self._rename_voice_btn = QPushButton("Rename")
+        self._rename_voice_btn.setToolTip("Rename selected cloned voice")
+        self._rename_voice_btn.setEnabled(False)
+        self._rename_voice_btn.clicked.connect(self._on_rename_voice_clicked)
+        voice_row.addWidget(self._rename_voice_btn)
         voice_layout.addLayout(voice_row)
 
         # Voice capture controls
@@ -421,6 +430,7 @@ class MicTranslatePanel(QDockWidget):
                     break
 
         self._voice_combo.blockSignals(False)
+        self._rename_voice_btn.setEnabled(bool(self._voice_combo.currentData()))
 
     # -- Voice handlers --
 
@@ -428,6 +438,7 @@ class MicTranslatePanel(QDockWidget):
     def _on_voice_changed(self, index: int) -> None:
         """Handle voice selection change."""
         voice_id = self._voice_combo.currentData()
+        self._rename_voice_btn.setEnabled(bool(voice_id))
         if not voice_id:
             self._settings.voice_clone.default_voice_id = None
             return
@@ -437,6 +448,25 @@ class MicTranslatePanel(QDockWidget):
                 self._orchestrator.switch_voice(voice_id),
                 on_error=lambda e: logger.error("Failed to switch voice", error=e),
             )
+
+    @pyqtSlot()
+    def _on_rename_voice_clicked(self) -> None:
+        """Rename the selected cloned voice."""
+        voice_id = self._voice_combo.currentData()
+        if not voice_id:
+            return
+        current = self._voice_combo.currentText().replace(" (cloned)", "").strip()
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename voice",
+            "New name:",
+            text=current,
+        )
+        if ok and new_name and new_name.strip():
+            if self._orchestrator.rename_voice(voice_id, new_name.strip()):
+                self._populate_voices()
+            else:
+                logger.warning("Rename failed", voice_id=voice_id)
 
     @pyqtSlot()
     def _on_capture_clicked(self) -> None:
@@ -474,6 +504,9 @@ class MicTranslatePanel(QDockWidget):
                 self._orchestrator.start_voice_capture(voice_name),
                 on_error=self._on_capture_error,
             )
+        else:
+            self._on_capture_error("Application not ready (no async worker).")
+            return
 
         self._capture_timer = QTimer(self)
         self._capture_timer.timeout.connect(self._update_capture_progress)
@@ -576,6 +609,8 @@ class MicTranslatePanel(QDockWidget):
                 on_success=self._on_import_success,
                 on_error=self._on_import_error,
             )
+        else:
+            self._on_import_error("Application not ready (no async worker).")
 
     def _on_import_success(self, voice: object) -> None:
         """Called when voice import completes successfully."""
@@ -652,8 +687,10 @@ class MicTranslatePanel(QDockWidget):
         self._status_label.setText("Starting...")
         self._status_label.setStyleSheet("color: #FFC107; font-size: 12px;")
 
-        if self._async_worker:
-            self._async_worker.run_coroutine(
+        if not self._async_worker:
+            self._on_start_error("Application not ready (no async worker).")
+            return
+        self._async_worker.run_coroutine(
                 self._mic_translator.start(
                     elevenlabs_service=self._orchestrator.elevenlabs_service,
                     mic_device_id=mic_id,

@@ -1,9 +1,17 @@
 # PyInstaller runtime hook: fix stdio + pre-import torch before PyQt6 loads
 # 1. Redirects None stdout/stderr to a log file (windowed app on Windows).
 # 2. Prevents the DLL conflict between torch's c10.dll and Qt6 DLLs.
+# 3. Disables CUDA to avoid loading cuda DLLs that have missing dependencies.
 
 import os
 import sys
+
+# ── Disable CUDA before torch is imported ────────────────────────────────────
+# This app only needs CPU (for Silero VAD). Disable CUDA to prevent torch from
+# trying to load c10_cuda.dll and other CUDA DLLs that require CUDA runtime.
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["USE_CUDA"] = "0"
+os.environ["TORCH_CUDA_ARCH_LIST"] = ""
 
 # ── Fix stdio for windowed (console=False) builds ──────────────────────────
 # On Windows, PyInstaller windowed apps have sys.stdout/stderr == None.

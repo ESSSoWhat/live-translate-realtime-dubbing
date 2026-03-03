@@ -47,7 +47,11 @@ logger = structlog.get_logger(__name__)
 
 
 def _free_tier_defaults() -> dict:
-    """Default usage/limits for free tier — used when backend is unreachable."""
+    """Default usage/limits for free tier — used when backend is unreachable.
+
+    Must match backend tier_limits (supabase_schema.sql) for free tier:
+    dubbing_seconds=1800, stt_seconds=1800, tts_chars=50000, voice_clones=1.
+    """
     import datetime
     today = datetime.date.today()
     # Last day of current month
@@ -57,11 +61,11 @@ def _free_tier_defaults() -> dict:
         period_end = datetime.date(today.year, today.month + 1, 1) - datetime.timedelta(days=1)
     return {
         "dubbing_seconds_used": 0,
-        "dubbing_seconds_limit": 3600,
+        "dubbing_seconds_limit": 1800,
         "tts_chars_used": 0,
         "tts_chars_limit": 50000,
         "stt_seconds_used": 0,
-        "stt_seconds_limit": 3600,
+        "stt_seconds_limit": 1800,
         "voice_clones_used": 0,
         "voice_clones_limit": 1,
         "period_reset_date": str(period_end),
@@ -623,7 +627,7 @@ class _OAuthWorker(QThread):
         except Exception:
             pass  # Not critical
 
-        logger.info("Google OAuth complete", email=email, tier=usage_data.get("tier"))
+        logger.info("Google OAuth complete", user_id=user_id or "(unknown)", tier=usage_data.get("tier"))
         self.success.emit(
             {
                 "access_token": access_token,
@@ -911,7 +915,7 @@ class LoginDialog(QDialog):
             return
         self.auth_response = data
         self._settings.set_auth_tokens(access, refresh)
-        logger.info("Login successful", tier=data.get("tier"), email=data.get("email"))
+        logger.info("Login successful", tier=data.get("tier"), user_id=data.get("user_id"))
         self.accept()
 
     # ── Email / password login ────────────────────────────────────────────────
@@ -983,4 +987,16 @@ class LoginDialog(QDialog):
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         """Closing the login dialog without signing in exits the app."""
+        worker = getattr(self, "_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.success.disconnect()
+            worker.error.disconnect()
+            worker.quit()
+            worker.wait(2000)
+        oauth_worker = getattr(self, "_oauth_worker", None)
+        if oauth_worker is not None and oauth_worker.isRunning():
+            oauth_worker.success.disconnect()
+            oauth_worker.error.disconnect()
+            oauth_worker.quit()
+            oauth_worker.wait(2000)
         event.accept()

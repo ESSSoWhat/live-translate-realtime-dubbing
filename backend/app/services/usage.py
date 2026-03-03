@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import date
+import asyncio
+from datetime import date, timedelta
 
 import asyncpg
 import structlog
-
-from app.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -21,21 +20,26 @@ _COLUMN_MAP: dict[str, str] = {
 }
 
 _db_pool: asyncpg.Pool | None = None
+_db_pool_lock = asyncio.Lock()
 
 
 async def get_db_pool() -> asyncpg.Pool:
+    """Return the shared asyncpg connection pool, creating it if needed."""
     global _db_pool
     if _db_pool is None:
-        cfg = get_settings()
-        # Build asyncpg DSN from Supabase URL (replace https with postgresql)
-        # Supabase DB URL format: postgresql://postgres:<password>@<host>:5432/postgres
-        # This should be set as SUPABASE_DB_URL in env for direct connection
-        import os
-        dsn = os.environ.get("SUPABASE_DB_URL")
-        if not dsn:
-            raise RuntimeError("SUPABASE_DB_URL environment variable not set")
-        _db_pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10)
-        logger.info("Database pool created")
+        async with _db_pool_lock:
+            if _db_pool is None:
+                from app.config import get_settings
+                cfg = get_settings()
+                dsn = cfg.supabase_db_url
+                if not dsn:
+                    raise RuntimeError(
+                        "SUPABASE_DB_URL environment variable not set. "
+                        "Set it to your Supabase PostgreSQL connection string "
+                        "(e.g., postgresql://postgres:password@db.xxx.supabase.co:5432/postgres)"
+                    )
+                _db_pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10)
+                logger.info("Database pool created")
     return _db_pool
 
 
@@ -56,8 +60,10 @@ def _period_end() -> date:
 
 async def check_quota(user_id: str, event_type: str, quantity: int) -> None:
     """
-    Raises ValueError if the user has exceeded their quota for this event type.
-    Raises HTTP 402 upstream via the router.
+    Check quota for user and event type; raise if exceeded.
+
+    Raises LookupError when user lookup fails.
+    Raises QuotaExceededError when the user has exceeded their quota (results in HTTP 402 upstream).
     """
     col = _COLUMN_MAP.get(event_type)
     if col is None:
@@ -96,8 +102,11 @@ async def check_quota(user_id: str, event_type: str, quantity: int) -> None:
         )
 
 
-async def record_usage(user_id: str, event_type: str, quantity: int) -> None:
-    """Atomically increment usage for the current billing period."""
+async def check_and_record_quota(user_id: str, event_type: str, quantity: int) -> None:
+    """
+    Atomically check quota and record usage in one transaction.
+    Raises LookupError if user not found, QuotaExceededError if increment would exceed limit.
+    """
     col = _COLUMN_MAP.get(event_type)
     if col is None or quantity <= 0:
         return
@@ -106,6 +115,62 @@ async def record_usage(user_id: str, event_type: str, quantity: int) -> None:
     period = _period_start()
     period_end = _period_end()
 
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    COALESCE(ur.{col}, 0) AS used,
+                    tl.{col}              AS limit_val
+                FROM users u
+                JOIN tier_limits tl ON tl.tier = u.tier
+                LEFT JOIN usage_records ur
+                    ON ur.user_id = u.id AND ur.period_start = $2
+                WHERE u.id = $1
+                FOR UPDATE
+                """.replace("{col}", col),
+                user_id, period,
+            )
+            if row is None:
+                raise LookupError(f"User {user_id} not found")
+            used = int(row["used"])
+            limit_val = int(row["limit_val"])
+            if used + quantity > limit_val:
+                raise QuotaExceededError(
+                    event_type=event_type,
+                    used=used,
+                    limit=limit_val,
+                    requested=quantity,
+                )
+            await conn.execute(
+                """
+                INSERT INTO usage_records (user_id, period_start, period_end, """
+                + col
+                + """)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (user_id, period_start)
+                DO UPDATE SET """
+                + col
+                + " = usage_records."
+                + col
+                + " + EXCLUDED."
+                + col
+                + """,
+                          updated_at = NOW()
+                """,
+                user_id, period, period_end, quantity,
+            )
+    logger.debug("Usage recorded", user_id=user_id, event_type=event_type, quantity=quantity)
+
+
+async def record_usage(user_id: str, event_type: str, quantity: int) -> None:
+    """Increment usage for the current billing period (no quota check). Prefer check_and_record_quota for atomic check+record."""
+    col = _COLUMN_MAP.get(event_type)
+    if col is None or quantity <= 0:
+        return
+    pool = await get_db_pool()
+    period = _period_start()
+    period_end = _period_end()
     async with pool.acquire() as conn:
         await conn.execute(
             f"""
@@ -117,7 +182,6 @@ async def record_usage(user_id: str, event_type: str, quantity: int) -> None:
             """,
             user_id, period, period_end, quantity,
         )
-
     logger.debug("Usage recorded", user_id=user_id, event_type=event_type, quantity=quantity)
 
 
@@ -150,7 +214,7 @@ async def get_usage_snapshot(user_id: str) -> dict:
     if row is None:
         raise LookupError(f"User {user_id} not found")
 
-    next_month = _period_end()
+    next_month = _period_end() + timedelta(days=1)
 
     return {
         "dubbing_seconds_used": row["dub_used"],
@@ -166,6 +230,8 @@ async def get_usage_snapshot(user_id: str) -> dict:
 
 
 class QuotaExceededError(Exception):
+    """Raised when a user's usage would exceed their tier limit."""
+
     def __init__(self, event_type: str, used: int, limit: int, requested: int) -> None:
         self.event_type = event_type
         self.used = used

@@ -7,7 +7,7 @@ import urllib.parse
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from app.config import get_settings
@@ -28,7 +28,8 @@ async def register(body: RegisterRequest) -> AuthResponse:
     try:
         resp = await sb.auth.sign_up({"email": body.email, "password": body.password})
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.exception("Registration failed")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Authentication failed") from exc
 
     if resp.user is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration failed")
@@ -41,12 +42,24 @@ async def register(body: RegisterRequest) -> AuthResponse:
             detail="Please check your email to confirm your account, then sign in.",
         )
 
-    # Create internal user row
-    user_row = (
-        await sb.table("users")
-        .insert({"supabase_uid": resp.user.id, "email": body.email, "tier": "free"})
-        .execute()
-    ).data[0]
+    # Create internal user row (rollback Supabase user on insert failure)
+    try:
+        insert_result = (
+            await sb.table("users")
+            .insert({"supabase_uid": resp.user.id, "email": body.email, "tier": "free"})
+            .execute()
+        )
+        user_row = insert_result.data[0]
+    except Exception as exc:
+        logger.exception("Failed to create internal user row")
+        try:
+            await sb.auth.admin.delete_user(resp.user.id)
+        except Exception as cleanup_exc:
+            logger.warning("Could not delete Supabase user after insert failure", error=str(cleanup_exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration could not be completed",
+        ) from exc
 
     usage = await get_usage_snapshot(str(user_row["id"]))
 
@@ -77,8 +90,8 @@ async def login(body: LoginRequest) -> AuthResponse:
     if resp.user is None or resp.session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login failed")
 
-    # Fetch internal user row
-    result = await sb.table("users").select("*").eq("supabase_uid", resp.user.id).single().execute()
+    # Fetch internal user row (maybe_single so auto-create path runs when no row)
+    result = await sb.table("users").select("*").eq("supabase_uid", resp.user.id).maybe_single().execute()
     if not result.data:
         # Auto-create if missing (e.g. user registered via web)
         result = (
@@ -124,12 +137,13 @@ async def refresh(body: RefreshRequest) -> TokenResponse:
     )
 
 
-@router.post("/forgot-password", status_code=status.HTTP_204_NO_CONTENT)
-async def forgot_password(body: ForgotPasswordRequest) -> None:
+@router.post("/forgot-password")
+async def forgot_password(body: ForgotPasswordRequest) -> Response:
     """Trigger a password reset email via Supabase."""
     sb = await get_supabase()
     with contextlib.suppress(Exception):
         await sb.auth.reset_password_email(body.email)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ── Google OAuth (desktop / native client flow) ──────────────────────────────
@@ -198,7 +212,7 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
         logger.error("OAuth code exchange failed", error=str(exc), code_len=len(body.code))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"OAuth code exchange failed: {exc}",
+            detail="OAuth code exchange failed",
         ) from exc
 
     if resp.user is None or resp.session is None:
@@ -207,12 +221,12 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
             detail="OAuth exchange returned no session",
         )
 
-    # Upsert internal user row
+    # Upsert internal user row (maybe_single so creation path runs when missing)
     result = (
         await sb.table("users")
         .select("*")
         .eq("supabase_uid", resp.user.id)
-        .single()
+        .maybe_single()
         .execute()
     )
     if not result.data:
@@ -229,7 +243,7 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
 
     usage = await get_usage_snapshot(str(user_row["id"]))
 
-    logger.info("Google OAuth exchange complete", email=resp.user.email)
+    logger.info("Google OAuth exchange complete", user_id=resp.user.id)
     return AuthResponse(
         access_token=resp.session.access_token,
         refresh_token=resp.session.refresh_token,

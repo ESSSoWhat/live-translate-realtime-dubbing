@@ -1,0 +1,13 @@
+# Repo-root config so Mypy and Pylint respect exclusions when workspace is "Coding project".
+# live-dubbing has its own full config in live-dubbing/pyproject.toml.
+
+[tool.mypy]
+# Match both Unix and Windows paths (extension may pass absolute path)
+exclude = [
+    ".*live-dubbing[/\\\\]tests[/\\\\].*",
+    ".*live-dubbing[/\\\\]build[/\\\\].*",
+    ".*live-dubbing[/\\\\]dist[/\\\\].*",
+]
+
+[tool.pylint.main]
+ignore = ["live-dubbing/tests", "live-dubbing/build", "live-dubbing/dist"]

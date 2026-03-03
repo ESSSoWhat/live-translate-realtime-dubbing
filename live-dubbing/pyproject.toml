@@ -109,9 +109,14 @@ python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+exclude = ["^tests/"]
 
 [[tool.mypy.overrides]]
 module = "sounddevice"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "numpy"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -150,9 +155,33 @@ ignore_missing_imports = true
 module = "elevenlabs.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "structlog"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "PyQt6.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "httpx"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "live_dubbing.gui.main_window"
+disable_error_code = ["has-type", "attr-defined", "no-redef"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.pyright]
+reportMissingImports = "none"
+reportMissingModuleSource = false
 
 [tool.pylint.messages_control]
 disable = [
@@ -165,4 +194,8 @@ disable = [
     "protected-access",  # W0212: orchestrator._audio_routing for VB-Cable
     "unused-argument",  # W0613: event in pyqtSlot handlers
     "unused-import",  # W0611: covered by ruff
+    "import-error",  # E0401: structlog/PyQt6/httpx when venv not active in IDE
 ]
+
+[tool.pylint.main]
+ignore = ["tests"]

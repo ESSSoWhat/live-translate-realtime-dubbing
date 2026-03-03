@@ -11,9 +11,10 @@ so the orchestrator, pipeline, and voice manager need zero changes.
 from __future__ import annotations
 
 import asyncio
+import json
 import io
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import httpx
 import structlog
@@ -34,6 +35,7 @@ class AuthExpiredException(Exception):
 
 class QuotaExceededException(Exception):
     """Raised when the backend returns 402 (quota exceeded)."""
+
     def __init__(self, event_type: str, upgrade_url: str = "") -> None:
         self.event_type = event_type
         self.upgrade_url = upgrade_url
@@ -49,7 +51,7 @@ class BackendProxyService:
       - translate_text(text, target_language, source_language) -> str
       - synthesize(text, voice_id, ...) -> bytes
       - synthesize_stream(text, voice_id, ...) -> AsyncIterator[bytes]
-      - clone_voice(audio_bytes, name, description) -> str (voice_id)
+      - clone_voice(audio_data, name, description) -> str (voice_id)
       - list_voices() -> list[dict]
       - delete_voice(voice_id) -> None
     """
@@ -59,12 +61,13 @@ class BackendProxyService:
         base_url: str,
         access_token: str,
         refresh_token: str,
-        on_token_refreshed: "callable[[str, str], None] | None" = None,
+        on_token_refreshed: Callable[[str, str], None] | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._on_token_refreshed = on_token_refreshed
+        self._refresh_lock = asyncio.Lock()
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=60.0,
@@ -106,18 +109,19 @@ class BackendProxyService:
 
     async def _refresh_access_token(self) -> None:
         """Exchange refresh token for a new access token and update internal state."""
-        response = await self._client.post(
-            "/api/v1/auth/refresh",
-            json={"refresh_token": self._refresh_token},
-        )
-        if response.status_code != 200:
-            raise AuthExpiredException("Session expired — please log in again")
-        data = response.json()
-        self._access_token = data["access_token"]
-        self._refresh_token = data["refresh_token"]
-        if self._on_token_refreshed:
-            self._on_token_refreshed(self._access_token, self._refresh_token)
-        logger.debug("Access token refreshed silently")
+        async with self._refresh_lock:
+            response = await self._client.post(
+                "/api/v1/auth/refresh",
+                json={"refresh_token": self._refresh_token},
+            )
+            if response.status_code != 200:
+                raise AuthExpiredException("Session expired — please log in again")
+            data = response.json()
+            self._access_token = data["access_token"]
+            self._refresh_token = data["refresh_token"]
+            if self._on_token_refreshed:
+                self._on_token_refreshed(self._access_token, self._refresh_token)
+            logger.debug("Access token refreshed silently")
 
     async def _request(
         self,
@@ -137,7 +141,13 @@ class BackendProxyService:
             response = await self._client.request(method, path, **kwargs)
 
         if response.status_code == 402:
-            detail = response.json().get("detail", {})
+            try:
+                body = response.json()
+            except (ValueError, json.JSONDecodeError):
+                body = {}
+            detail = body.get("detail", body) if isinstance(body, dict) else {}
+            if not isinstance(detail, dict):
+                detail = {}
             raise QuotaExceededException(
                 event_type=detail.get("event_type", "unknown"),
                 upgrade_url=detail.get("upgrade_url", ""),
@@ -162,7 +172,7 @@ class BackendProxyService:
             "POST",
             "/api/v1/proxy/transcribe",
             files={"audio": ("audio.wav", io.BytesIO(audio_data), "audio/wav")},
-            data={"language": language},
+            data={"language": language, "sample_rate": str(sample_rate)},
             headers={},  # let _request add auth
         )
         data = response.json()
@@ -192,6 +202,7 @@ class BackendProxyService:
                 "text": text,
                 "target_language": target_language,
                 "source_language": source_language,
+                "context": context,
             },
             headers={},
         )
@@ -218,6 +229,7 @@ class BackendProxyService:
                 "model_id": model_id,
                 "stability": stability,
                 "similarity_boost": similarity_boost,
+                "output_format": output_format,
             },
             headers={},
         )
@@ -232,45 +244,80 @@ class BackendProxyService:
         similarity_boost: float = 0.75,
     ) -> AsyncIterator[bytes]:
         """Stream synthesized audio chunks from the backend proxy."""
-        async with self._client.stream(
-            "POST",
-            "/api/v1/proxy/synthesize/stream",
-            json={
-                "text": text,
-                "voice_id": voice_id,
-                "model_id": model_id,
-                "stability": stability,
-                "similarity_boost": similarity_boost,
-            },
-            headers=self._auth_headers(),
-        ) as response:
-            if response.status_code == 402:
-                body = await response.aread()
-                import json
-                detail = json.loads(body).get("detail", {})
-                raise QuotaExceededException(
-                    event_type=detail.get("event_type", "tts"),
-                    upgrade_url=detail.get("upgrade_url", ""),
-                )
-            response.raise_for_status()
-            async for chunk in response.aiter_bytes(chunk_size=4096):
-                yield chunk
+        async def _stream() -> AsyncIterator[bytes]:
+            async with self._client.stream(
+                "POST",
+                "/api/v1/proxy/synthesize/stream",
+                json={
+                    "text": text,
+                    "voice_id": voice_id,
+                    "model_id": model_id,
+                    "stability": stability,
+                    "similarity_boost": similarity_boost,
+                },
+                headers=self._auth_headers(),
+            ) as response:
+                if response.status_code == 401:
+                    await self._refresh_access_token()
+                    async with self._client.stream(
+                        "POST",
+                        "/api/v1/proxy/synthesize/stream",
+                        json={
+                            "text": text,
+                            "voice_id": voice_id,
+                            "model_id": model_id,
+                            "stability": stability,
+                            "similarity_boost": similarity_boost,
+                        },
+                        headers=self._auth_headers(),
+                    ) as retry_response:
+                        if retry_response.status_code == 402:
+                            body = await retry_response.aread()
+                            try:
+                                detail = json.loads(body.decode()).get("detail", {})
+                            except (ValueError, json.JSONDecodeError):
+                                detail = {}
+                            raise QuotaExceededException(
+                                event_type=detail.get("event_type", "tts"),
+                                upgrade_url=detail.get("upgrade_url", ""),
+                            )
+                        if retry_response.status_code == 401:
+                            raise AuthExpiredException("Session expired — please log in again")
+                        retry_response.raise_for_status()
+                        async for chunk in retry_response.aiter_bytes(chunk_size=4096):
+                            yield chunk
+                    return
+                if response.status_code == 402:
+                    body = await response.aread()
+                    try:
+                        detail = json.loads(body.decode()).get("detail", {})
+                    except (ValueError, json.JSONDecodeError):
+                        detail = {}
+                    raise QuotaExceededException(
+                        event_type=detail.get("event_type", "tts"),
+                        upgrade_url=detail.get("upgrade_url", ""),
+                    )
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes(chunk_size=4096):
+                    yield chunk
+        async for chunk in _stream():
+            yield chunk
 
     # ── Voice management ─────────────────────────────────────────────────────
 
     async def clone_voice(
         self,
-        audio_bytes: bytes,
+        audio_data: bytes,
         name: str,
-        description: str = "",
+        description: str | None = None,
         filename: str = "audio.wav",
     ) -> str:
         """Clone a voice and return the new voice_id."""
         response = await self._request(
             "POST",
             "/api/v1/proxy/clone-voice",
-            files={"audio": (filename, io.BytesIO(audio_bytes), "audio/wav")},
-            data={"name": name, "description": description},
+            files={"audio": (filename, io.BytesIO(audio_data), "audio/wav")},
+            data={"name": name, "description": description or ""},
             headers={},
         )
         return response.json()["voice_id"]
@@ -287,6 +334,7 @@ class BackendProxyService:
     # ── Cleanup ──────────────────────────────────────────────────────────────
 
     async def close(self) -> None:
+        """Close the HTTP client."""
         await self._client.aclose()
 
     # ── Compatibility shims (methods referenced by orchestrator/pipeline) ────

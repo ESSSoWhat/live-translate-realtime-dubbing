@@ -1,11 +1,14 @@
 """Audio playback module using sounddevice."""
 
+# mypy: disable-error-code="import-not-found"
+# pylint: disable=import-error
+
 import queue
 import threading
 
-import numpy as np
-import sounddevice as sd  # type: ignore[import-untyped]
-import structlog
+import numpy as np  # type: ignore
+import sounddevice as sd  # type: ignore
+import structlog  # type: ignore
 
 logger = structlog.get_logger(__name__)
 
@@ -33,7 +36,7 @@ def get_output_devices() -> list[tuple[str, str]]:
         _api_indices: set[int] = set()
         api_indices: set[int] | None
         try:
-            for api_idx in range(sd.query_hostapis().__len__()):
+            for api_idx in range(len(sd.query_hostapis())):  # pylint: disable=unnecessary-dunder-call
                 api_info = sd.query_hostapis(api_idx)
                 if isinstance(api_info, dict):
                     api_name = api_info.get("name", "")
@@ -95,6 +98,7 @@ class AudioPlayback:
         sample_rate: int = 24000,  # ElevenLabs default
         channels: int = 1,
         buffer_size_ms: int = 100,
+        volume: float = 1.0,
     ) -> None:
         """
         Initialize audio playback.
@@ -103,10 +107,13 @@ class AudioPlayback:
             sample_rate: Sample rate in Hz
             channels: Number of audio channels
             buffer_size_ms: Buffer size in milliseconds
+            volume: Playback volume gain (0.0 to 1.0)
         """
         self._sample_rate = sample_rate
         self._channels = channels
         self._buffer_size_ms = buffer_size_ms
+        self._volume = max(0.0, min(1.0, volume))
+        self._volume_lock = threading.Lock()
 
         # State
         self._is_playing = False
@@ -283,6 +290,12 @@ class AudioPlayback:
                         chunk = audio_buffer[:blocksize]
                         audio_buffer = audio_buffer[blocksize:]
 
+                        # Apply volume gain
+                        with self._volume_lock:
+                            gain = self._volume
+                        if gain != 1.0:
+                            chunk = chunk * gain
+
                         # Reshape for mono output
                         chunk = chunk.reshape(-1, self._channels)
                         self._stream.write(chunk)
@@ -295,6 +308,10 @@ class AudioPlayback:
             # Play remaining audio
             if len(audio_buffer) > 0:
                 try:
+                    with self._volume_lock:
+                        gain = self._volume
+                    if gain != 1.0:
+                        audio_buffer = audio_buffer * gain
                     chunk = audio_buffer.reshape(-1, self._channels)
                     self._stream.write(chunk)
                 except Exception:  # pylint: disable=broad-exception-caught
@@ -339,6 +356,16 @@ class AudioPlayback:
     def queue_size(self) -> int:
         """Get current queue size."""
         return self._audio_queue.qsize()
+
+    def set_volume(self, volume: float) -> None:
+        """Set playback volume (0.0 to 1.0)."""
+        with self._volume_lock:
+            self._volume = max(0.0, min(1.0, volume))
+
+    def get_volume(self) -> float:
+        """Get current playback volume."""
+        with self._volume_lock:
+            return self._volume
 
 
 class AudioMixer:

@@ -39,6 +39,7 @@ class _UsageFetcher(QThread):
         self._token = access_token
 
     def run(self) -> None:
+        """Fetch usage from backend and emit fetched or failed signal."""
         try:
             with httpx.Client(timeout=10.0) as client:
                 response = client.get(
@@ -194,5 +195,10 @@ class UsageMeterWidget(QFrame):
 
     def _on_upgrade_clicked(self) -> None:
         url = self._checkout_url or self._settings.get_upgrade_url()
+        if not url or not isinstance(url, str) or not url.strip():
+            return
+        url = url.strip()
+        if not url.startswith(("http://", "https://")):
+            return
         self.upgrade_requested.emit(url)
         webbrowser.open(url)

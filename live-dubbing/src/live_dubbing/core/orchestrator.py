@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from live_dubbing.audio.session import AudioSessionInfo
-from live_dubbing.config.settings import AppSettings
+from live_dubbing.config.settings import AppSettings, redact_secrets
 from live_dubbing.core.events import Event, EventBus, EventType
 from live_dubbing.core.state import (
     ApplicationStateSnapshot,
@@ -104,7 +104,7 @@ class Orchestrator:
         except Exception as e:
             logger.exception("Failed to initialize orchestrator", error=str(e))
             self._set_app_state(AppState.ERROR)
-            self._event_bus.emit_error(f"Initialization failed: {e}")
+            self._event_bus.emit_error(f"Initialization failed: {redact_secrets(str(e))}")
 
     async def shutdown(self) -> None:
         """Shutdown all subsystems."""
@@ -154,6 +154,7 @@ class Orchestrator:
         )
         self._audio_playback = AudioPlayback(
             sample_rate=24000,  # ElevenLabs output rate
+            volume=self._settings.audio.output_volume,
         )
 
     async def _init_elevenlabs(self) -> None:
@@ -356,6 +357,7 @@ class Orchestrator:
             # Start playback with configured output device
             if self._audio_playback:
                 out_id = self._settings.audio.output_device_id
+                self._audio_playback.set_volume(self._settings.audio.output_volume)
                 await self._audio_playback.start(device_id=out_id or None)
 
             capture_mode = "system_loopback" if use_system_fallback else "vb_cable"
@@ -398,7 +400,7 @@ class Orchestrator:
             self._set_app_state(AppState.ERROR)
             self._set_translation_state(TranslationState.ERROR)
             self._event_bus.emit_error(
-                f"Failed to start translation: {e}\n\nTraceback:\n{tb_str}"
+                redact_secrets(f"Failed to start translation: {e}\n\nTraceback:\n{tb_str}")
             )
             raise
 
@@ -616,7 +618,7 @@ class Orchestrator:
             return voice
         except Exception as e:
             logger.exception("Voice capture failed", error=str(e))
-            self._event_bus.emit_error(f"Voice capture failed: {e}")
+            self._event_bus.emit_error(f"Voice capture failed: {redact_secrets(str(e))}")
             return None
 
     async def clone_voice_from_file(self, file_path: str, name: str) -> ClonedVoice | None:
@@ -649,8 +651,28 @@ class Orchestrator:
             return voice
         except Exception as e:
             logger.exception("Voice clone from file failed", error=str(e))
-            self._event_bus.emit_error(f"Voice clone from file failed: {e}")
+            self._event_bus.emit_error(f"Voice clone from file failed: {redact_secrets(str(e))}")
             return None
+
+    def rename_voice(self, voice_id: str, new_name: str) -> bool:
+        """Rename a saved voice's display name. Returns True if renamed."""
+        if not self._processing_pipeline:
+            return False
+        vm = self._processing_pipeline._voice_manager
+        if not vm:
+            return False
+        return vm.rename_voice(voice_id, new_name)
+
+    def set_output_volume(self, volume: float) -> None:
+        """Set TTS playback volume (0.0 to 1.0)."""
+        if self._audio_playback:
+            self._audio_playback.set_volume(volume)
+
+    def get_output_volume(self) -> float:
+        """Get current TTS playback volume."""
+        if self._audio_playback:
+            return self._audio_playback.get_volume()
+        return 1.0
 
     async def delete_voice(self, voice_id: str) -> bool:
         """Delete a saved voice clone.

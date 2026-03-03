@@ -16,6 +16,7 @@ import soundfile as sf
 import structlog
 
 from live_dubbing.core.events import EventBus, EventType
+from live_dubbing.config.settings import redact_secrets
 from live_dubbing.processing.text_filter import strip_non_verbal
 from live_dubbing.processing.vad import SileroVAD
 from live_dubbing.services.elevenlabs_service import ElevenLabsService
@@ -249,6 +250,11 @@ class ProcessingPipeline:
         self._output_playing = False
         self._output_suppress_until: float = 0.0
 
+        # Throttle AUDIO_LEVEL_UPDATE to avoid flooding logs/UI when level is constant
+        self._last_audio_level_emit_time: float = 0.0
+        self._last_audio_level: float | None = None
+        self._last_audio_is_speech: bool | None = None
+
     async def start(
         self,
         on_output: Callable[[bytes], Awaitable[None]] | None = None,
@@ -269,6 +275,10 @@ class ProcessingPipeline:
 
         self._on_output = on_output
         self._on_transcription = on_transcription
+
+        # Reset one-time skip flag so we can warn again this run if TTS is skipped
+        if hasattr(self, "_tts_skip_logged"):
+            del self._tts_skip_logged
 
         # Load VAD model synchronously (fast enough that it won't block significantly)
         self._vad.load_model()
@@ -639,12 +649,23 @@ class ProcessingPipeline:
                             # No buffered speech — nothing to do
                             self._silence_count = 0
 
-                # Emit audio level
+                # Emit audio level (throttled: only when level/speech changes or every 200ms)
                 level = np.sqrt(np.mean(chunk.data ** 2))
-                self._event_bus.emit(
-                    EventType.AUDIO_LEVEL_UPDATE,
-                    {"level": float(level), "is_speech": vad_result.is_speech},
-                )
+                level_f = float(level)
+                now = time.time()
+                last_level = self._last_audio_level
+                last_speech = self._last_audio_is_speech
+                level_changed = last_level is None or abs(level_f - last_level) > 0.03
+                speech_changed = last_speech is not None and last_speech != vad_result.is_speech
+                interval_elapsed = (now - self._last_audio_level_emit_time) >= 0.2
+                if level_changed or speech_changed or interval_elapsed:
+                    self._last_audio_level_emit_time = now
+                    self._last_audio_level = level_f
+                    self._last_audio_is_speech = vad_result.is_speech
+                    self._event_bus.emit(
+                        EventType.AUDIO_LEVEL_UPDATE,
+                        {"level": level_f, "is_speech": vad_result.is_speech},
+                    )
 
                 # Periodic log so we know VAD stage is still running in PROCESSING
                 if self._state == PipelineState.PROCESSING and self._stats.chunks_processed % 100 == 0:
@@ -682,7 +703,11 @@ class ProcessingPipeline:
             logger.exception("Voice clone failed, keeping fallback", error=str(e))
             self._event_bus.emit(
                 EventType.VOICE_CLONE_FAILED,
-                {"error": str(e)},
+                {"error": redact_secrets(str(e))},
+            )
+            self._event_bus.emit_warning(
+                "Voice clone failed — using default voice for TTS. You can still hear translated speech.",
+                {"error": redact_secrets(str(e))[:100]},
             )
 
     async def _run_manual_voice_clone(self) -> None:
@@ -705,7 +730,7 @@ class ProcessingPipeline:
             logger.exception("Manual voice clone failed", error=str(e))
             self._event_bus.emit(
                 EventType.VOICE_CLONE_FAILED,
-                {"error": str(e)},
+                {"error": redact_secrets(str(e))},
             )
 
     async def _stt_stage(self) -> None:
@@ -923,6 +948,11 @@ class ProcessingPipeline:
                             has_service=self._service is not None,
                             has_cloned_voice=self._cloned_voice is not None,
                         )
+                        self._event_bus.emit_warning(
+                            "TTS is not available — no API key or voice configured. "
+                            "Transcription and translation will work but no speech output.",
+                            {"has_service": self._service is not None, "has_voice": self._cloned_voice is not None},
+                        )
                     continue
 
                 # Synthesize with cloned voice
@@ -954,9 +984,13 @@ class ProcessingPipeline:
 
                 except Exception as e:
                     logger.exception("TTS failed", error=str(e))
+                    self._event_bus.emit_warning(
+                        f"TTS failed — no speech output for this segment. {redact_secrets(str(e))[:80]}",
+                        {"error": redact_secrets(str(e))},
+                    )
                     self._event_bus.emit(
                         EventType.TRANSLATION_UPDATE,
-                        {"text": f"[TTS failed: {str(e)[:60]}]"},
+                        {"text": f"[TTS failed: {redact_secrets(str(e))[:60]}]"},
                     )
 
             except asyncio.CancelledError:
