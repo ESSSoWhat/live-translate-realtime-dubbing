@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Download - Live Translate</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #fff; line-height: 1.6; }
+        .container { max-width: 800px; margin: 0 auto; padding: 60px 20px; }
+        h1 { font-size: 3rem; margin-bottom: 10px; }
+        .subtitle { font-size: 1.3rem; color: #888; margin-bottom: 40px; }
+        .download-box { background: #1a1a1a; border-radius: 16px; padding: 40px; margin-bottom: 40px; }
+        .version { color: #888; font-size: 0.9rem; margin-bottom: 20px; }
+        .btn { display: inline-block; background: #4f46e5; color: #fff; padding: 16px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 1.1rem; margin-bottom: 20px; }
+        .btn:hover { background: #4338ca; }
+        .secondary-download { background: #333; padding: 20px; border-radius: 8px; margin-top: 20px; }
+        .secondary-download a { color: #4f46e5; }
+        .warning { color: #f59e0b; font-size: 0.9rem; }
+        .section { margin-bottom: 40px; }
+        .section h2 { font-size: 1.5rem; margin-bottom: 20px; color: #fff; }
+        .requirements, .features, .steps { list-style: none; }
+        .requirements li, .features li, .steps li { padding: 8px 0; padding-left: 24px; position: relative; }
+        .requirements li::before { content: "•"; position: absolute; left: 0; color: #888; }
+        .features li::before { content: "✓"; position: absolute; left: 0; color: #22c55e; }
+        .steps li { counter-increment: step; }
+        .steps li::before { content: counter(step); position: absolute; left: 0; background: #4f46e5; color: #fff; width: 20px; height: 20px; border-radius: 50%; font-size: 0.8rem; display: flex; align-items: center; justify-content: center; }
+        .steps { counter-reset: step; }
+        .links { margin-top: 40px; }
+        .links a { color: #4f46e5; margin-right: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Download Live Translate</h1>
+        <p class="subtitle">Real-time voice translation with AI voice cloning</p>
+
+        <div class="download-box">
+            <p class="version">VERSION 0.1.0 (Alpha)</p>
+            <a href="https://github.com/ESSSoWhat/live-translate-realtime-dubbing/releases/download/v0.1.0/LiveTranslate-0.1.0-Setup.exe" class="btn">Download for Windows</a>
+
+            <div class="secondary-download">
+                <p class="warning">&#9888; Also download the data file (required):</p>
+                <p><a href="https://github.com/ESSSoWhat/live-translate-realtime-dubbing/releases/download/v0.1.0/LiveTranslate-0.1.0-Setup-1.bin">LiveTranslate-0.1.0-Setup-1.bin</a></p>
+                <p style="color: #888; margin-top: 10px; font-size: 0.9rem;">Place both files in the same folder, then run the Setup.exe</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>System Requirements</h2>
+            <ul class="requirements">
+                <li>Windows 10/11 (64-bit)</li>
+                <li>4GB RAM minimum (8GB recommended)</li>
+                <li>Internet connection required</li>
+                <li>~300MB disk space</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Features</h2>
+            <ul class="features">
+                <li>Real-time speech translation</li>
+                <li>AI voice cloning - speak in any language with your own voice</li>
+                <li>10+ languages (English, Japanese, Korean, Chinese, Spanish, and more)</li>
+                <li>Works with any Windows app (Discord, Zoom, Teams, games)</li>
+                <li>Low latency audio processing</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Installation</h2>
+            <ul class="steps">
+                <li>Download both files above</li>
+                <li>Place them in the same folder</li>
+                <li>Run LiveTranslate-0.1.0-Setup.exe</li>
+                <li>Follow the installer prompts</li>
+                <li>Launch Live Translate and sign in with Google</li>
+            </ul>
+        </div>
+
+        <div class="links">
+            <a href="https://github.com/ESSSoWhat/live-translate-realtime-dubbing">View on GitHub</a>
+            <a href="https://github.com/ESSSoWhat/live-translate-realtime-dubbing/issues">Report Issues</a>
+        </div>
+    </div>
+</body>
+</html>

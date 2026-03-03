@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account - Live Translate</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #fff; line-height: 1.6; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .container { max-width: 500px; padding: 20px; text-align: center; }
+        .logo { font-size: 2.5rem; font-weight: 700; margin-bottom: 40px; }
+        .logo span { color: #4f46e5; }
+        h1 { font-size: 2rem; margin-bottom: 16px; }
+        .account-box { background: #1a1a1a; border-radius: 16px; padding: 40px; text-align: left; }
+        .icon { font-size: 4rem; margin-bottom: 24px; text-align: center; }
+        .account-box > p { color: #888; margin-bottom: 30px; text-align: center; }
+        .feature-list { list-style: none; margin-bottom: 30px; }
+        .feature-list li { padding: 16px 0; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 12px; }
+        .feature-list li:last-child { border-bottom: none; }
+        .feature-list li::before { content: "→"; color: #4f46e5; font-weight: bold; }
+        .steps { background: #252525; border-radius: 8px; padding: 20px; margin-bottom: 30px; }
+        .steps p { color: #888; font-size: 0.95rem; margin-bottom: 8px; }
+        .steps code { background: #333; padding: 2px 8px; border-radius: 4px; color: #fff; }
+        .help { text-align: center; padding-top: 20px; border-top: 1px solid #333; }
+        .help p { color: #888; font-size: 0.95rem; margin-bottom: 8px; }
+        .help a { color: #4f46e5; text-decoration: none; }
+        .help a:hover { text-decoration: underline; }
+        .btn { display: inline-block; background: #4f46e5; color: #fff; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 20px; }
+        .btn:hover { background: #4338ca; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <p class="logo">Live<span>Translate</span></p>
+
+        <div class="account-box">
+            <div class="icon">⚙️</div>
+            <h1 style="text-align: center; margin-bottom: 16px;">Manage Your Account</h1>
+            <p>Account management is available in the Live Translate desktop app.</p>
+
+            <div class="steps">
+                <p>To access your account settings:</p>
+                <p><code>Open the app</code> → <code>Click your profile</code> → <code>Account Settings</code></p>
+            </div>
+
+            <p style="color: #888; margin-bottom: 16px;">From there you can:</p>
+            <ul class="feature-list">
+                <li>View usage statistics</li>
+                <li>Manage subscription</li>
+                <li>Update payment method</li>
+                <li>Download invoices</li>
+                <li>Change preferences</li>
+            </ul>
+
+            <div class="help">
+                <p>Need to cancel or have billing questions?</p>
+                <a href="mailto:support@livetranslate.net">support@livetranslate.net</a>
+
+                <br>
+                <a href="/download" class="btn">Download the App</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

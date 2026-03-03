@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upgrade - Live Translate</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #fff; line-height: 1.6; }
+        .container { max-width: 1000px; margin: 0 auto; padding: 60px 20px; }
+        h1 { font-size: 3rem; margin-bottom: 10px; text-align: center; }
+        .subtitle { font-size: 1.3rem; color: #888; margin-bottom: 50px; text-align: center; }
+        .pricing { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 60px; }
+        .plan { background: #1a1a1a; border-radius: 16px; padding: 32px; text-align: center; border: 2px solid transparent; }
+        .plan.popular { border-color: #4f46e5; }
+        .plan-name { font-size: 1.5rem; font-weight: 600; margin-bottom: 8px; }
+        .plan-price { font-size: 3rem; font-weight: 700; margin-bottom: 8px; }
+        .plan-price span { font-size: 1rem; color: #888; }
+        .plan-desc { color: #888; margin-bottom: 24px; font-size: 0.95rem; }
+        .plan-features { list-style: none; text-align: left; margin-bottom: 24px; }
+        .plan-features li { padding: 10px 0; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 10px; }
+        .plan-features li::before { content: "✓"; color: #22c55e; font-weight: bold; }
+        .plan-features li.disabled { color: #555; }
+        .plan-features li.disabled::before { content: "—"; color: #555; }
+        .btn { display: inline-block; background: #4f46e5; color: #fff; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; width: 100%; }
+        .btn:hover { background: #4338ca; }
+        .btn.outline { background: transparent; border: 2px solid #4f46e5; }
+        .btn.outline:hover { background: #4f46e5; }
+        .popular-badge { background: #4f46e5; color: #fff; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; margin-bottom: 16px; display: inline-block; }
+        .faq { max-width: 700px; margin: 0 auto; }
+        .faq h2 { font-size: 2rem; margin-bottom: 30px; text-align: center; }
+        .faq-item { background: #1a1a1a; border-radius: 12px; padding: 24px; margin-bottom: 16px; }
+        .faq-item h3 { font-size: 1.1rem; margin-bottom: 10px; }
+        .faq-item p { color: #888; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Choose Your Plan</h1>
+        <p class="subtitle">Unlock the full power of real-time voice translation</p>
+
+        <div class="pricing">
+            <div class="plan">
+                <p class="plan-name">Free</p>
+                <p class="plan-price">$0<span>/month</span></p>
+                <p class="plan-desc">Get started with basic features</p>
+                <ul class="plan-features">
+                    <li>30 minutes/month</li>
+                    <li>2 languages</li>
+                    <li>Standard voices</li>
+                    <li class="disabled">Voice cloning</li>
+                    <li class="disabled">Priority support</li>
+                </ul>
+                <a href="/download" class="btn outline">Current Plan</a>
+            </div>
+
+            <div class="plan popular">
+                <span class="popular-badge">Most Popular</span>
+                <p class="plan-name">Pro</p>
+                <p class="plan-price">$9.99<span>/month</span></p>
+                <p class="plan-desc">Perfect for regular users</p>
+                <ul class="plan-features">
+                    <li>5 hours/month</li>
+                    <li>All 10+ languages</li>
+                    <li>AI voice cloning</li>
+                    <li>Priority support</li>
+                    <li class="disabled">API access</li>
+                </ul>
+                <a href="#" class="btn">Upgrade to Pro</a>
+            </div>
+
+            <div class="plan">
+                <p class="plan-name">Business</p>
+                <p class="plan-price">$29.99<span>/month</span></p>
+                <p class="plan-desc">For power users and teams</p>
+                <ul class="plan-features">
+                    <li>Unlimited usage</li>
+                    <li>All 10+ languages</li>
+                    <li>Priority voice cloning</li>
+                    <li>Priority support</li>
+                    <li>API access</li>
+                </ul>
+                <a href="mailto:support@livetranslate.net" class="btn outline">Contact Sales</a>
+            </div>
+        </div>
+
+        <div class="faq">
+            <h2>Frequently Asked Questions</h2>
+
+            <div class="faq-item">
+                <h3>Can I cancel anytime?</h3>
+                <p>Yes, you can cancel your subscription at any time from your account settings. Your access will continue until the end of your billing period.</p>
+            </div>
+
+            <div class="faq-item">
+                <h3>What payment methods do you accept?</h3>
+                <p>We accept all major credit cards through Stripe, our secure payment processor.</p>
+            </div>
+
+            <div class="faq-item">
+                <h3>Is there a free trial?</h3>
+                <p>The free tier gives you 30 minutes per month to try all basic features. Upgrade anytime to unlock voice cloning and more usage.</p>
+            </div>
+
+            <div class="faq-item">
+                <h3>What happens if I exceed my usage limit?</h3>
+                <p>You'll receive a notification when approaching your limit. Translation will pause until your next billing cycle or you upgrade your plan.</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
