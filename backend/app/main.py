@@ -1,6 +1,6 @@
 """FastAPI application factory."""
 
-import structlog
+import structlog  # type: ignore[import-not-found]
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler  # type: ignore[import-not-found]  # pylint: disable=import-error
@@ -31,8 +31,18 @@ def create_app() -> FastAPI:
     application.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # CORS (desktop app uses custom protocol, but allow localhost for dev)
-    # When BACKEND_CORS_ORIGINS is "*" with allow_credentials=True, use regex to echo origin
-    if cfg.backend_cors_origins == "*":
+    # In production, never use allow_origin_regex with allow_credentials; require explicit allowlist.
+    cors_origins = cfg.backend_cors_origins or ""
+    if cfg.is_production and (not cors_origins.strip() or cors_origins.strip() == "*"):
+        origins = []
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    elif cors_origins.strip() == "*":
         application.add_middleware(
             CORSMiddleware,
             allow_origins=[],
@@ -42,7 +52,9 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
     else:
-        origins = [o.strip() for o in cfg.backend_cors_origins.split(",") if o.strip()]
+        origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+        if cfg.is_production and not origins:
+            origins = []
         application.add_middleware(
             CORSMiddleware,
             allow_origins=origins,

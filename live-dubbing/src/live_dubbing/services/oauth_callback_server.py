@@ -96,10 +96,16 @@ _CAPTURE_HTML = """\
       method:  'POST',
       headers: {'Content-Type': 'application/json'},
       body:    JSON.stringify({pkce_code: code})
-    }).then(function() {
-      document.getElementById('card').className    = 'card success';
-      document.getElementById('title').textContent = 'Signed in!';
-      document.getElementById('sub').textContent   = 'You can close this tab and return to Live Translate.';
+    }).then(function(r) {
+      if (!r.ok) {
+        document.getElementById('card').className = 'card error';
+        document.getElementById('title').textContent = 'Sign-in failed';
+        document.getElementById('sub').textContent = 'Error signing in. Please try again.';
+      } else {
+        document.getElementById('card').className    = 'card success';
+        document.getElementById('title').textContent = 'Signed in!';
+        document.getElementById('sub').textContent   = 'You can close this tab and return to Live Translate.';
+      }
     }).catch(function() {
       document.getElementById('card').className    = 'card error';
       document.getElementById('title').textContent = 'Sign-in failed';

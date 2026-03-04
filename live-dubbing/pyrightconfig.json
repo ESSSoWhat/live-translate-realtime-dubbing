@@ -1,4 +1,4 @@
 {
-  "reportMissingImports": "none",
-  "reportMissingModuleSource": false
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "warning"
 }

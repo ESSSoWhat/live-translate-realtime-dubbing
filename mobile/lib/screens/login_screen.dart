@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../services/qonversion_service.dart';
 import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -20,16 +21,29 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _error;
 
   Future<void> _login() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (email.isEmpty || password.isEmpty) {
+      setState(() {
+        _error = 'Email and password are required';
+        _loading = false;
+      });
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       final body = await _api.login(
-        _emailController.text.trim(),
-        _passwordController.text,
+        email,
+        password,
       );
       await _auth.saveFromAuthResponse(body);
+      if (QonversionService.isAvailable) {
+        final userId = body['user_id'] as String?;
+        if (userId != null) await QonversionService.identify(userId);
+      }
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const HomeScreen()),

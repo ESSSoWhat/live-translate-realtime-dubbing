@@ -33,3 +33,11 @@ Desktop.ini
 
 # Claude
 .claude/settings.local.json
+
+# Dart / Flutter
+.dart_tool/
+.flutter-plugins-dependencies
+
+# Android
+**/android/.gradle/
+**/local.properties

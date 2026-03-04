@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import structlog
+import base64
+import json
+import structlog  # pylint: disable=import-error
 import stripe  # pylint: disable=import-error
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status  # pylint: disable=import-error
 
 from app.config import get_settings
 from app.dependencies import get_current_user
@@ -92,7 +94,7 @@ async def create_checkout(
             await sb.table("users")
             .update({"stripe_customer_id": customer_id})
             .eq("id", user["id"])
-            .is_("stripe_customer_id", "null")
+            .is_("stripe_customer_id", None)
             .execute()
         )
         if not update_result.data:
@@ -178,7 +180,8 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(alias=
 
     elif event.type in ("customer.subscription.updated", "customer.subscription.deleted"):
         sub = event.data.object
-        user_id = sub.metadata.get("user_id")
+        metadata = sub.metadata if sub.metadata is not None else {}
+        user_id = metadata.get("user_id")
         if not user_id:
             result = await sb.table("users").select("id").eq("stripe_customer_id", sub.customer).maybe_single().execute()
             user_id = result.data["id"] if result.data else None
@@ -193,7 +196,15 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(alias=
                 logger.info("Subscription canceled — downgraded to free", user_id=user_id)
             else:
                 if not sub.items or not getattr(sub.items, "data", None) or len(sub.items.data) == 0:
-                    logger.warning("Subscription updated but no items", subscription_id=getattr(sub, "id", None))
+                    logger.info(
+                        "Subscription updated but no items — setting user to free",
+                        subscription_id=getattr(sub, "id", None),
+                        user_id=user_id,
+                    )
+                    await sb.table("users").update({
+                        "tier": "free",
+                        "subscription_status": "no_items",
+                    }).eq("id", user_id).execute()
                 else:
                     price_id = sub.items.data[0].price.id
                     tier = _price_to_tier(price_id, cfg)
@@ -226,3 +237,112 @@ def _price_to_tier(price_id: str, cfg) -> str:
             stripe_pro_price_id=cfg.stripe_pro_price_id or "(empty)",
         )
     return "free"
+
+
+def _qonversion_webhook_configured() -> bool:
+    """Return True if Qonversion webhook secret is set."""
+    cfg = get_settings()
+    return bool(cfg.qonversion_webhook_secret and cfg.qonversion_webhook_secret.strip())
+
+
+def _verify_qonversion_webhook(authorization: str | None, secret: str) -> None:
+    """Verify Qonversion webhook Authorization header. Raises HTTPException on failure."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization")
+    secret = (secret or "").strip()
+    if not secret:
+        raise HTTPException(status_code=503, detail="Qonversion webhook not configured")
+    # Qonversion sends Authorization: Basic <base64>. Often ":" + token or token as password.
+    if authorization.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(authorization[6:].strip()).decode("utf-8")
+            # Format can be "username:password" or just "token"
+            if ":" in decoded:
+                _, password = decoded.split(":", 1)
+                if password != secret:
+                    raise HTTPException(status_code=401, detail="Invalid webhook secret")
+            else:
+                if decoded != secret:
+                    raise HTTPException(status_code=401, detail="Invalid webhook secret")
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise
+            raise HTTPException(status_code=401, detail="Invalid Authorization format") from e
+    else:
+        raise HTTPException(status_code=401, detail="Expected Basic Authorization")
+
+
+def _qonversion_product_to_tier(product_id: str | None) -> str:
+    """Map Qonversion product_id to backend tier. Customize to match your Qonversion products."""
+    if not product_id:
+        return "free"
+    pid = (product_id or "").lower()
+    if "pro" in pid:
+        return "pro"
+    if "starter" in pid:
+        return "starter"
+    return "free"
+
+
+@router.post("/qonversion-webhook", status_code=status.HTTP_200_OK)
+async def qonversion_webhook(request: Request) -> dict:
+    """Handle Qonversion webhook events to update user tier (app + web subscriptions)."""
+    cfg = get_settings()
+    if not _qonversion_webhook_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Qonversion webhook is not configured. Set QONVERSION_WEBHOOK_SECRET.",
+        )
+    auth_header = request.headers.get("Authorization")
+    _verify_qonversion_webhook(auth_header, cfg.qonversion_webhook_secret)
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail="Invalid JSON body") from e
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+
+    event_name = (body.get("event_name") or "").strip()
+    custom_user_id = body.get("custom_user_id") or body.get("user_id")
+    prod = body.get("product")
+    product_id = body.get("product_id") or (prod.get("id") if isinstance(prod, dict) else (prod if isinstance(prod, str) else "")) or ""
+
+    if not custom_user_id:
+        logger.warning("Qonversion webhook missing custom_user_id", body_keys=list(body.keys()))
+        return {"received": True}
+
+    user_id = str(custom_user_id).strip()
+    sb = await get_supabase()
+
+    # Events that grant or update tier
+    if event_name in (
+        "subscription_started",
+        "subscription_renewed",
+        "trial_started",
+        "trial_converted",
+        "subscription_updated",
+    ):
+        tier = _qonversion_product_to_tier(product_id)
+        await sb.table("users").update({
+            "tier": tier,
+            "subscription_status": "active",
+        }).eq("id", user_id).execute()
+        logger.info("Qonversion: tier updated", user_id=user_id, tier=tier, event=event_name)
+    # Events that revoke premium
+    elif event_name in (
+        "subscription_canceled",
+        "subscription_expired",
+        "subscription_cancellation_updated",
+        "refunded",
+    ):
+        await sb.table("users").update({
+            "tier": "free",
+            "subscription_status": "canceled",
+        }).eq("id", user_id).execute()
+        logger.info("Qonversion: tier set to free", user_id=user_id, event=event_name)
+    else:
+        logger.debug("Qonversion webhook unhandled event", event_name=event_name, user_id=user_id)
+
+    return {"received": True}

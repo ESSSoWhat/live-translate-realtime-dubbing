@@ -178,12 +178,12 @@ Before releasing a build, verify on a Windows machine:
    pip uninstall -y torch torchaudio
    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
    pyinstaller spec.spec
-   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
    ```
+   Then build the installer. You can use Inno Setup's `ISCC.exe`—either add it to your PATH or set `INNO_SETUP_PATH` (e.g. `set INNO_SETUP_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe` on Windows). Invoke it with `"%INNO_SETUP_PATH%" installer.iss` (or run `ISCC.exe installer.iss` if it's on PATH). On 64-bit Windows, Inno may be under `C:\Program Files\Inno Setup 6`; adjust the path for your version.
 2. Start the app (`live-dubbing` or run the built installer).
-2. Ensure VB-Cable is installed (Status bar shows "VB-Cable: OK").
-3. **App dubbing**: Select an app from the dropdown, set its Windows output to "CABLE Input", start translation; confirm dubbed audio plays on the selected output device.
-4. **Mic translate**: Open Tools → Mic Translate; select microphone, target language, and **Output device = CABLE Input**; start; speak into the mic; confirm translated audio is heard in another app (e.g. set Discord/Zoom input to "CABLE Output") and optionally on Monitor output.
+3. Ensure VB-Cable is installed (Status bar shows "VB-Cable: OK").
+4. **App dubbing**: Select an app from the dropdown, set its Windows output to "CABLE Input", start translation; confirm dubbed audio plays on the selected output device.
+5. **Mic translate**: Open Tools → Mic Translate; select microphone, target language, and **Output device = CABLE Input**; start; speak into the mic; confirm translated audio is heard in another app (e.g. set Discord/Zoom input to "CABLE Output") and optionally on **Monitor output**. ("Monitor output" is the system playback or virtual output used to hear mixed audio—e.g. VB-Cable's virtual input/output or the OS "Stereo Mix"/monitor of the chosen device. See [VB-Cable setup](https://vb-audio.com/Cable/) for which device to select and how it fits into the live-dubbing setup.)
 
 ### Code Style
 

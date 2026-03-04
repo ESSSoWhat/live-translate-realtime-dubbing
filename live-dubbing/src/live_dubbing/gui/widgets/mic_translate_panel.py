@@ -467,6 +467,9 @@ class MicTranslatePanel(QDockWidget):
                 self._populate_voices()
             else:
                 logger.warning("Rename failed", voice_id=voice_id)
+                self._voice_status.setText("Rename failed. Please try again.")
+                self._voice_status.setStyleSheet("color: #F44336; font-size: 11px;")
+                self._voice_status.setVisible(True)
 
     @pyqtSlot()
     def _on_capture_clicked(self) -> None:

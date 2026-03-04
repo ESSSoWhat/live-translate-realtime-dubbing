@@ -1,0 +1,6 @@
+# Copy to key.properties and fill in values. Do not commit key.properties.
+# Used by app/build.gradle for release signing (signingConfigs.release).
+storePassword=
+keyPassword=
+keyAlias=
+storeFile=../upload-keystore.jks

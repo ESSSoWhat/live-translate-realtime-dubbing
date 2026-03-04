@@ -78,12 +78,15 @@ class VoiceStore:
 
     def update_name(self, voice_id: str, new_name: str) -> bool:
         """Update the display name of a stored voice. Returns True if updated."""
+        cleaned = (new_name or "").strip()
+        if not cleaned:
+            return False
         voices = self.load_all()
         for v in voices:
             if v.voice_id == voice_id:
                 updated = ClonedVoice(
                     voice_id=v.voice_id,
-                    name=new_name.strip(),
+                    name=cleaned,
                     created_at=v.created_at,
                     sample_duration_sec=v.sample_duration_sec,
                     is_dynamic=v.is_dynamic,

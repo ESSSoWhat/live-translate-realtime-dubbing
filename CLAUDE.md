@@ -4,105 +4,130 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Live Translate** is a Windows desktop application for real-time audio translation and voice-cloned dubbing. It captures audio from Windows applications, translates it using ElevenLabs APIs, and outputs dubbed audio using a cloned voice.
+**Live Translate** is a real-time audio translation and voice-cloned dubbing platform. It captures audio, translates it using ElevenLabs APIs, and outputs dubbed audio using a cloned voice.
 
 - **Status**: Alpha (v0.1.0)
-- **Platform**: Windows 10/11 only
-- **Stack**: Python desktop app (PyQt6 GUI) + FastAPI backend
+- **Components**:
+  - `live-dubbing/` - Windows desktop app (PyQt6 GUI, Python)
+  - `backend/` - FastAPI server for auth, billing, and API proxy
+  - `mobile/` - Flutter mobile app (Android/iOS)
+  - `website/` - Next.js marketing/dashboard site
 
-## Build, Run, Test, Lint Commands
+## Build, Run, Test Commands
 
-### Setup
+### Desktop App (live-dubbing/)
 ```bash
 cd live-dubbing
-python -m venv venv
-venv\Scripts\activate
-pip install -e .              # Development install
-pip install -e ".[dev]"       # With dev dependencies
+python -m venv venv && venv\Scripts\activate
+pip install -e ".[dev]"                         # Install with dev deps
+python -m live_dubbing                          # Run app
+pytest tests/ -v                                # Run tests
+pytest tests/test_vad.py -v                     # Single test file
+black src/ tests/ && ruff check src/ tests/     # Format & lint
+mypy src/                                       # Type check
 ```
 
-### Run Application
+**Building Installer:**
 ```bash
-live-dubbing                  # Via entry point
-python -m live_dubbing        # Direct module
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu  # CPU-only for distribution
+pyinstaller live_translate.spec --noconfirm
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 ```
 
-### Testing
+### Backend (backend/)
 ```bash
-pytest tests/                           # Run all tests
-pytest tests/test_vad.py -v            # Run single test file
-pytest tests/ -v --cov                 # With coverage
+cd backend
+pip install -r requirements.txt
+cp .env.example .env                            # Configure credentials
+python -m uvicorn app.main:app --reload         # Run locally on :8000
+pytest tests/ -v                                # Run tests
 ```
 
-### Linting & Formatting
+Connect desktop app to local backend:
 ```bash
-black src/ tests/                      # Format
-ruff check src/ tests/                 # Lint
-mypy src/                              # Type check
+set LIVE_TRANSLATE_BACKEND_URL=http://localhost:8000
 ```
 
-### Building Installer
+### Mobile App (mobile/)
 ```bash
-pyinstaller spec.spec                  # Create PyInstaller bundle
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss  # Build installer
+cd mobile
+flutter pub get
+flutter run                                     # Run on connected device
+flutter build apk                               # Build Android APK
+flutter test                                    # Run tests
+```
+
+### Website (website/)
+```bash
+cd website
+npm install
+npm run dev                                     # Dev server on :3000
+npm run build                                   # Production build
+npm run lint                                    # ESLint
 ```
 
 ## Architecture
 
-### Core Components
+### Desktop App Core Components
 
-**Orchestrator** (`core/orchestrator.py`) - Central coordinator managing all subsystems:
-- Manages state transitions (INITIALIZING → READY → RUNNING → etc.)
-- Coordinates audio capture, processing pipeline, and playback
+**Orchestrator** (`core/orchestrator.py`) - Central coordinator:
+- State machine: INITIALIZING → READY → RUNNING → STOPPING
+- Coordinates audio capture, processing pipeline, playback
 - Handles voice cloning workflow
 
-**Processing Pipeline** (`processing/pipeline.py`) - Async real-time translation:
+**Processing Pipeline** (`processing/pipeline.py`):
 - Flow: Audio → VAD → STT → Translate → TTS → Output
-- Uses Silero VAD for voice activity detection
-- ElevenLabs Scribe v2 for STT, Flash v2.5 for TTS
-- Multi-stage queue processing for parallel operations
+- Silero VAD for voice detection, ElevenLabs Scribe v2 for STT, Flash v2.5 for TTS
+- Multi-stage async queue processing
 
-**EventBus** (`core/events.py`) - Thread-safe communication:
-- Uses Qt signals for GUI updates from async code
-- All components communicate via event emission/subscription
+**EventBus** (`core/events.py`) - Thread-safe pub/sub:
+- Qt signals marshal events to GUI thread
+- All components communicate via event emission
 
-**Main Window** (`gui/main_window.py`) - PyQt6 GUI:
-- Subscribes to EventBus for reactive UI updates
-- Manages async worker thread for background tasks
+**Audio Subsystem**:
+- `capture.py`: WASAPI loopback via `pyaudiowpatch`
+- `routing.py`: VB-Cable integration for per-app isolation
+- `playback.py`: TTS output at 24kHz
 
-### Audio Subsystem
+### Backend Architecture
 
-- **capture.py**: WASAPI loopback capture via `pyaudiowpatch`
-- **routing.py**: VB-Cable integration for per-app audio isolation
-- **playback.py**: TTS output playback at 24kHz
+FastAPI server with routers in `app/routers/`:
+- `auth.py` - Supabase JWT authentication
+- `proxy.py` - ElevenLabs API proxy with usage tracking
+- `billing.py` - Stripe subscription management
+- `user.py` - User profile management
 
-### Backend Service
+Services in `app/services/`:
+- `supabase_client.py` - Database operations
+- `usage.py` - Usage metering and limits
 
-Located in `backend/` - FastAPI server for monetized deployments:
-- Proxies ElevenLabs API with auth and usage tracking
-- Supabase for auth, Stripe for billing
-- Desktop app authenticates via JWT tokens stored in Windows keyring
+### Mobile App Structure
+
+Flutter app in `mobile/lib/`:
+- `screens/` - UI screens (home, login, settings, paywall)
+- `services/` - API client, auth, Qonversion (IAP)
+- `features/mic_translate/` - Core translation feature
+- `config/` - API configuration
 
 ## Code Conventions
 
-- **Line length**: 100 characters (configured in ruff, black, .flake8)
-- **Type hints**: Strict mypy (disallow_untyped_defs)
-- **Qt slots/events**: camelCase (Qt convention)
-- **Python code**: snake_case
-- **Async**: Used throughout for non-blocking I/O
-- **GUI thread safety**: Always use `EventBus.emit()` for GUI updates from async code
+- **Line length**: 100 characters (Python), default (Dart/TS)
+- **Python**: snake_case, strict mypy types, async throughout
+- **Qt slots/events**: camelCase (Qt convention override)
+- **GUI thread safety**: Always use `EventBus.emit()` from async code
+- **Dart**: Follow flutter_lints
 
-### Async Worker Pattern
-The application creates an AsyncWorker (QThread subclass) that runs the orchestrator's async loop in a separate thread. The GUI communicates via `run_coroutine()` with callbacks. GUI updates are marshaled via `QTimer.singleShot()`.
+### Async Worker Pattern (Desktop)
+AsyncWorker (QThread) runs the orchestrator's async loop. GUI communicates via `run_coroutine()` with callbacks. Updates marshaled via `QTimer.singleShot()`.
 
 ## Windows-Specific Notes
 
 - **VB-Audio Virtual Cable** required for per-app audio isolation
-- Logs written to `%LOCALAPPDATA%/Live Translate/logs/app.log`
-- Settings stored in `%APPDATA%/LiveDubbing/settings.json`
-- Auth tokens stored securely via Windows Credential Manager (keyring)
+- Logs: `%LOCALAPPDATA%/Live Translate/logs/app.log`
+- Settings: `%APPDATA%/LiveDubbing/settings.json`
+- Auth tokens: Windows Credential Manager (keyring)
 - Uses `WindowsSelectorEventLoopPolicy` for asyncio
-- FFmpeg bundled at `_internal/ffmpeg.exe` in PyInstaller distribution
+- FFmpeg bundled at `_internal/ffmpeg.exe` in PyInstaller build
 
 ## Supported Languages
 
@@ -110,9 +135,22 @@ en, ja, ko, zh (Mandarin), id, th, ru, hi, vi, tl (Filipino/Tagalog)
 
 ## Environment Variables
 
+**Desktop App:**
 ```
-ELEVENLABS_API_KEY          # Required for direct API access
-OPENAI_API_KEY              # Optional, for OpenAI translation
-SUPABASE_URL                # Backend only
-SUPABASE_SERVICE_ROLE_KEY   # Backend only
+ELEVENLABS_API_KEY              # Direct API access (dev/offline)
+LIVE_TRANSLATE_BACKEND_URL      # Backend URL override
+```
+
+**Backend (.env):**
+```
+SUPABASE_URL                    # Supabase project URL
+SUPABASE_SERVICE_ROLE_KEY       # Service role key
+SUPABASE_JWT_SECRET             # JWT verification secret
+ELEVENLABS_API_KEY              # For API proxy
+STRIPE_SECRET_KEY               # Stripe billing
+```
+
+**Mobile:**
+```
+# Configured in lib/config/api_config.dart
 ```

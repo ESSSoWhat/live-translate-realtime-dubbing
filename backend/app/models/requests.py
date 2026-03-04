@@ -34,7 +34,7 @@ def _is_allowed_redirect_url(url: str) -> bool:
         return False
     if host in TRUSTED_REDIRECT_HOSTS:
         return True
-    return any(host == h or host.endswith("." + h) for h in TRUSTED_REDIRECT_HOSTS)
+    return False
 
 
 # ── Auth ────────────────────────────────────────────────────────────────────

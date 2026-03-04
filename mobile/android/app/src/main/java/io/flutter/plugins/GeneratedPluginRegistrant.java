@@ -36,6 +36,11 @@ public final class GeneratedPluginRegistrant {
       Log.e(TAG, "Error registering plugin path_provider_android, io.flutter.plugins.pathprovider.PathProviderPlugin", e);
     }
     try {
+      flutterEngine.getPlugins().add(new com.qonversion.flutter.sdk.qonversion_flutter_sdk.QonversionPlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin qonversion_flutter, com.qonversion.flutter.sdk.qonversion_flutter_sdk.QonversionPlugin", e);
+    }
+    try {
       flutterEngine.getPlugins().add(new com.llfbandit.record.RecordPlugin());
     } catch (Exception e) {
       Log.e(TAG, "Error registering plugin record_android, com.llfbandit.record.RecordPlugin", e);

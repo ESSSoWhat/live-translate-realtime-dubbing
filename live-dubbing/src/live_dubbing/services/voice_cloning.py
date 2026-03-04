@@ -350,8 +350,13 @@ class VoiceCloneManager:
         name = new_name.strip()
         if not name:
             return False
-        if self._voice_store and not self._voice_store.update_name(voice_id, name):
-            return False
+        if self._voice_store:
+            try:
+                if not self._voice_store.update_name(voice_id, name):
+                    return False
+            except Exception as e:
+                logger.warning("Failed to update voice name in store", voice_id=voice_id, error=str(e))
+                return False
         self._voice_cache[voice_id] = replace(voice, name=name)
         logger.info("Voice renamed", voice_id=voice_id, new_name=name)
         return True

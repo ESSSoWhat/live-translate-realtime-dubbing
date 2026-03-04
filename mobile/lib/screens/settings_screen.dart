@@ -16,12 +16,19 @@ class SettingsScreen extends StatelessWidget {
             title: const Text('Sign out'),
             leading: const Icon(Icons.logout),
             onTap: () async {
-              await AuthService().clear();
-              if (!context.mounted) return;
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const LoginScreen()),
-                (_) => false,
-              );
+              try {
+                await AuthService().clear();
+                if (!context.mounted) return;
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  (_) => false,
+                );
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Sign out failed: $e')),
+                );
+              }
             },
           ),
         ],

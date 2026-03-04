@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import 'login_screen.dart';
+import 'paywall_screen.dart';
 import 'settings_screen.dart';
 import '../features/mic_translate/mic_translate_service.dart';
+import '../services/qonversion_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -20,6 +22,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _translating = false;
   String? _status;
   StreamSubscription<String>? _statusSub;
+  StreamSubscription<void>? _paywallSub;
 
   @override
   void initState() {
@@ -27,25 +30,66 @@ class _HomeScreenState extends State<HomeScreen> {
     _statusSub = _translateService.statusStream.listen((s) {
       if (mounted) setState(() => _status = s);
     });
+    _paywallSub = _translateService.paywallRequiredStream.listen((_) {
+      if (mounted) _showPaywall();
+    });
   }
 
   @override
   void dispose() {
     _statusSub?.cancel();
+    _paywallSub?.cancel();
+    _translateService.dispose();
     super.dispose();
   }
 
+  void _showPaywall() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PaywallScreen(
+          showClose: true,
+          onSuccess: () {
+            Navigator.of(context).maybePop();
+          },
+        ),
+      ),
+    );
+  }
+
+  bool _isToggling = false;
+
   Future<void> _toggleTranslate() async {
-    if (_translating) {
-      await _translateService.stop();
+    if (_isToggling) return;
+    _isToggling = true;
+    try {
+      if (_translating) {
+        await _translateService.stop();
+        if (mounted) {
+          setState(() {
+            _translating = false;
+            _status = null;
+          });
+        }
+        return;
+      }
+      if (QonversionService.isAvailable &&
+          !await QonversionService.checkEntitlements()) {
+        if (!mounted) return;
+        _showPaywall();
+        _isToggling = false;
+        return;
+      }
+      final started = await _translateService.start();
+      if (mounted) setState(() => _translating = started);
+    } catch (e) {
       if (mounted) setState(() => _translating = false);
-      return;
+    } finally {
+      if (mounted) _isToggling = false;
     }
-    final started = await _translateService.start();
-    if (mounted) setState(() => _translating = started);
   }
 
   Future<void> _logout() async {
+    await _translateService.stop();
     await _auth.clear();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(

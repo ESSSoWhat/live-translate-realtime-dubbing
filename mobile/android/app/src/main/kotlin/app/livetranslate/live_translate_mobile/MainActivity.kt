@@ -1,4 +1,4 @@
-package app.livetranslate.mobile
+package app.livetranslate.live_translate_mobile
 
 import io.flutter.embedding.android.FlutterActivity
 

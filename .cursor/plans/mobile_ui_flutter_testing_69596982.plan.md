@@ -21,7 +21,7 @@ todos:
 
 
       Testing: Wire Flutter and website tests into CI; add E2E for website if desired.
-    status: completed
+    status: in-progress
 isProject: false
 ---
 
@@ -57,10 +57,12 @@ isProject: false
 
 - Add a **new Flutter project** (e.g. `mobile/` or `app/` at repo root) for the Live Translate mobile client.  
 - Target **Android** first (Play Store); iOS can be added later with the same codebase.  
+- **Android permissions**: Declare `RECORD_AUDIO` and `INTERNET` in AndroidManifest.xml. Implement runtime permission checks for the microphone (e.g. using `permission_handler`): request RECORD_AUDIO in the mic translate flow (MicTranslateScreen / micStart handler or a PermissionService), show a rationale dialog on denial, handle permanent denial by linking to app settings, and gracefully disable or fallback the mic (e.g. disable start button and show instructions) when permission is not granted. Never attempt recording or backend proxy calls (transcribe → translate → synthesize) without granted permissions. Document these requirements in this plan and in the app README.
 - The app will consume the **existing backend** ([backend/app/](backend/)): auth (login/register/refresh, optional OAuth), user/usage, proxy (transcribe, synthesize, translate, voices). No rewrite of backend; ensure CORS and auth (e.g. Bearer JWT) work for a mobile client.
 
 **Flutter app architecture (high level)**  
 
+- **State management**: Use a single approach (e.g. Riverpod or Provider). Main units: **Auth** (AuthNotifier/AuthProvider for tokens and login/logout), **API client** (injected via Provider/Riverpod with interceptors), **Translate flow** (TranslateController/TranslateNotifier for mic capture, transcription, translation, synthesis, playback state), **Settings** (SettingsNotifier for language/voice/output persistence), **Audio** (AudioPlayerService as singleton/Provider). Test via unit tests for notifiers/controllers and integration/widget tests for UI flows. Wire DI at app root (e.g. ProviderScope/MultiProvider). The sections below (Auth, API client, Mic translate flow, Audio, UI) reference these providers/notifiers.
 - **Auth**: Call `POST /api/v1/auth/login` (and register/refresh); store tokens securely (e.g. `flutter_secure_storage`).  
 - **API client**: Dart HTTP client (e.g. `dio` or `http`) with base URL from config, interceptors for auth and error handling.  
 - **Features (MVP)**:  

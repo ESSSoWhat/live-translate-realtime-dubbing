@@ -15,7 +15,7 @@ _COLUMN_MAP: dict[str, str] = {
     "stt": "stt_seconds",
     "tts": "tts_chars",
     "dub": "dubbing_seconds",
-    "translate": "tts_chars",   # share TTS char quota for translation
+    "translate": "translation_chars",
     "clone": "voice_clones",
 }
 
@@ -52,10 +52,9 @@ def _period_start() -> date:
 def _period_end() -> date:
     """Last day of the current calendar month."""
     today = date.today()
-    # Move to next month then back one day
     if today.month == 12:
-        return date(today.year + 1, 1, 1).replace(day=1) - __import__("datetime").timedelta(days=1)
-    return date(today.year, today.month + 1, 1) - __import__("datetime").timedelta(days=1)
+        return date(today.year + 1, 1, 1) - timedelta(days=1)
+    return date(today.year, today.month + 1, 1) - timedelta(days=1)
 
 
 async def check_quota(user_id: str, event_type: str, quantity: int) -> None:
@@ -127,7 +126,7 @@ async def check_and_record_quota(user_id: str, event_type: str, quantity: int) -
                 LEFT JOIN usage_records ur
                     ON ur.user_id = u.id AND ur.period_start = $2
                 WHERE u.id = $1
-                FOR UPDATE
+                FOR UPDATE OF u
                 """.replace("{col}", col),
                 user_id, period,
             )
@@ -160,7 +159,13 @@ async def check_and_record_quota(user_id: str, event_type: str, quantity: int) -
                 """,
                 user_id, period, period_end, quantity,
             )
-    logger.debug("Usage recorded", user_id=user_id, event_type=event_type, quantity=quantity)
+    logger.info(
+        "usage_recorded",
+        user_id=user_id,
+        event_type=event_type,
+        quantity=quantity,
+        column=col,
+    )
 
 
 async def record_usage(user_id: str, event_type: str, quantity: int) -> None:
@@ -182,7 +187,13 @@ async def record_usage(user_id: str, event_type: str, quantity: int) -> None:
             """,
             user_id, period, period_end, quantity,
         )
-    logger.debug("Usage recorded", user_id=user_id, event_type=event_type, quantity=quantity)
+    logger.info(
+        "usage_recorded",
+        user_id=user_id,
+        event_type=event_type,
+        quantity=quantity,
+        column=col,
+    )
 
 
 async def get_usage_snapshot(user_id: str) -> dict:
@@ -197,10 +208,12 @@ async def get_usage_snapshot(user_id: str) -> dict:
                 COALESCE(ur.dubbing_seconds, 0)  AS dub_used,
                 COALESCE(ur.tts_chars, 0)        AS tts_used,
                 COALESCE(ur.stt_seconds, 0)      AS stt_used,
+                COALESCE(ur.translation_chars, 0) AS translation_used,
                 COALESCE(ur.voice_clones, 0)     AS clones_used,
                 tl.dubbing_seconds               AS dub_limit,
                 tl.tts_chars                     AS tts_limit,
                 tl.stt_seconds                   AS stt_limit,
+                tl.translation_chars             AS translation_limit,
                 tl.voice_clones                  AS clones_limit
             FROM users u
             JOIN tier_limits tl ON tl.tier = u.tier
@@ -223,6 +236,8 @@ async def get_usage_snapshot(user_id: str) -> dict:
         "tts_chars_limit": row["tts_limit"],
         "stt_seconds_used": row["stt_used"],
         "stt_seconds_limit": row["stt_limit"],
+        "translation_chars_used": row["translation_used"],
+        "translation_chars_limit": row["translation_limit"],
         "voice_clones_used": row["clones_used"],
         "voice_clones_limit": row["clones_limit"],
         "period_reset_date": str(next_month),

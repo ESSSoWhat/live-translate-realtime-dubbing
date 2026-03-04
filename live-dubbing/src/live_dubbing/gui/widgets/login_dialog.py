@@ -477,9 +477,16 @@ class _OAuthWorker(QThread):
             self.error.emit(f"Could not open browser: {exc}")
             return
 
-        # ── 3. Wait for callback (up to 5 minutes) ──────────────────────
+        # ── 3. Wait for callback (up to 5 minutes), checking for cancellation ──
         logger.info("Waiting for OAuth callback…")
-        result = server.wait_for_token(timeout=300.0)
+        result = None
+        remaining = 300.0
+        while remaining > 0 and not self.isInterruptionRequested():
+            chunk = min(1.0, remaining)
+            result = server.wait_for_token(timeout=chunk)
+            if result is not None:
+                break
+            remaining -= chunk
         server.stop()
 
         if not result:
@@ -989,14 +996,22 @@ class LoginDialog(QDialog):
         """Closing the login dialog without signing in exits the app."""
         worker = getattr(self, "_worker", None)
         if worker is not None and worker.isRunning():
-            worker.success.disconnect()
-            worker.error.disconnect()
+            try:
+                worker.success.disconnect()
+                worker.error.disconnect()
+            except TypeError:
+                pass
+            worker.requestInterruption()
             worker.quit()
             worker.wait(2000)
         oauth_worker = getattr(self, "_oauth_worker", None)
         if oauth_worker is not None and oauth_worker.isRunning():
-            oauth_worker.success.disconnect()
-            oauth_worker.error.disconnect()
+            try:
+                oauth_worker.success.disconnect()
+                oauth_worker.error.disconnect()
+            except TypeError:
+                pass
+            oauth_worker.requestInterruption()
             oauth_worker.quit()
             oauth_worker.wait(2000)
         event.accept()

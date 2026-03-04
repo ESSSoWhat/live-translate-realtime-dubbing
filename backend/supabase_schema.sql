@@ -89,15 +89,17 @@ ALTER TABLE user_voices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tier_limits ENABLE ROW LEVEL SECURITY;
 
 -- Service role can do everything (RLS is bypassed for service role)
--- Authenticated users can only read their own data (safety net)
+DROP POLICY IF EXISTS users_select_own ON users;
 CREATE POLICY users_select_own ON users
     FOR SELECT USING (auth.uid() = supabase_uid);
 
+DROP POLICY IF EXISTS usage_select_own ON usage_records;
 CREATE POLICY usage_select_own ON usage_records
     FOR SELECT USING (
         user_id = (SELECT id FROM users WHERE supabase_uid = auth.uid())
     );
 
+DROP POLICY IF EXISTS user_voices_select_own ON user_voices;
 CREATE POLICY user_voices_select_own ON user_voices
     FOR SELECT USING (
         user_id = (SELECT id FROM users WHERE supabase_uid = auth.uid())

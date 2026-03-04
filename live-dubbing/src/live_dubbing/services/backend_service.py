@@ -109,7 +109,10 @@ class BackendProxyService:
 
     async def _refresh_access_token(self) -> None:
         """Exchange refresh token for a new access token and update internal state."""
+        current_refresh = self._refresh_token
         async with self._refresh_lock:
+            if self._refresh_token != current_refresh:
+                return
             response = await self._client.post(
                 "/api/v1/auth/refresh",
                 json={"refresh_token": self._refresh_token},
@@ -274,8 +277,11 @@ class BackendProxyService:
                         if retry_response.status_code == 402:
                             body = await retry_response.aread()
                             try:
-                                detail = json.loads(body.decode()).get("detail", {})
+                                raw = json.loads(body.decode())
+                                detail = raw.get("detail", {}) if isinstance(raw, dict) else {}
                             except (ValueError, json.JSONDecodeError):
+                                detail = {}
+                            if not isinstance(detail, dict):
                                 detail = {}
                             raise QuotaExceededException(
                                 event_type=detail.get("event_type", "tts"),
@@ -290,8 +296,11 @@ class BackendProxyService:
                 if response.status_code == 402:
                     body = await response.aread()
                     try:
-                        detail = json.loads(body.decode()).get("detail", {})
+                        raw = json.loads(body.decode())
+                        detail = raw.get("detail", {}) if isinstance(raw, dict) else {}
                     except (ValueError, json.JSONDecodeError):
+                        detail = {}
+                    if not isinstance(detail, dict):
                         detail = {}
                     raise QuotaExceededException(
                         event_type=detail.get("event_type", "tts"),

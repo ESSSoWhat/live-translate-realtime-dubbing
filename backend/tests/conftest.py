@@ -49,6 +49,8 @@ def _usage_snapshot() -> dict:
         "tts_chars_limit": 50000,
         "stt_seconds_used": 0,
         "stt_seconds_limit": 3600,
+        "translation_chars_used": 0,
+        "translation_chars_limit": 50000,
         "voice_clones_used": 0,
         "voice_clones_limit": 1,
         "period_reset_date": "2025-02-01",
@@ -103,7 +105,7 @@ def mock_supabase() -> Generator[MagicMock, None, None]:
         return chain
 
     sb.table = MagicMock(side_effect=table_chain)
-    return sb
+    yield sb
 
 
 @pytest.fixture

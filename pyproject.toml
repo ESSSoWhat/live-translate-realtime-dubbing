@@ -8,6 +8,12 @@ exclude = [
     ".*live-dubbing[/\\\\]build[/\\\\].*",
     ".*live-dubbing[/\\\\]dist[/\\\\].*",
 ]
+# Avoid "Cannot find implementation or library stub" when venv/IDE path differs
+ignore_missing_imports = true
 
 [tool.pylint.main]
-ignore = ["live-dubbing/tests", "live-dubbing/build", "live-dubbing/dist"]
+ignore-paths = [
+    ".*live-dubbing[/\\\\]tests[/\\\\].*",
+    ".*live-dubbing[/\\\\]build[/\\\\].*",
+    ".*live-dubbing[/\\\\]dist[/\\\\].*",
+]
