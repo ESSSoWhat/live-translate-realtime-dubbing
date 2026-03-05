@@ -94,12 +94,23 @@ async def login(body: LoginRequest) -> AuthResponse:
     result = await sb.table("users").select("*").eq("supabase_uid", resp.user.id).maybe_single().execute()
     if not result.data:
         # Auto-create if missing (e.g. user registered via web)
-        result = (
-            await sb.table("users")
-            .insert({"supabase_uid": resp.user.id, "email": body.email, "tier": "free"})
-            .execute()
-        )
-    user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        try:
+            result = (
+                await sb.table("users")
+                .insert({"supabase_uid": resp.user.id, "email": body.email, "tier": "free"})
+                .execute()
+            )
+            if not result.data or (isinstance(result.data, list) and len(result.data) == 0):
+                raise ValueError("Insert returned no data")
+            user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        except Exception as exc:
+            logger.exception("Failed to create or read internal user row after login")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Login could not be completed",
+            ) from exc
+    else:
+        user_row = result.data if isinstance(result.data, dict) else result.data[0]
 
     usage = await get_usage_snapshot(str(user_row["id"]))
 
@@ -230,16 +241,27 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
         .execute()
     )
     if not result.data:
-        result = (
-            await sb.table("users")
-            .insert({
-                "supabase_uid": resp.user.id,
-                "email": resp.user.email or "",
-                "tier": "free",
-            })
-            .execute()
-        )
-    user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        try:
+            result = (
+                await sb.table("users")
+                .insert({
+                    "supabase_uid": resp.user.id,
+                    "email": resp.user.email or "",
+                    "tier": "free",
+                })
+                .execute()
+            )
+            if not result.data or (isinstance(result.data, list) and len(result.data) == 0):
+                raise ValueError("Insert returned no data")
+            user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        except Exception as exc:
+            logger.exception("Failed to create or read internal user row after OAuth exchange")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="OAuth sign-in could not be completed",
+            ) from exc
+    else:
+        user_row = result.data if isinstance(result.data, dict) else result.data[0]
 
     usage = await get_usage_snapshot(str(user_row["id"]))
 
@@ -294,16 +316,27 @@ async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> Au
         .execute()
     )
     if not result.data:
-        result = (
-            await sb.table("users")
-            .insert({
-                "supabase_uid": resp.user.id,
-                "email": resp.user.email or "",
-                "tier": "free",
-            })
-            .execute()
-        )
-    user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        try:
+            result = (
+                await sb.table("users")
+                .insert({
+                    "supabase_uid": resp.user.id,
+                    "email": resp.user.email or "",
+                    "tier": "free",
+                })
+                .execute()
+            )
+            if not result.data or (isinstance(result.data, list) and len(result.data) == 0):
+                raise ValueError("Insert returned no data")
+            user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        except Exception as exc:
+            logger.exception("Failed to create or read internal user row after ID token sign-in")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"{provider.title()} sign-in could not be completed",
+            ) from exc
+    else:
+        user_row = result.data if isinstance(result.data, dict) else result.data[0]
 
     usage = await get_usage_snapshot(str(user_row["id"]))
 
