@@ -253,3 +253,98 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
         tier=user_row["tier"],
         usage=usage,  # type: ignore[arg-type]
     )
+
+
+# ── ID Token login (native mobile SDKs) ───────────────────────────────────────
+
+
+class _IdTokenRequest(BaseModel):
+    id_token: str
+    nonce: str | None = None
+
+
+async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> AuthResponse:
+    """Common logic for ID token sign-in (Google/Apple native SDKs)."""
+    sb = await get_supabase()
+
+    try:
+        sign_in_params: dict = {"provider": provider, "token": id_token}
+        if nonce:
+            sign_in_params["nonce"] = nonce
+        resp = await sb.auth.sign_in_with_id_token(sign_in_params)
+    except Exception as exc:
+        logger.error(f"{provider} ID token sign-in failed", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"{provider.title()} sign-in failed",
+        ) from exc
+
+    if resp.user is None or resp.session is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"{provider.title()} sign-in returned no session",
+        )
+
+    # Upsert internal user row
+    result = (
+        await sb.table("users")
+        .select("*")
+        .eq("supabase_uid", resp.user.id)
+        .maybe_single()
+        .execute()
+    )
+    if not result.data:
+        result = (
+            await sb.table("users")
+            .insert({
+                "supabase_uid": resp.user.id,
+                "email": resp.user.email or "",
+                "tier": "free",
+            })
+            .execute()
+        )
+    user_row = result.data if isinstance(result.data, dict) else result.data[0]
+
+    usage = await get_usage_snapshot(str(user_row["id"]))
+
+    logger.info(f"{provider} ID token sign-in complete", user_id=resp.user.id)
+    return AuthResponse(
+        access_token=resp.session.access_token,
+        refresh_token=resp.session.refresh_token,
+        expires_in=resp.session.expires_in or 3600,
+        user_id=str(user_row["id"]),
+        email=resp.user.email or "",
+        tier=user_row["tier"],
+        usage=usage,  # type: ignore[arg-type]
+    )
+
+
+@router.post("/oauth/google/id-token", response_model=AuthResponse)
+async def google_id_token_login(body: _IdTokenRequest) -> AuthResponse:
+    """Login with Google ID token from native Google Sign-In SDK."""
+    return await _id_token_login("google", body.id_token, body.nonce)
+
+
+@router.post("/oauth/apple/id-token", response_model=AuthResponse)
+async def apple_id_token_login(body: _IdTokenRequest) -> AuthResponse:
+    """Login with Apple ID token from native Sign in with Apple."""
+    return await _id_token_login("apple", body.id_token, body.nonce)
+
+
+# ── Apple OAuth (web flow) ────────────────────────────────────────────────────
+
+
+@router.get("/oauth/apple")
+async def apple_oauth_url(
+    redirect_uri: str = _OAUTH_REDIRECT_URI_QUERY,
+) -> JSONResponse:
+    """Return the Apple OAuth redirect URL for web/desktop clients."""
+    cfg = get_settings()
+    supabase_base = cfg.supabase_url.rstrip("/")
+    params = urllib.parse.urlencode({
+        "provider": "apple",
+        "redirect_to": redirect_uri,
+    })
+    url = f"{supabase_base}/auth/v1/authorize?{params}"
+    logger.info("Generated Apple OAuth URL", redirect_uri=redirect_uri)
+    return JSONResponse({"url": url})

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:qonversion_flutter/qonversion_flutter.dart';
 
-import '../services/qonversion_service.dart';
+import 'package:live_translate_mobile/services/qonversion_service.dart';
 
 /// Shown when user lacks premium entitlement or when API returns 402.
 /// [onSuccess] is called when user gains premium (purchase or restore).
@@ -20,7 +19,7 @@ class PaywallScreen extends StatefulWidget {
 }
 
 class _PaywallScreenState extends State<PaywallScreen> {
-  List<QProduct> _products = [];
+  List<PaywallProduct> _products = [];
   bool _loading = true;
   String? _error;
   bool _purchasing = false;
@@ -38,7 +37,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     });
     try {
       final offerings = await QonversionService.getOfferings();
-      final products = offerings?.main?.products ?? [];
+      final products = offerings?.products ?? [];
       if (mounted) {
         setState(() {
           _products = products;
@@ -56,7 +55,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     }
   }
 
-  Future<void> _purchase(QProduct product) async {
+  Future<void> _purchase(PaywallProduct product) async {
     if (_purchasing) return;
     setState(() {
       _purchasing = true;
@@ -156,7 +155,10 @@ class _PaywallScreenState extends State<PaywallScreen> {
                 const SizedBox(height: 16),
               ],
               if (_loading)
-                const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+                const Center(
+                    child: Padding(
+                        padding: EdgeInsets.all(24),
+                        child: CircularProgressIndicator()))
               else ...[
                 ..._products.map(
                   (p) => Padding(
@@ -165,7 +167,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
                       onPressed: _purchasing ? null : () => _purchase(p),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text((p.prettyPrice?.isNotEmpty ?? false) ? '${p.qonversionId} — ${p.prettyPrice}' : p.qonversionId),
+                        child: Text(
+                          (p.prettyPrice?.isNotEmpty ?? false)
+                              ? '${p.id} — ${p.prettyPrice}'
+                              : p.id,
+                        ),
                       ),
                     ),
                   ),
@@ -174,7 +180,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   Text(
                     'No plans available. Please try again later.',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                     textAlign: TextAlign.center,
                   ),

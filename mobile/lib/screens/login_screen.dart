@@ -1,8 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/qonversion_service.dart';
+import '../services/sso_service.dart';
 import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -17,6 +20,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   final _auth = AuthService();
   final _api = ApiClient();
+  final _sso = SsoService();
   bool _loading = false;
   String? _error;
 
@@ -35,15 +39,57 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
-      final body = await _api.login(
-        email,
-        password,
-      );
+      final body = await _api.login(email, password);
       await _auth.saveFromAuthResponse(body);
       if (QonversionService.isAvailable) {
         final userId = body['user_id'] as String?;
         if (userId != null) await QonversionService.identify(userId);
       }
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString().replaceFirst(RegExp(r'^Exception: '), '');
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _signInWithGoogle() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await _sso.signInWithGoogle();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e.toString();
+      if (msg.contains('cancelled')) {
+        setState(() => _loading = false);
+        return;
+      }
+      setState(() {
+        _error = msg.replaceFirst(RegExp(r'^Exception: '), '');
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _signInWithApple() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await _sso.signInWithApple();
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const HomeScreen()),
@@ -66,6 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isIOS = Platform.isIOS;
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -106,6 +153,42 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 16),
               ],
+              OutlinedButton.icon(
+                onPressed: _loading ? null : _signInWithGoogle,
+                icon: const Icon(Icons.g_mobiledata, size: 24),
+                label: const Text('Continue with Google'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+              if (isIOS) ...[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _loading ? null : _signInWithApple,
+                  icon: const Icon(Icons.apple, size: 24),
+                  label: const Text('Continue with Apple'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  const Expanded(child: Divider()),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text(
+                      'or',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                    ),
+                  ),
+                  const Expanded(child: Divider()),
+                ],
+              ),
+              const SizedBox(height: 24),
               TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,

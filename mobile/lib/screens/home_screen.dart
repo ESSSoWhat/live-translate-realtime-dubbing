@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import '../services/api_client.dart';
 import 'login_screen.dart';
 import 'paywall_screen.dart';
 import 'settings_screen.dart';
@@ -18,6 +19,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _auth = AuthService();
+  final _api = ApiClient();
   final _translateService = MicTranslateService();
   bool _translating = false;
   String? _status;
@@ -58,6 +60,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _isToggling = false;
 
+  /// True if user has premium access via Qonversion entitlements or backend tier.
+  Future<bool> _hasPremiumAccess() async {
+    if (QonversionService.isAvailable &&
+        await QonversionService.checkEntitlements()) {
+      return true;
+    }
+    try {
+      final me = await _api.getMe();
+      final tier = me['tier'] as String?;
+      return tier != null && tier != 'free';
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _toggleTranslate() async {
     if (_isToggling) return;
     _isToggling = true;
@@ -72,8 +89,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         return;
       }
-      if (QonversionService.isAvailable &&
-          !await QonversionService.checkEntitlements()) {
+      if (!await _hasPremiumAccess()) {
         if (!mounted) return;
         _showPaywall();
         _isToggling = false;

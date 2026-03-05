@@ -23,6 +23,16 @@ _TIER_LABELS = {
     "pro": "Pro",
 }
 
+# Tier rank for conflict resolution: higher = better. Use max when both Stripe and Qonversion update.
+_TIER_RANK = {"free": 0, "starter": 1, "pro": 2}
+
+
+def _max_tier(a: str, b: str) -> str:
+    """Return the higher of two tiers (free < starter < pro). Unknown tiers treated as free."""
+    ra = _TIER_RANK.get((a or "").strip().lower(), 0)
+    rb = _TIER_RANK.get((b or "").strip().lower(), 0)
+    return "pro" if ra >= 2 or rb >= 2 else ("starter" if ra >= 1 or rb >= 1 else "free")
+
 
 def _stripe_configured() -> bool:
     """Return True if Stripe is configured (secret key is non-empty)."""
@@ -171,6 +181,9 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(alias=
             else:
                 price_id = sub.items.data[0].price.id
                 tier = _price_to_tier(price_id, cfg)
+                existing = await sb.table("users").select("tier").eq("id", user_id).maybe_single().execute()
+                current_tier = existing.data.get("tier", "free") if existing.data else "free"
+                tier = _max_tier(current_tier, tier)
                 await sb.table("users").update({
                     "tier": tier,
                     "subscription_id": subscription_id,
@@ -208,6 +221,9 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(alias=
                 else:
                     price_id = sub.items.data[0].price.id
                     tier = _price_to_tier(price_id, cfg)
+                    existing = await sb.table("users").select("tier").eq("id", user_id).maybe_single().execute()
+                    current_tier = existing.data.get("tier", "free") if existing.data else "free"
+                    tier = _max_tier(current_tier, tier)
                     await sb.table("users").update({
                         "tier": tier,
                         "subscription_status": sub.status,
@@ -325,6 +341,9 @@ async def qonversion_webhook(request: Request) -> dict:
         "subscription_updated",
     ):
         tier = _qonversion_product_to_tier(product_id)
+        existing = await sb.table("users").select("tier").eq("id", user_id).maybe_single().execute()
+        current_tier = existing.data.get("tier", "free") if existing.data else "free"
+        tier = _max_tier(current_tier, tier)
         await sb.table("users").update({
             "tier": tier,
             "subscription_status": "active",

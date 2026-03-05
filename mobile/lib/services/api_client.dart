@@ -159,4 +159,49 @@ class ApiClient {
     final list = r.data as List<dynamic>? ?? [];
     return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
+
+  /// GET /user/me — returns user profile with tier, subscription_status, usage.
+  Future<Map<String, dynamic>> getMe() async {
+    final r = await _dio.get<Map<String, dynamic>>('/user/me');
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// POST /auth/oauth/google/id-token — login with Google ID token.
+  Future<Map<String, dynamic>> loginWithGoogleIdToken(
+    String idToken, {
+    String? nonce,
+  }) async {
+    final r = await _dio.post(
+      '/auth/oauth/google/id-token',
+      data: {'id_token': idToken, if (nonce != null) 'nonce': nonce},
+    );
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// POST /auth/oauth/apple/id-token — login with Apple ID token.
+  Future<Map<String, dynamic>> loginWithAppleIdToken(
+    String idToken, {
+    String? nonce,
+  }) async {
+    final r = await _dio.post(
+      '/auth/oauth/apple/id-token',
+      data: {'id_token': idToken, if (nonce != null) 'nonce': nonce},
+    );
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
 }

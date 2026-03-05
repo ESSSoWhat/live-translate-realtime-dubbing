@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import 'package:qonversion_flutter/qonversion_flutter.dart';
 
 import '../services/qonversion_service.dart';
+// ignore: unused_import - used via _api.getMe() after purchase/restore
+import '../services/api_client.dart';
 
 /// Shown when user lacks premium entitlement or when API returns 402.
 /// [onSuccess] is called when user gains premium (purchase or restore).
@@ -21,7 +22,8 @@ class PaywallScreen extends StatefulWidget {
 }
 
 class _PaywallScreenState extends State<PaywallScreen> {
-  List<QProduct> _products = [];
+  final _api = ApiClient();
+  List<PaywallProduct> _products = [];
   bool _loading = true;
   String? _error;
   bool _purchasing = false;
@@ -39,7 +41,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     });
     try {
       final offerings = await QonversionService.getOfferings();
-      final products = offerings?.main?.products ?? [];
+      final products = offerings?.products ?? [];
       if (mounted) {
         setState(() {
           _products = products;
@@ -58,7 +60,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     }
   }
 
-  Future<void> _purchase(QProduct product) async {
+  Future<void> _purchase(PaywallProduct product) async {
     if (_purchasing) return;
     setState(() {
       _purchasing = true;
@@ -69,7 +71,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
       if (mounted) {
         setState(() => _purchasing = false);
         if (success) {
-          widget.onSuccess?.call();
+          await Future<void>.delayed(const Duration(milliseconds: 1500));
+          try {
+            if (mounted) await _api.getMe();
+          } catch (_) {}
+          if (mounted) widget.onSuccess?.call();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Purchase was cancelled or failed. Please try again.')),
@@ -97,7 +103,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
       if (mounted) {
         setState(() => _purchasing = false);
         if (success) {
-          widget.onSuccess?.call();
+          await Future<void>.delayed(const Duration(milliseconds: 1500));
+          try {
+            if (mounted) await _api.getMe();
+          } catch (_) {}
+          if (mounted) widget.onSuccess?.call();
         } else {
           setState(() => _error = 'No active subscription found.');
         }
@@ -173,7 +183,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
                       onPressed: _purchasing ? null : () => _purchase(p),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Text((p.prettyPrice?.isNotEmpty ?? false) ? '${p.qonversionId} — ${p.prettyPrice}' : p.qonversionId),
+                        child: Text((p.prettyPrice?.isNotEmpty ?? false) ? '${p.id} — ${p.prettyPrice}' : p.id),
                       ),
                     ),
                   ),

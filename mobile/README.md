@@ -32,3 +32,11 @@ Without `--dart-define=API_BASE_URL=...`, the release build uses the default bac
 ## Virtual mic on Android
 
 The Android app is standalone: it uses the Live Translate backend for translation but does not require the Windows desktop app. Translated audio is played to the device's speaker/earpiece. Other apps on the same device cannot use this as a "microphone" input—that is an Android/platform limitation; there is no in-app workaround for routing translated audio as a system mic on device. For virtual mic routing into Discord, Zoom, etc., use the **Windows desktop app** with **VB-Cable** (a virtual audio cable): set the desktop app's output to CABLE Input and set Discord/Zoom input to CABLE Output. See [VB-Audio Cable](https://vb-audio.com/Cable/) for setup.
+
+## Troubleshooting
+
+- **Android: "Unsupported class file major version 69" or "Can't use Java 25 and Gradle"**  
+  The Android build requires **JDK 17** (or 21). If you use Java 25, set `JAVA_HOME` to a JDK 17 install, or in your IDE set the Gradle JVM to JDK 17 (e.g. File → Settings → Build, Execution, Deployment → Build Tools → Gradle → Gradle JDK). The project’s `android/.java-version` file suggests 17 for tools that support it.
+
+- **Dart: "Target of URI doesn't exist: package:flutter/material.dart"**  
+  Usually the analyzer is running from the workspace root instead of this project. Open the **`mobile`** folder as the project root in your IDE, or run `flutter pub get` from this directory and ensure the Dart/Flutter extension is using the Flutter SDK and this project’s `.dart_tool`.
