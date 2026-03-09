@@ -8,9 +8,10 @@
 **Fix:**
 
 1. Install JDK 17 if needed (e.g. [Adoptium](https://adoptium.net/) or SDKMAN).
-2. Either:
-   - **Option A:** Set `JAVA_HOME` to your JDK 17 install (e.g. `C:\Program Files\Eclipse Adoptium\jdk-17.x.x`) and ensure no other Java is first on `PATH`, then re-open the project / re-import Gradle, or  
-   - **Option B (IDE):** In **Android Studio** or **IntelliJ**: File → Settings → Build, Execution, Deployment → Build Tools → Gradle → **Gradle JDK** → choose **17**.  
-   - **Option C (Cursor / VS Code):** Set Gradle to use JDK 17: add to `.vscode/settings.json` (or workspace settings): `"java.import.gradle.java.home": "C:\\\\path\\\\to\\\\jdk-17"` (use your actual JDK 17 path). Or in `gradle.properties`: `org.gradle.java.home=C:\\path\\to\\jdk-17`.
+2. Use one of these (cross-platform; no hardcoded paths in the repo):
+   - **Option A:** Set `JAVA_HOME` to your JDK 17 install (e.g. `C:\Program Files\Eclipse Adoptium\jdk-17.x.x` on Windows, or `export JAVA_HOME=...` on macOS/Linux). Re-open the project / re-import Gradle after changing.
+   - **Option B (IDE):** In **Android Studio** or **IntelliJ**: File → Settings → Build, Execution, Deployment → Build Tools → Gradle → **Gradle JDK** → choose **17**.
+   - **Option C (Cursor / VS Code):** In workspace settings: `"java.import.gradle.java.home": "C:\\\\path\\\\to\\\\jdk-17"` (use your actual JDK 17 path).
+   - **Option D (local override, gitignored):** Add `org.gradle.java.home=<path-to-jdk17>` to `android/local.properties`. The Gradle wrapper will use it when `JAVA_HOME` is not set. CI should set `JAVA_HOME` instead.
 
 The root `android/.java-version` file is set to `17` for tools that support it. *Gradle 9.1+ supports Java 25, but Flutter's Android Gradle plugin does not yet support Gradle 9.1, so JDK 17 is required for now.*
