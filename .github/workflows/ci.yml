@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main, master]
+    tags: ["v*"]
   pull_request:
     branches: [main, master]
 
@@ -51,6 +52,7 @@ jobs:
         run: |
           cd website
           npm ci
+          npm run lint
           npm run build
 
   flutter:
@@ -58,6 +60,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -84,3 +92,173 @@ jobs:
         run: |
           cd mobile
           flutter build apk --debug
+  # ── Release jobs (on tag v*) ─────────────────────────────────────────────
+  release-android:
+    name: Android release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.24.x"
+          channel: "stable"
+
+      - name: Install dependencies
+        run: |
+          cd mobile
+          flutter pub get
+
+      - name: Test
+        run: |
+          cd mobile
+          flutter test
+
+      - name: Decode keystore and create key.properties
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          cd mobile/android
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "ANDROID_KEYSTORE_BASE64 not set; release builds will use debug signing."
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > upload-keystore.jks
+          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=upload-keystore.jks\n' \
+            "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_PASSWORD" "$ANDROID_KEY_ALIAS" "upload-keystore.jks" > key.properties
+
+      - name: Build release APK
+        run: |
+          cd mobile
+          flutter build apk --release
+
+      - name: Build App Bundle
+        run: |
+          cd mobile
+          flutter build appbundle --release
+
+      - name: Upload APK and AAB to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            mobile/build/app/outputs/flutter-apk/app-release.apk
+            mobile/build/app/outputs/bundle/release/app-release.aab
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-ios:
+    name: iOS release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.24.x"
+          channel: "stable"
+
+      - name: Install dependencies
+        run: |
+          cd mobile
+          flutter pub get
+
+      - name: Test
+        run: |
+          cd mobile
+          flutter test
+
+      - name: Build iOS release
+        run: |
+          cd mobile
+          flutter build ios --release --no-codesign
+        # IPA upload: configure code signing (cert + provisioning profile) and use
+        # flutter build ipa to produce an IPA, then add an upload step. See DEPLOY.md.
+
+  release-desktop:
+    name: Windows desktop release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install FFmpeg
+        run: choco install ffmpeg -y
+
+      - name: Set FFMPEG_DIR
+        run: |
+          $exe = (Get-Command ffmpeg).Source
+          $dir = (Get-Item $exe).DirectoryName
+          echo "FFMPEG_DIR=$dir" >> $env:GITHUB_ENV
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build with PyInstaller
+        run: |
+          cd live-dubbing
+          python -m venv venv
+          .\venv\Scripts\activate
+          python -m pip install --upgrade pip
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]"
+          pip install pyinstaller
+          pyinstaller live_translate.spec --noconfirm
+
+      - name: Zip artifact
+        run: |
+          Compress-Archive -Path "live-dubbing\dist\LiveTranslate\*" -DestinationPath "LiveTranslate-${{ github.ref_name }}.zip"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: LiveTranslate-${{ github.ref_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  desktop-tests:
+    name: Desktop tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          cd live-dubbing
+          python -m venv venv
+          .\venv\Scripts\activate
+          python -m pip install --upgrade pip
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]"
+
+      - name: Run pytest
+        run: |
+          cd live-dubbing
+          .\venv\Scripts\activate
+          python -m pytest tests/ -v --tb=short
+        env:
+          SUPABASE_URL: https://test.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: test-key
+          SUPABASE_JWT_SECRET: test-jwt-secret
+          ELEVENLABS_API_KEY: test-key

@@ -1,10 +1,13 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:dio/dio.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
+import '../config/api_config.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
 import 'qonversion_service.dart';
@@ -12,6 +15,14 @@ import 'qonversion_service.dart';
 class SsoService {
   final _api = ApiClient();
   final _auth = AuthService();
+
+  GoogleSignIn get _googleSignIn {
+    final serverClientId = ApiConfig.googleWebClientId;
+    if (serverClientId != null && serverClientId.isNotEmpty) {
+      return GoogleSignIn(scopes: ['email', 'openid'], serverClientId: serverClientId);
+    }
+    return GoogleSignIn(scopes: ['email', 'openid']);
+  }
 
   String _generateNonce([int length = 32]) {
     const charset =
@@ -28,21 +39,33 @@ class SsoService {
   }
 
   Future<Map<String, dynamic>> signInWithGoogle() async {
-    final result = await GoogleSignIn.instance.authenticate();
-    if (result == null) {
-      throw Exception('Google sign-in cancelled');
+    if (Platform.isAndroid &&
+        (ApiConfig.googleWebClientId == null || ApiConfig.googleWebClientId!.isEmpty)) {
+      throw SsoException(
+        'Google Sign-In is not configured. Set GOOGLE_WEB_CLIENT_ID to your Web client ID '
+        'from Google Cloud, and add your app SHA-1/SHA-256 to the OAuth client.',
+      );
     }
-    final idToken = result.credential?.idToken;
+    final account = await _googleSignIn.signIn();
+    if (account == null) {
+      throw SsoException('Google sign-in cancelled', cancelled: true);
+    }
+    final googleAuth = await account.authentication;
+    final idToken = googleAuth.idToken;
     if (idToken == null) {
-      throw Exception('Failed to get Google ID token');
+      throw SsoException('Failed to get Google ID token');
     }
-    final body = await _api.loginWithGoogleIdToken(idToken);
-    await _auth.saveFromAuthResponse(body);
-    if (QonversionService.isAvailable) {
-      final userId = body['user_id'] as String?;
-      if (userId != null) await QonversionService.identify(userId);
+    try {
+      final body = await _api.loginWithGoogleIdToken(idToken);
+      await _auth.saveFromAuthResponse(body);
+      if (QonversionService.isAvailable) {
+        final userId = body['user_id'] as String?;
+        if (userId != null) await QonversionService.identify(userId);
+      }
+      return body;
+    } catch (e) {
+      throw _wrapSsoError(e, 'Google');
     }
-    return body;
   }
 
   Future<Map<String, dynamic>> signInWithApple() async {
@@ -57,14 +80,45 @@ class SsoService {
     );
     final idToken = credential.identityToken;
     if (idToken == null) {
-      throw Exception('Failed to get Apple ID token');
+      throw SsoException('Failed to get Apple ID token');
     }
-    final body = await _api.loginWithAppleIdToken(idToken, nonce: rawNonce);
-    await _auth.saveFromAuthResponse(body);
-    if (QonversionService.isAvailable) {
-      final userId = body['user_id'] as String?;
-      if (userId != null) await QonversionService.identify(userId);
+    try {
+      final body = await _api.loginWithAppleIdToken(idToken, nonce: rawNonce);
+      await _auth.saveFromAuthResponse(body);
+      if (QonversionService.isAvailable) {
+        final userId = body['user_id'] as String?;
+        if (userId != null) await QonversionService.identify(userId);
+      }
+      return body;
+    } catch (e) {
+      throw _wrapSsoError(e, 'Apple');
     }
-    return body;
   }
+
+  static Exception _wrapSsoError(Object e, String provider) {
+    if (e is SsoException) return e;
+    if (e is DioException) {
+      final detail = e.response?.data;
+      final String? message = detail is Map && detail.containsKey('detail')
+          ? detail['detail']?.toString()
+          : detail?.toString();
+      if (message != null && message.isNotEmpty) {
+        return SsoException(message);
+      }
+      if (e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.connectionTimeout) {
+        return SsoException('Network error. Check your connection.');
+      }
+    }
+    return SsoException('$provider sign-in failed. Please try again.');
+  }
+}
+
+/// SSO error with optional [cancelled] for user dismissal.
+class SsoException implements Exception {
+  SsoException(this.message, {this.cancelled = false});
+  final String message;
+  final bool cancelled;
+  @override
+  String toString() => message;
 }

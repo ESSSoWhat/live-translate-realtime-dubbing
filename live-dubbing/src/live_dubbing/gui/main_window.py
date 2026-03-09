@@ -203,26 +203,12 @@ class MainWindow(QMainWindow):
         )
         banner_layout = QHBoxLayout(self._api_banner)
         banner_layout.setContentsMargins(10, 6, 10, 6)
-        banner_label = QLabel("API key not configured — voice cloning and TTS require an ElevenLabs key.")
+        banner_label = QLabel(
+            "API key not configured — sign in or set ELEVENLABS_API_KEY in your environment."
+        )
         banner_label.setStyleSheet("color: #ffcc00; font-size: 12px;")
         banner_layout.addWidget(banner_label)
         banner_layout.addStretch()
-        self._api_banner_btn = QPushButton("Open Settings")
-        self._api_banner_btn.setFixedWidth(100)
-        self._api_banner_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #665a00;
-                color: #ffcc00;
-                border-radius: 3px;
-                padding: 4px 8px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #7a6b00; }
-            """
-        )
-        self._api_banner_btn.clicked.connect(self._open_settings)
-        banner_layout.addWidget(self._api_banner_btn)
         self._api_banner.setVisible(False)  # Hidden until we know key is missing
         main_layout.addWidget(self._api_banner)
 
@@ -751,17 +737,10 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._mic_panel)
 
     def _setup_menus(self) -> None:
-        """Set up menu bar with Settings, Debug, and Help menus."""
+        """Set up menu bar with Account, Debug, Tools, and Help menus."""
         menu_bar = self.menuBar()
         if menu_bar is None:
             return
-
-        # Settings menu
-        settings_menu = menu_bar.addMenu("&Settings")
-        if settings_menu is not None:
-            api_keys_action = settings_menu.addAction("&API Keys...")
-            if api_keys_action is not None:
-                api_keys_action.triggered.connect(self._open_settings)
 
         # Account menu
         account_menu = menu_bar.addMenu("&Account")
@@ -846,22 +825,6 @@ class MainWindow(QMainWindow):
             self._mic_panel.show()
         else:
             self._mic_panel.hide()
-
-    def _open_settings(self) -> None:
-        """Open the settings dialog for API key configuration."""
-        from live_dubbing.gui.widgets.settings_dialog import SettingsDialog
-
-        dialog = SettingsDialog(settings=self._settings, parent=self)
-        dialog.exec()
-
-        if dialog.was_saved:
-            # Reinitialize ElevenLabs service with new key
-            if self._async_worker:
-                self._async_worker.run_coroutine(
-                    self._orchestrator.reinit_elevenlabs(),
-                )
-            # Refresh status bar
-            self._refresh_ui()
 
     def _show_about_dialog(self) -> None:
         """Show the About dialog with credits."""
@@ -1002,8 +965,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "API Key Not Configured",
-                "Please configure your ElevenLabs API key.\n\n"  # noqa: F541
-                "Go to Settings > API Keys to enter your key.",
+                "Please sign in or set ELEVENLABS_API_KEY in your environment.",
             )
             return
 

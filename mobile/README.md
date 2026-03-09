@@ -33,6 +33,18 @@ Without `--dart-define=API_BASE_URL=...`, the release build uses the default bac
 
 The Android app is standalone: it uses the Live Translate backend for translation but does not require the Windows desktop app. Translated audio is played to the device's speaker/earpiece. Other apps on the same device cannot use this as a "microphone" input—that is an Android/platform limitation; there is no in-app workaround for routing translated audio as a system mic on device. For virtual mic routing into Discord, Zoom, etc., use the **Windows desktop app** with **VB-Cable** (a virtual audio cable): set the desktop app's output to CABLE Input and set Discord/Zoom input to CABLE Output. See [VB-Audio Cable](https://vb-audio.com/Cable/) for setup.
 
+## Google Sign-In (SSO)
+
+For "Continue with Google" to work:
+
+1. **Google Cloud Console** — Create (or use) an OAuth 2.0 **Web application** client. Note the **Client ID** (Web client ID).
+2. **Supabase** — Auth → Providers → Google: enable and set Client ID + Client secret to that Web client.
+3. **This app** — Set the same Web client ID:  
+   - Build: `--dart-define=GOOGLE_WEB_CLIENT_ID=YOUR_WEB_CLIENT_ID.apps.googleusercontent.com`  
+   - Or at runtime: `GOOGLE_WEB_CLIENT_ID=... flutter run`
+4. **Android only** — Add your app’s SHA-1 and SHA-256 to the Google Cloud OAuth client:  
+   `keytool -keystore path-to-keystore -list -v` → add the fingerprints in APIs & Services → Credentials.
+
 ## Troubleshooting
 
 - **Android: "Unsupported class file major version 69" or "Can't use Java 25 and Gradle"**  

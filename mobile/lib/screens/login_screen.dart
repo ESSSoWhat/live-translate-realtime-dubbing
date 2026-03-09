@@ -71,13 +71,12 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      final msg = e.toString();
-      if (msg.contains('cancelled')) {
+      if (e is SsoException && e.cancelled) {
         setState(() => _loading = false);
         return;
       }
       setState(() {
-        _error = msg.replaceFirst(RegExp(r'^Exception: '), '');
+        _error = e is SsoException ? e.message : e.toString().replaceFirst(RegExp(r'^Exception: '), '');
         _loading = false;
       });
     }
@@ -96,8 +95,12 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } catch (e) {
       if (!mounted) return;
+      if (e is SsoException && e.cancelled) {
+        setState(() => _loading = false);
+        return;
+      }
       setState(() {
-        _error = e.toString().replaceFirst(RegExp(r'^Exception: '), '');
+        _error = e is SsoException ? e.message : e.toString().replaceFirst(RegExp(r'^Exception: '), '');
         _loading = false;
       });
     }
@@ -113,6 +116,8 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final isIOS = Platform.isIOS;
+    final isAndroid = Platform.isAndroid;
+    final showSsoButtons = isAndroid || isIOS;
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -153,42 +158,45 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 16),
               ],
-              OutlinedButton.icon(
-                onPressed: _loading ? null : _signInWithGoogle,
-                icon: const Icon(Icons.g_mobiledata, size: 24),
-                label: const Text('Continue with Google'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-              if (isIOS) ...[
-                const SizedBox(height: 12),
+              if (showSsoButtons) ...[
                 OutlinedButton.icon(
-                  onPressed: _loading ? null : _signInWithApple,
-                  icon: const Icon(Icons.apple, size: 24),
-                  label: const Text('Continue with Apple'),
+                  onPressed: _loading ? null : _signInWithGoogle,
+                  icon: const Icon(Icons.g_mobiledata, size: 24),
+                  label: const Text('Continue with Google'),
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                 ),
-              ],
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  const Expanded(child: Divider()),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      'or',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
+                // Apple Sign In: iOS always; Android 13+ (sign_in_with_apple supports it).
+                if (isIOS || isAndroid) ...[
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _loading ? null : _signInWithApple,
+                    icon: const Icon(Icons.apple, size: 24),
+                    label: const Text('Continue with Apple'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
-                  const Expanded(child: Divider()),
                 ],
-              ),
-              const SizedBox(height: 24),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    const Expanded(child: Divider()),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(
+                        'or',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                    ),
+                    const Expanded(child: Divider()),
+                  ],
+                ),
+                const SizedBox(height: 24),
+              ],
               TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,

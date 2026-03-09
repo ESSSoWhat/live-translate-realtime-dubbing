@@ -286,7 +286,7 @@ class ProcessingPipeline:
         if not self._service:
             self._event_bus.emit_warning(
                 "ElevenLabs API key not set. STT, TTS and voice clone will not work. "
-                "Set ELEVENLABS_API_KEY in .env or configure in Settings.",
+                "Set ELEVENLABS_API_KEY in .env or sign in to use the service.",
                 {},
             )
 
@@ -756,7 +756,7 @@ class ProcessingPipeline:
                         self._stt_skip_logged = True
                         logger.warning("STT stage: no ElevenLabs service, skipping")
                         self._event_bus.emit_warning(
-                            "Speech-to-text disabled: add ElevenLabs API key in Settings or set ELEVENLABS_API_KEY.",
+                            "Speech-to-text disabled: sign in or set ELEVENLABS_API_KEY.",
                             {},
                         )
                     continue

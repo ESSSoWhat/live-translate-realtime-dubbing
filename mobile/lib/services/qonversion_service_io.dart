@@ -50,9 +50,8 @@ class QonversionService {
       if (kDebugMode) {
         debugPrint('Qonversion init error: $e $s');
       }
-      completer.completeError(e, s);
-      _initFuture = null;
-      rethrow;
+      // Don't rethrow - allow app to continue without Qonversion
+      completer.complete();
     }
   }
 

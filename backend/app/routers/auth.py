@@ -5,10 +5,10 @@ from __future__ import annotations
 import contextlib
 import urllib.parse
 
-import structlog
-from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
+import structlog  # pylint: disable=import-error
+from fastapi import APIRouter, HTTPException, Query, status  # pylint: disable=import-error
+from fastapi.responses import JSONResponse, Response  # pylint: disable=import-error
+from pydantic import BaseModel  # pylint: disable=import-error
 
 from app.config import get_settings
 from app.models.requests import ForgotPasswordRequest, LoginRequest, RefreshRequest, RegisterRequest

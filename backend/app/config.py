@@ -8,14 +8,14 @@ class Settings(BaseSettings):  # pylint: disable=too-few-public-methods
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Supabase
-    supabase_url: str
-    supabase_service_role_key: str
-    supabase_jwt_secret: str
+    # Supabase (required for auth; use empty string to run without auth)
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_jwt_secret: str = ""
     supabase_db_url: str = ""  # Direct PostgreSQL connection for usage tracking (asyncpg)
 
-    # ElevenLabs (server-side only)
-    elevenlabs_api_key: str
+    # ElevenLabs (required for voice proxy; use empty string to run without)
+    elevenlabs_api_key: str = ""
 
     # OpenAI
     openai_api_key: str = ""

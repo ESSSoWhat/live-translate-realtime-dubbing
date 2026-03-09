@@ -86,7 +86,7 @@ class StatusBar(QWidget):
         # API status
         self._api_label = QLabel("API: --")
         self._api_label.setStyleSheet("font-size: 12px; color: #aaa;")
-        self._api_label.setToolTip("Configure in Settings > API Keys")
+        self._api_label.setToolTip("API key from sign-in or ELEVENLABS_API_KEY")
         layout.addWidget(self._api_label)
 
         # Latency
