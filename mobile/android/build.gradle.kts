@@ -7,10 +7,22 @@ if (javaMajor >= 25) {
     )
 }
 
+// Define flutter SDK versions at root level for plugins that need them
+val flutterCompileSdkVersion by extra(36)
+val flutterTargetSdkVersion by extra(35)
+val flutterMinSdkVersion by extra(24)
+
 allprojects {
     repositories {
         google()
         mavenCentral()
+    }
+    
+    // Make flutter SDK versions available as ext properties for legacy plugins
+    afterEvaluate {
+        extra["flutter.compileSdkVersion"] = flutterCompileSdkVersion
+        extra["flutter.targetSdkVersion"] = flutterTargetSdkVersion
+        extra["flutter.minSdkVersion"] = flutterMinSdkVersion
     }
 }
 
