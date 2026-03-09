@@ -7,6 +7,10 @@ on:
   pull_request:
     branches: [main, master]
 
+# Required for release uploads
+permissions:
+  contents: write
+
 jobs:
   backend:
     name: Backend tests
@@ -35,26 +39,8 @@ jobs:
           SUPABASE_JWT_SECRET: test-jwt-secret
           ELEVENLABS_API_KEY: test-key
 
-  website:
-    name: Website build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          repository: ESSSoWhat/livetranslate-website
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: package-lock.json
-
-      - name: Install and build
-        run: |
-          npm ci
-          npm run lint
-          npm run build
+  # Website is deployed via Vercel GitHub integration, skip CI check here
+  # since it's a separate repository
 
   flutter:
     name: Flutter Android
@@ -157,8 +143,6 @@ jobs:
           files: |
             mobile/build/app/outputs/flutter-apk/app-release.apk
             mobile/build/app/outputs/bundle/release/app-release.aab
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release-ios:
     name: iOS release
@@ -230,8 +214,6 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: LiveTranslate-${{ github.ref_name }}.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   desktop-tests:
     name: Desktop tests (Windows)
