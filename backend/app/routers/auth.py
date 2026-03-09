@@ -49,7 +49,15 @@ async def register(body: RegisterRequest) -> AuthResponse:
             .insert({"supabase_uid": resp.user.id, "email": body.email, "tier": "free"})
             .execute()
         )
-        user_row = insert_result.data[0]
+        if not insert_result.data or (
+            isinstance(insert_result.data, list) and len(insert_result.data) == 0
+        ):
+            raise ValueError("Insert returned no data")
+        user_row = (
+            insert_result.data
+            if isinstance(insert_result.data, dict)
+            else insert_result.data[0]
+        )
     except Exception as exc:
         logger.exception("Failed to create internal user row")
         try:

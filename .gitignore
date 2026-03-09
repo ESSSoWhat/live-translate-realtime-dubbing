@@ -25,6 +25,8 @@ env/
 # IDE
 .vscode/
 *.code-workspace
+*.bak
+*.orig
 
 # Windows
 nul
