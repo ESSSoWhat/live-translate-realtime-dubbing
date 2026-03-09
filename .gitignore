@@ -1,7 +1,8 @@
 # Build output
 build/
 dist/
-*.spec
+# Allow PyInstaller spec files (build config)
+!*.spec
 
 # FFmpeg (embedded repo - use submodule or system install)
 ffmpeg/
