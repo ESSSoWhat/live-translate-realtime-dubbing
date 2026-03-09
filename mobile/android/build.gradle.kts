@@ -7,6 +7,11 @@ if (javaMajor >= 25) {
     )
 }
 
+// Set SDK versions for plugins that need them (e.g. record_android)
+rootProject.extra.set("compileSdkVersion", 36)
+rootProject.extra.set("targetSdkVersion", 35)
+rootProject.extra.set("minSdkVersion", 24)
+
 allprojects {
     repositories {
         google()
@@ -31,3 +36,4 @@ subprojects {
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
+

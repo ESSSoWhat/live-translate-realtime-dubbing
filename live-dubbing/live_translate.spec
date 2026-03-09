@@ -75,11 +75,10 @@ a = Analysis(
         ),
         # numpy data files (via collect_all — includes .pyi stubs, testing data)
         *_numpy_datas,
-        # .env file (Supabase config for OAuth login)
-        (
-            str(PROJECT_ROOT / ".env"),
-            ".",
-        ),
+        # .env file (Supabase config for OAuth login) - optional, may not exist in CI
+        *([
+            (str(PROJECT_ROOT / ".env"), ".")
+        ] if (PROJECT_ROOT / ".env").exists() else []),
     ],
     hiddenimports=torch_hiddenimports + torchaudio_hiddenimports + jaraco_hiddenimports + numpy_hiddenimports + [
         # ── Silero VAD ──────────────────────────────────────────────────
