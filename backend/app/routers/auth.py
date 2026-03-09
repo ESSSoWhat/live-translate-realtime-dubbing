@@ -191,6 +191,7 @@ async def google_oauth_url(
     params = urllib.parse.urlencode({
         "provider": "google",
         "redirect_to": redirect_uri,
+        "flow_type": "pkce",
     })
     url = f"{supabase_base}/auth/v1/authorize?{params}"
     logger.info("Generated Google OAuth URL", redirect_uri=redirect_uri)

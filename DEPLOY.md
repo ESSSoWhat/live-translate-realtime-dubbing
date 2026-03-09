@@ -71,6 +71,7 @@ Deploy backend, website (livetranslate.net), mobile (Android/iOS with store subm
 
 - **SSO (Google / Apple)**  
   - **Google on Android**: Supabase validates the ID token using your Google **web** client ID. Set `GOOGLE_WEB_CLIENT_ID` when building (e.g. `--dart-define=GOOGLE_WEB_CLIENT_ID=YOUR_WEB_CLIENT_ID.apps.googleusercontent.com`). Use the same web client ID as in Supabase → Auth → Providers → Google.  
+  - **Google on Windows/macOS/Linux**: The app opens the system browser and uses the backend’s OAuth flow. In **Supabase** → **Auth** → **URL Configuration** → **Redirect URLs**, add `http://localhost` (and optionally `http://127.0.0.1`) so the callback after Google sign-in is allowed.  
   - **Apple**: Ensure Sign in with Apple is enabled in Supabase and in the Apple Developer app ID; iOS has Runner.entitlements, Android is supported by the package on API 13+.
 
 ### Google Sign-In setup (Web client + Android SHA)
@@ -130,6 +131,9 @@ Do this once so the mobile app can use “Continue with Google” and the backen
 | `ANDROID_KEY_PASSWORD` | release-android | Key password |
 | `ANDROID_KEY_ALIAS` | release-android | Key alias |
 | (iOS) Certificate + provisioning profile | release-ios | For `flutter build ipa` and upload |
+
+**Expo (if you use Expo/React Native)**  
+Set in `.env.local` or in EAS/Expo config: `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_KEY` (Supabase URL and anon key). See `expo/.env.example`.
 
 ---
 

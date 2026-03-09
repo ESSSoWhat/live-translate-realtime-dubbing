@@ -1,11 +1,13 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
+import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../config/api_config.dart';
 import 'api_client.dart';
@@ -65,6 +67,55 @@ class SsoService {
       return body;
     } catch (e) {
       throw _wrapSsoError(e, 'Google');
+    }
+  }
+
+  /// Google sign-in via system browser (Windows/macOS/Linux). Call only when [Platform.isWindows] or [Platform.isMacOS] or [Platform.isLinux].
+  Future<Map<String, dynamic>> signInWithGoogleDesktop() async {
+    HttpServer? server;
+    try {
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final port = server.port;
+      final redirectUri = 'http://localhost:$port/';
+      final authUrl = await _api.getGoogleOAuthUrl(redirectUri);
+
+      final codeCompleter = Completer<String?>();
+      server.listen((request) async {
+        if (codeCompleter.isCompleted) return;
+        final uri = request.uri;
+        final code = uri.queryParameters['code'];
+        request.response
+          ..statusCode = 200
+          ..headers.contentType = ContentType.html
+          ..write(
+            '<!DOCTYPE html><html><body><p>Sign-in complete. You can close this window.</p></body></html>',
+          );
+        await request.response.close();
+        if (!codeCompleter.isCompleted) codeCompleter.complete(code);
+      });
+
+      if (!await launchUrl(Uri.parse(authUrl), mode: LaunchMode.externalApplication)) {
+        throw SsoException('Could not open browser for Google sign-in.');
+      }
+      final code = await codeCompleter.future.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () => null,
+      );
+      if (code == null || code.isEmpty) {
+        throw SsoException('Google sign-in was cancelled or timed out.', cancelled: true);
+      }
+      final body = await _api.exchangeGoogleCode(code: code, redirectUri: redirectUri);
+      await _auth.saveFromAuthResponse(body);
+      if (QonversionService.isAvailable) {
+        final userId = body['user_id'] as String?;
+        if (userId != null) await QonversionService.identify(userId);
+      }
+      return body;
+    } catch (e) {
+      if (e is SsoException) rethrow;
+      throw _wrapSsoError(e, 'Google');
+    } finally {
+      await server?.close(force: true);
     }
   }
 

@@ -171,7 +171,7 @@ class ApiClient {
     );
   }
 
-  /// POST /auth/oauth/google/id-token — login with Google ID token.
+  /// POST /auth/oauth/google/id-token — login with Google ID token (Android/iOS).
   Future<Map<String, dynamic>> loginWithGoogleIdToken(
     String idToken, {
     String? nonce,
@@ -179,6 +179,38 @@ class ApiClient {
     final r = await _dio.post(
       '/auth/oauth/google/id-token',
       data: {'id_token': idToken, if (nonce != null) 'nonce': nonce},
+    );
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// GET /auth/oauth/google — URL for desktop browser OAuth (Windows/macOS/Linux).
+  Future<String> getGoogleOAuthUrl(String redirectUri) async {
+    final r = await _dio.get<dynamic>(
+      '/auth/oauth/google',
+      queryParameters: {'redirect_uri': redirectUri},
+    );
+    final m = r.data;
+    final url = m is Map ? m['url'] as String? : null;
+    if (url != null && url.isNotEmpty) return url;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Missing OAuth URL in response',
+    );
+  }
+
+  /// POST /auth/oauth/google/exchange — exchange auth code for session (desktop).
+  Future<Map<String, dynamic>> exchangeGoogleCode({
+    required String code,
+    required String redirectUri,
+  }) async {
+    final r = await _dio.post(
+      '/auth/oauth/google/exchange',
+      data: {'code': code, 'redirect_uri': redirectUri},
     );
     final data = r.data;
     if (data is Map<String, dynamic>) return data;

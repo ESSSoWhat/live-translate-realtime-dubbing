@@ -64,7 +64,11 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
-      await _sso.signInWithGoogle();
+      if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+        await _sso.signInWithGoogleDesktop();
+      } else {
+        await _sso.signInWithGoogle();
+      }
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const HomeScreen()),
@@ -117,7 +121,9 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final isIOS = Platform.isIOS;
     final isAndroid = Platform.isAndroid;
-    final showSsoButtons = isAndroid || isIOS;
+    final isDesktop =
+        Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+    final showSsoButtons = isAndroid || isIOS || isDesktop;
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -149,7 +155,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     color: Theme.of(context).colorScheme.errorContainer,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text(
+                  child: SelectableText(
                     _error!,
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.onErrorContainer,
