@@ -13,7 +13,7 @@ dependencies:
   dio: ^5.7.0
   flutter_secure_storage: ^9.2.2
   qonversion_flutter: ^11.3.0
-  record: ^6.0.0
+  record: ^6.2.0
   just_audio: ^0.9.40
   path_provider: ^2.1.5
   sign_in_with_apple: ^7.0.1
