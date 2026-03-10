@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QDockWidget,
 )
 
 from live_dubbing.audio.playback import get_output_devices
@@ -49,7 +50,7 @@ from live_dubbing.gui.widgets.audio_meter import AudioMeter
 from live_dubbing.core.mic_translator import MicTranslator
 from live_dubbing.gui.widgets.debug_window import DebugWindow
 from live_dubbing.gui.widgets.language_panel import LanguagePanel
-from live_dubbing.gui.widgets.mic_translate_panel import MicTranslatePanel
+from live_dubbing.gui.widgets.mic_translate_panel import MicTranslateWidget
 from live_dubbing.gui.widgets.status_bar import StatusBar
 from live_dubbing.gui.widgets.dubbed_window import DubbedWindow
 from live_dubbing.gui.widgets.usage_meter import UsageMeterWidget
@@ -95,6 +96,12 @@ class MainWindow(QMainWindow):
 
         # Usage meter created here so mypy sees the attribute; _setup_ui() adds it to layout
         self._usage_meter: UsageMeterWidget = UsageMeterWidget(self._settings)
+
+        # Mic translator for embedded Mic Translate widget (created before _setup_ui)
+        self._mic_translator = MicTranslator(
+            settings=self._settings,
+            event_bus=self._event_bus,
+        )
 
         self._setup_window()
         self._setup_ui()
@@ -554,11 +561,37 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(control_group)
 
+        # Mic Translate section (embedded in main UI, detachable)
+        self._mic_group = QGroupBox("Mic Translate")
+        mic_header = QHBoxLayout()
+        mic_header.addStretch()
+        self._mic_detach_btn = QPushButton("Detach")
+        self._mic_detach_btn.setToolTip("Open Mic Translate in a separate dock window")
+        self._mic_detach_btn.setFixedWidth(70)
+        self._mic_detach_btn.clicked.connect(self._on_mic_detach_clicked)
+        mic_header.addWidget(self._mic_detach_btn)
+        self._mic_layout = QVBoxLayout(self._mic_group)
+        self._mic_layout.addLayout(mic_header)
+        self._mic_translate_widget = MicTranslateWidget(
+            mic_translator=self._mic_translator,
+            orchestrator=self._orchestrator,
+            event_bus=self._event_bus,
+            settings=self._settings,
+            async_worker=self._async_worker,
+            parent=self,
+        )
+        self._mic_layout.addWidget(self._mic_translate_widget)
+        self._mic_dock: QDockWidget | None = None
+        self._mic_placeholder: QWidget | None = None  # shown when detached
+        self._mic_reattaching = False  # re-entrancy guard for dock close/reattach
+        main_layout.addWidget(self._mic_group)
+
         # Bottom section: Live output
         output_splitter = QSplitter(Qt.Orientation.Vertical)
 
         # Transcription box
         transcription_group = QGroupBox("Live Transcription (Original)")
+        transcription_group.setMinimumHeight(80)
         transcription_layout = QVBoxLayout(transcription_group)
         self._transcription_text = QTextEdit()
         self._transcription_text.setReadOnly(True)
@@ -720,21 +753,9 @@ class MainWindow(QMainWindow):
         )
 
     def _setup_mic_translate_panel(self) -> None:
-        """Set up the Mic Translate dock widget."""
-        self._mic_translator = MicTranslator(
-            settings=self._settings,
-            event_bus=self._event_bus,
-        )
-        self._mic_panel = MicTranslatePanel(
-            mic_translator=self._mic_translator,
-            orchestrator=self._orchestrator,
-            event_bus=self._event_bus,
-            settings=self._settings,
-            async_worker=self._async_worker,
-            parent=self,
-        )
-        self._mic_panel.hide()  # Hidden by default
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._mic_panel)
+        """Mic Translate is embedded in the main UI; no dock widget."""
+        # _mic_translator and _mic_translate_widget are created in __init__ / _setup_ui
+        pass
 
     def _setup_menus(self) -> None:
         """Set up menu bar with Account, Debug, Tools, and Help menus."""
@@ -766,19 +787,6 @@ class MainWindow(QMainWindow):
             self._toggle_debug_action.setChecked(False)
             self._toggle_debug_action.triggered.connect(self._toggle_debug_window)
             self._toggle_debug_action.setShortcut("Ctrl+D")
-
-        # Tools menu — Mic Translate
-        tools_menu = menu_bar.addMenu("&Tools")
-        if tools_menu is not None:
-            self._toggle_mic_action = tools_menu.addAction("Mic Translate")
-            if self._toggle_mic_action is not None:
-                self._toggle_mic_action.setCheckable(True)
-                self._toggle_mic_action.setChecked(False)
-                self._toggle_mic_action.setShortcut("Ctrl+M")
-                self._toggle_mic_action.setToolTip(
-                    "Translate your microphone in real-time and output via VB-Cable"
-                )
-                self._toggle_mic_action.triggered.connect(self._toggle_mic_panel)
 
         # Help menu
         help_menu = menu_bar.addMenu("&Help")
@@ -818,13 +826,79 @@ class MainWindow(QMainWindow):
         else:
             self._debug_window.hide()
 
-    @pyqtSlot(bool)
-    def _toggle_mic_panel(self, checked: bool) -> None:
-        """Toggle Mic Translate panel visibility."""
-        if checked:
-            self._mic_panel.show()
-        else:
-            self._mic_panel.hide()
+    def _on_mic_detach_clicked(self) -> None:
+        """Detach Mic Translate into a separate dock window."""
+        if self._mic_dock is not None and self._mic_dock.isVisible():
+            return
+        if self._mic_dock is None:
+            self._mic_dock = QDockWidget("Mic Translate", self)
+            self._mic_dock.setObjectName("MicTranslateDock")
+            self._mic_dock.setAllowedAreas(
+                Qt.DockWidgetArea.BottomDockWidgetArea
+                | Qt.DockWidgetArea.LeftDockWidgetArea
+                | Qt.DockWidgetArea.RightDockWidgetArea
+            )
+            self._mic_dock.setMinimumSize(360, 420)
+            # Re-attach when user closes the dock
+            self._mic_dock.visibilityChanged.connect(self._on_mic_dock_visibility_changed)
+        # Reparent widget from main layout to dock
+        self._mic_layout.removeWidget(self._mic_translate_widget)
+        self._mic_dock.setWidget(self._mic_translate_widget)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._mic_dock)
+        self._mic_dock.show()
+        # Placeholder with Re-attach button
+        self._mic_placeholder = QWidget()
+        place_layout = QVBoxLayout(self._mic_placeholder)
+        place_layout.addWidget(
+            QLabel("Mic Translate is in a separate window.")
+        )
+        reattach_btn = QPushButton("Re-attach")
+        reattach_btn.setToolTip("Move Mic Translate back into the main window")
+        reattach_btn.clicked.connect(self._on_mic_reattach_clicked)
+        place_layout.addWidget(reattach_btn)
+        self._mic_layout.addWidget(self._mic_placeholder)
+        self._mic_detach_btn.setEnabled(False)
+
+    def _on_mic_dock_visibility_changed(self, visible: bool) -> None:
+        """When dock is closed, re-attach the Mic Translate widget."""
+        if getattr(self, "_mic_reattaching", False):
+            return
+        if not visible and self._mic_dock is not None and self._mic_dock.widget() is not None:
+            self._on_mic_reattach_clicked()
+
+    def _on_mic_reattach_clicked(self) -> None:
+        """Re-attach Mic Translate back into the main window."""
+        if self._mic_dock is None or self._mic_placeholder is None:
+            return
+        if self._mic_reattaching:
+            return
+        self._mic_reattaching = True
+        try:
+            try:
+                self._mic_dock.visibilityChanged.disconnect(
+                    self._on_mic_dock_visibility_changed
+                )
+            except TypeError:
+                pass
+            widget = self._mic_dock.widget()
+            if widget is not None:
+                self._mic_dock.setWidget(None)
+                self._mic_layout.removeWidget(self._mic_placeholder)
+                self._mic_placeholder.deleteLater()
+                self._mic_placeholder = None
+                self._mic_layout.addWidget(widget)
+            self._mic_dock.hide()
+            self.removeDockWidget(self._mic_dock)
+            self._mic_detach_btn.setEnabled(True)
+        finally:
+            self._mic_reattaching = False
+            if self._mic_dock is not None:
+                try:
+                    self._mic_dock.visibilityChanged.connect(
+                        self._on_mic_dock_visibility_changed
+                    )
+                except TypeError:
+                    pass
 
     def _show_about_dialog(self) -> None:
         """Show the About dialog with credits."""
@@ -1619,9 +1693,8 @@ class MainWindow(QMainWindow):
             self._async_worker.run_coroutine(
                 self._orchestrator.stop_translation()
             )
-        # Stop mic translator if active
-        if self._mic_translator.is_running and self._async_worker:
-            self._async_worker.run_coroutine(self._mic_translator.stop())
+        # Stop mic translator and unsubscribe (embedded Mic Translate widget)
+        self._mic_translate_widget.cleanup()
         self._usage_meter.stop_auto_refresh()
         self._settings.ui.window_x = self.x()
         self._settings.ui.window_y = self.y()

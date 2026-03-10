@@ -49,6 +49,11 @@ class _UsageFetcher(QThread):
             if response.status_code == 200:
                 self.fetched.emit(response.json())
             else:
+                logger.debug(
+                    "Usage fetch failed",
+                    status_code=response.status_code,
+                    url=f"{self._base_url}/api/v1/user/usage",
+                )
                 self.failed.emit()
         except Exception as exc:
             logger.debug("Usage fetch failed", error=str(exc))
@@ -137,23 +142,40 @@ class UsageMeterWidget(QFrame):
         """Fetch latest usage in a background thread."""
         token = self._settings.get_access_token()
         if not token:
+            self._usage_label.setText("Sign in to see usage")
             return
-        if self._fetcher and self._fetcher.isRunning():
+        if self._fetcher is not None and self._fetcher.isRunning():
             return  # already in flight
 
+        self._usage_label.setText("Loading usage…")
         self._fetcher = _UsageFetcher(self._settings.get_backend_url(), token)
         self._fetcher.fetched.connect(self._on_usage_fetched)
-        self._fetcher.failed.connect(lambda: None)
-        self._fetcher.finished.connect(self._fetcher.deleteLater)
+        self._fetcher.failed.connect(self._on_fetcher_failed)
+        self._fetcher.finished.connect(self._on_fetcher_finished)
         self._fetcher.start()
+
+    def _on_fetcher_finished(self) -> None:
+        """Clear reference and schedule fetcher for deletion (avoids using deleted object)."""
+        if self._fetcher is not None:
+            self._fetcher.deleteLater()
+            self._fetcher = None
+
+    def _on_fetcher_failed(self) -> None:
+        """On fetch failure keep previous data; show message if we have none."""
+        if not self._usage:
+            self._usage_label.setText("Could not load usage")
 
     def _on_usage_fetched(self, data: dict) -> None:
         self._usage = data
+        # Update tier from server so subscription level stays in sync
+        tier = data.get("tier")
+        if isinstance(tier, str) and tier.strip():
+            self.set_tier(tier.strip().lower())
         self._update_display()
 
     def _update_display(self) -> None:
-        used = self._usage.get("dubbing_seconds_used", 0)
-        limit = self._usage.get("dubbing_seconds_limit", 1800)
+        used = int(self._usage.get("dubbing_seconds_used", 0) or 0)
+        limit = int(self._usage.get("dubbing_seconds_limit", 1800) or 1800)
 
         used_min = used // 60
         limit_min = limit // 60
@@ -189,8 +211,8 @@ class UsageMeterWidget(QFrame):
         """Return True when cached usage shows dubbing quota is exhausted."""
         if not self._usage:
             return False
-        used = self._usage.get("dubbing_seconds_used", 0)
-        limit = self._usage.get("dubbing_seconds_limit", 0)
+        used = int(self._usage.get("dubbing_seconds_used", 0) or 0)
+        limit = int(self._usage.get("dubbing_seconds_limit", 0) or 0)
         return limit > 0 and used >= limit
 
     def _on_upgrade_clicked(self) -> None:

@@ -199,8 +199,10 @@ def main() -> NoReturn:
     # Configure pydub to find bundled ffmpeg (must be before any pydub import)
     _configure_pydub_ffmpeg()
 
-    # Set up asyncio event loop policy for Windows
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    # Set up asyncio event loop policy for Windows.
+    # ProactorEventLoop (default on Windows) avoids access violations in select();
+    # use Selector only if you hit Proactor-specific issues (e.g. subprocess).
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
     # Pre-import torch before PyQt6 to avoid DLL loading conflict on Windows.
     # When Qt6 DLLs are loaded first, torch's c10.dll fails with an access

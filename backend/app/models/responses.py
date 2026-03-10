@@ -45,6 +45,23 @@ class UsageSnapshot(BaseModel):
     period_reset_date: str  # ISO date string
 
 
+class UsageWithTier(BaseModel):
+    """Usage snapshot plus current subscription tier (for GET /user/usage)."""
+
+    tier: str
+    dubbing_seconds_used: int
+    dubbing_seconds_limit: int
+    tts_chars_used: int
+    tts_chars_limit: int
+    stt_seconds_used: int
+    stt_seconds_limit: int
+    translation_chars_used: int
+    translation_chars_limit: int
+    voice_clones_used: int
+    voice_clones_limit: int
+    period_reset_date: str
+
+
 # ── User ────────────────────────────────────────────────────────────────────
 
 class UserProfile(BaseModel):

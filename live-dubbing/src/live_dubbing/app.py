@@ -34,6 +34,8 @@ class AsyncWorker(QThread):
 
     def run(self) -> None:
         """Run the asyncio event loop in this thread."""
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         self._running = True
@@ -49,6 +51,7 @@ class AsyncWorker(QThread):
     async def _run_orchestrator(self) -> None:
         """Keep the orchestrator running."""
         await self.orchestrator.initialize()
+        await asyncio.sleep(0)  # Yield so loop processes pending work before idle loop
         while self._running:
             await asyncio.sleep(0.1)
         await self.orchestrator.shutdown()

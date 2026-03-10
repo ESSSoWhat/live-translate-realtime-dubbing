@@ -26,7 +26,7 @@ from app.models.responses import (
     VoiceItem,
 )
 from app.services.supabase_client import get_supabase
-from app.services.usage import QuotaExceededError, check_and_record_quota
+from app.services.usage import QuotaExceededError, check_and_record_quota, record_usage
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/proxy", tags=["proxy"])
@@ -178,6 +178,13 @@ async def synthesize(
         logger.error("ElevenLabs TTS error", error=str(exc))
         raise HTTPException(status_code=502, detail=f"Synthesis failed: {exc}") from exc
 
+    # Record dubbing time (usage meter) by output audio duration
+    try:
+        duration_sec = _audio_duration_seconds(audio_data, "audio/mpeg", 44100)
+        await record_usage(user["id"], "dub", max(1, int(round(duration_sec))))
+    except Exception as exc:
+        logger.warning("Failed to record dubbing usage", error=str(exc))
+
     return StreamingResponse(io.BytesIO(audio_data), media_type="audio/mpeg")
 
 
@@ -222,6 +229,12 @@ async def synthesize_stream(
         await check_and_record_quota(user["id"], "tts", len(body.text))
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    # Record dubbing time by estimated duration (~15 chars/sec speech)
+    try:
+        dub_sec = max(1, len(body.text) // 15)
+        await record_usage(user["id"], "dub", dub_sec)
+    except Exception as exc:
+        logger.warning("Failed to record dubbing usage (stream)", error=str(exc))
     return StreamingResponse(
         _stream_tts_chunks(
             body.voice_id,

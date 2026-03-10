@@ -49,17 +49,11 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-class MicTranslatePanel(QDockWidget):
+class MicTranslateWidget(QWidget):
     """
-    Dockable panel for real-time microphone translation.
+    Reusable widget for real-time microphone translation.
 
-    Audio path::
-
-        [Real Mic] -> MicCapture -> Pipeline -> AudioPlayback -> [CABLE Input]
-                                                                   -> Discord / Zoom hears translated voice
-
-    The panel is hidden by default and toggled via the main-window Tools menu
-    (Ctrl+M).
+    Can be embedded in the main window or inside a QDockWidget (MicTranslatePanel).
     """
 
     def __init__(
@@ -71,7 +65,7 @@ class MicTranslatePanel(QDockWidget):
         async_worker: AsyncWorker | None,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__("Mic Translate", parent)
+        super().__init__(parent)
         self._mic_translator = mic_translator
         self._orchestrator = orchestrator
         self._event_bus = event_bus
@@ -88,21 +82,24 @@ class MicTranslatePanel(QDockWidget):
         self._populate_voices()
         self._connect_events()
 
-        # Dock widget configuration
-        self.setAllowedAreas(
-            Qt.DockWidgetArea.BottomDockWidgetArea
-            | Qt.DockWidgetArea.LeftDockWidgetArea
-            | Qt.DockWidgetArea.RightDockWidgetArea
-        )
-        self.setMinimumSize(360, 520)
+    def cleanup(self) -> None:
+        """Unsubscribe events, stop capture timer, and stop translator if running."""
+        if self._capture_timer:
+            self._capture_timer.stop()
+            self._capture_timer = None
+
+        for unsub in self._unsubscribers:
+            with contextlib.suppress(Exception):
+                unsub()
+        self._unsubscribers.clear()
+
+        if self._mic_translator.is_running and self._async_worker:
+            self._async_worker.run_coroutine(self._mic_translator.stop())
 
     # -- UI setup --
 
     def _setup_ui(self) -> None:
-        container = QWidget()
-        self.setWidget(container)
-
-        root = QVBoxLayout(container)
+        root = QVBoxLayout(self)
         root.setSpacing(8)
         root.setContentsMargins(10, 10, 10, 10)
 
@@ -806,21 +803,43 @@ class MicTranslatePanel(QDockWidget):
         self._voice_status.setStyleSheet("color: #F44336; font-size: 11px;")
         self._voice_status.setVisible(True)
 
-    # -- Cleanup --
+
+class MicTranslatePanel(QDockWidget):
+    """
+    Dockable panel for real-time microphone translation.
+
+    Wraps MicTranslateWidget for use as a dock widget. The same widget can be
+    embedded in the main window.
+    """
+
+    def __init__(
+        self,
+        mic_translator: MicTranslator,
+        orchestrator: Orchestrator,
+        event_bus: EventBus,
+        settings: AppSettings,
+        async_worker: AsyncWorker | None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__("Mic Translate", parent)
+        self._content = MicTranslateWidget(
+            mic_translator=mic_translator,
+            orchestrator=orchestrator,
+            event_bus=event_bus,
+            settings=settings,
+            async_worker=async_worker,
+            parent=self,
+        )
+        self.setWidget(self._content)
+        self.setAllowedAreas(
+            Qt.DockWidgetArea.BottomDockWidgetArea
+            | Qt.DockWidgetArea.LeftDockWidgetArea
+            | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self.setMinimumSize(360, 520)
 
     def closeEvent(self, event: QCloseEvent | None) -> None:  # type: ignore[override]
         """Unsubscribe events and stop translator on close."""
-        if self._capture_timer:
-            self._capture_timer.stop()
-            self._capture_timer = None
-
-        for unsub in self._unsubscribers:
-            with contextlib.suppress(Exception):
-                unsub()
-        self._unsubscribers.clear()
-
-        if self._mic_translator.is_running and self._async_worker:
-            self._async_worker.run_coroutine(self._mic_translator.stop())
-
+        self._content.cleanup()
         if event is not None:
             super().closeEvent(event)

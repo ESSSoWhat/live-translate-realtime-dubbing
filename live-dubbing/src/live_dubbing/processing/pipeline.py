@@ -25,6 +25,38 @@ from live_dubbing.services.voice_cloning import ClonedVoice, VoiceCloneManager
 logger = structlog.get_logger(__name__)
 
 
+def _tts_error_message(exc: BaseException, short: bool = False) -> str:
+    """Turn TTS API exception into a short user-facing message (no headers dump)."""
+    s = str(exc)
+    # Many HTTP clients expose .response.status_code
+    status_code: int | None = None
+    try:
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            status_code = getattr(resp, "status_code", None)
+    except Exception:
+        pass
+    if status_code is None:
+        status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        msg = {
+            401: "Invalid API key or not signed in",
+            402: "Quota or payment required",
+            429: "Rate limit exceeded",
+            500: "Server error — try again later",
+        }.get(status_code)
+        if msg:
+            return msg if short else f"TTS failed: {msg}"
+    # Avoid dumping raw response (e.g. "headers: {...}")
+    if "headers:" in s or "headers':" in s:
+        return "TTS API error (check API key and quota)" if short else "TTS failed: API error. Check API key and quota."
+    # Keep first line only, cap length
+    first = s.split("\n")[0].strip()
+    if len(first) > 60:
+        first = first[:57] + "..."
+    return first if short else f"TTS failed: {first}"
+
+
 def _float32_to_wav_bytes(audio: np.ndarray, sample_rate: int = 16000) -> bytes:
     """Convert float32 mono to 16-bit PCM WAV for API compatibility."""
     buf = io.BytesIO()
@@ -984,13 +1016,15 @@ class ProcessingPipeline:
 
                 except Exception as e:
                     logger.exception("TTS failed", error=str(e))
+                    user_msg = _tts_error_message(e)
+                    short_msg = _tts_error_message(e, short=True)
                     self._event_bus.emit_warning(
-                        f"TTS failed — no speech output for this segment. {redact_secrets(str(e))[:80]}",
+                        user_msg,
                         {"error": redact_secrets(str(e))},
                     )
                     self._event_bus.emit(
                         EventType.TRANSLATION_UPDATE,
-                        {"text": f"[TTS failed: {redact_secrets(str(e))[:60]}]"},
+                        {"text": f"[TTS failed: {short_msg}]"},
                     )
 
             except asyncio.CancelledError:

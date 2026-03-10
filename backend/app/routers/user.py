@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends
 
 from app.dependencies import get_current_user
-from app.models.responses import UserProfile, UsageSnapshot
+from app.models.responses import UserProfile, UsageSnapshot, UsageWithTier
 from app.services.usage import get_usage_snapshot
 
 router = APIRouter(prefix="/user", tags=["user"])
@@ -21,7 +21,7 @@ async def get_me(user: dict = Depends(get_current_user)) -> UserProfile:
     )
 
 
-@router.get("/usage", response_model=UsageSnapshot)
-async def get_usage(user: dict = Depends(get_current_user)) -> UsageSnapshot:
-    usage_data = await get_usage_snapshot(user["id"])
-    return UsageSnapshot(**usage_data)
+@router.get("/usage", response_model=UsageWithTier)
+async def get_usage(user: dict = Depends(get_current_user)) -> UsageWithTier:
+    usage_data = await get_usage_snapshot(str(user["id"]))
+    return UsageWithTier(tier=user["tier"], **usage_data)

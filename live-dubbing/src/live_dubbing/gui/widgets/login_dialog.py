@@ -60,6 +60,7 @@ def _free_tier_defaults() -> dict:
     else:
         period_end = datetime.date(today.year, today.month + 1, 1) - datetime.timedelta(days=1)
     return {
+        "tier": "free",
         "dubbing_seconds_used": 0,
         "dubbing_seconds_limit": 1800,
         "tts_chars_used": 0,
@@ -612,7 +613,11 @@ class _OAuthWorker(QThread):
                 and "json" in profile_resp.headers.get("content-type", "")
             ):
                 usage_data = profile_resp.json()
-                logger.info("Loaded usage profile from backend")
+                logger.info(
+                    "Loaded usage profile from backend",
+                    url=f"{self._base_url}/api/v1/user/usage",
+                    tier=usage_data.get("tier"),
+                )
             else:
                 raise ValueError(f"Unexpected response: {profile_resp.status_code}")
         except Exception as exc:

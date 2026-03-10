@@ -110,7 +110,9 @@ class DubbedWindow(QWidget):
         self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._opacity_slider.setRange(20, 100)  # 0.2 – 1.0 mapped to 20–100
         self._opacity_slider.setFixedWidth(80)
-        self._opacity_slider.setToolTip("Adjust window background transparency")
+        self._opacity_slider.setToolTip(
+            "Adjust window background transparency (independent of text visibility)"
+        )
         self._opacity_slider.valueChanged.connect(self._on_opacity_changed)
         toolbar.addWidget(self._opacity_slider)
 
@@ -125,7 +127,9 @@ class DubbedWindow(QWidget):
         self._text_opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._text_opacity_slider.setRange(20, 100)  # 0.2 – 1.0
         self._text_opacity_slider.setFixedWidth(80)
-        self._text_opacity_slider.setToolTip("Adjust text visibility")
+        self._text_opacity_slider.setToolTip(
+            "Adjust text visibility only (independent of window transparency)"
+        )
         self._text_opacity_slider.valueChanged.connect(self._on_text_opacity_changed)
         toolbar.addWidget(self._text_opacity_slider)
 
