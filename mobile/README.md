@@ -47,6 +47,16 @@ For "Continue with Google" to work:
 
 ## Troubleshooting
 
+- **Android: "this and base files have different roots" (e.g. `google_sign_in_android:compileDebugUnitTestSources`)**  
+  This occurs when the project is on a different Windows drive than the Pub cache (e.g. project on `S:\` and Pub cache on `C:\`). **Fix:** use a Pub cache on the same drive as the project, then refresh dependencies:
+  ```powershell
+  # From mobile/ — use a local .pub-cache on the same drive as the project
+  $env:PUB_CACHE = "$(Get-Location)\.pub-cache"
+  flutter clean
+  flutter pub get
+  ```
+  Then run or build Android as usual. You can set `PUB_CACHE` permanently in your user environment to the same drive as your projects if you often work from another drive.
+
 - **Android: "Unsupported class file major version 69" or "Can't use Java 25 and Gradle"**  
   The Android build requires **JDK 17** (or 21). If you use Java 25, set `JAVA_HOME` to a JDK 17 install, or in your IDE set the Gradle JVM to JDK 17 (e.g. File → Settings → Build, Execution, Deployment → Build Tools → Gradle → Gradle JDK). The project’s `android/.java-version` file suggests 17 for tools that support it.
 
