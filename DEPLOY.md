@@ -1,12 +1,12 @@
 # Live Translate — Deployment
 
-Deploy backend, website (livetranslate.net), mobile (Android/iOS with store submission), and desktop (Windows installer). All deployments are gated by CI tests.
+Deploy backend, website (www.livetranslate.net), mobile (Android/iOS with store submission), and desktop (Windows installer). All deployments are gated by CI tests.
 
 ## How and where to access your apps
 
 | App | Run locally | Access when deployed |
 | ----- | ----- | ----- |
-| **Website** | `cd website` → `npm run dev` → open <http://localhost:3000> | <https://livetranslate.net> (after Vercel/Netlify deploy) |
+| **Website** | `cd website` → `npm run dev` → open <http://localhost:3000> | <https://www.livetranslate.net> (after Vercel/Netlify deploy) |
 | **Backend API** | `cd backend` → `python -m uvicorn app.main:app --reload` → <http://localhost:8000> | Your Railway (or Docker) URL (e.g. `https://your-app.railway.app`) |
 | **Mobile (Android)** | `cd mobile` → `flutter run` (device/emulator) | **Play Store**: [Google Play Console](https://play.google.com/console) → your app → Release → Production. **Pre-release**: same place or install APK from GitHub Release. |
 | **Mobile (iOS)** | `cd mobile` → `flutter run` (Mac + device/simulator) or open `ios/Runner.xcworkspace` in Xcode | **App Store**: [App Store Connect](https://appstoreconnect.apple.com) → My Apps → your app. **TestFlight**: same place. **Builds**: upload IPA from Xcode/Transporter or CI. |
@@ -48,17 +48,18 @@ Deploy backend, website (livetranslate.net), mobile (Android/iOS with store subm
 
 ---
 
-## 2. Website (livetranslate.net)
+## 2. Website (www.livetranslate.net)
 
 - **Vercel**  
   - Connect repo; set **root directory** to `website/`.  
-  - In Project Settings → Domains, add **livetranslate.net** (and optionally **www.livetranslate.net**) as production domain.  
+  - In Project Settings → Domains, add **www.livetranslate.net** as the production domain. Optionally add **livetranslate.net** and set up a redirect to www (Vercel supports this in Domains).  
+  - Set **NEXTAUTH_URL** to `https://www.livetranslate.net` in Environment Variables so NextAuth redirects and callbacks use the canonical URL.  
   - Build uses `npm run build` (Next.js); `website/vercel.json` sets framework.  
-  - Set env vars in Vercel (e.g. NextAuth, API URL) as needed.  
-  - Deploy on push to `main` via Vercel GitHub integration; production serves at <https://livetranslate.net>.
+  - Set other env vars in Vercel (e.g. Google OAuth, API URL) as needed.  
+  - Deploy on push to `main` via Vercel GitHub integration; production serves at <https://www.livetranslate.net>.
 
 - **Netlify**  
-  - Alternatively connect repo, base directory `website/`, build command `npm run build`, publish directory `.next` or use Next.js runtime; add custom domain <https://livetranslate.net>.
+  - Alternatively connect repo, base directory `website/`, build command `npm run build`, publish directory `.next` or use Next.js runtime; add custom domain <https://www.livetranslate.net>.
 
 ---
 
@@ -85,7 +86,7 @@ Do this once so the mobile app can use “Continue with Google” and the backen
      - Name it e.g. “Live Translate Web (Supabase)”.  
      - Under **Authorized redirect URIs** add your Supabase callback, e.g. `https://<PROJECT_REF>.supabase.co/auth/v1/callback` (find the exact URL in Supabase → Auth → URL Configuration).  
    - Copy the **Client ID** (ends with `.apps.googleusercontent.com`) and the **Client secret**.  
-   - Optional for web: add your production site (e.g. `https://livetranslate.net`) to Authorized JavaScript origins if you use Google Sign-In on the website.
+   - Optional for web: add your production site (e.g. `https://www.livetranslate.net`) to Authorized JavaScript origins if you use Google Sign-In on the website.
 
 2. **Supabase**  
    - **Dashboard** → **Authentication** → **Providers** → **Google**.  
