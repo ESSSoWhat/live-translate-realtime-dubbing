@@ -57,12 +57,13 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.24.x"
+          flutter-version: "3.27.x"
           channel: "stable"
 
-      - name: Install dependencies
+      - name: Clean and install dependencies
         run: |
           cd mobile
+          flutter clean
           flutter pub get
 
       - name: Analyze
@@ -97,12 +98,13 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.24.x"
+          flutter-version: "3.27.x"
           channel: "stable"
 
-      - name: Install dependencies
+      - name: Clean and install dependencies
         run: |
           cd mobile
+          flutter clean
           flutter pub get
 
       - name: Test
@@ -154,12 +156,13 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.24.x"
+          flutter-version: "3.27.x"
           channel: "stable"
 
-      - name: Install dependencies
+      - name: Clean and install dependencies
         run: |
           cd mobile
+          flutter clean
           flutter pub get
 
       - name: Test
