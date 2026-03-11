@@ -1,3 +1,7 @@
+plugins {
+    id("org.jetbrains.kotlin.android") version "2.1.0" apply false
+}
+
 // Gradle 8.x does not support running on Java 25. Use JDK 17 for this project (see android/README.md).
 val javaMajor = JavaVersion.current().majorVersion.toIntOrNull() ?: 0
 if (javaMajor >= 25) {

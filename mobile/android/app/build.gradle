@@ -11,7 +11,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace "app.livetranslate.mobile"
+    namespace "app.livetranslate.live_translate_mobile"
     compileSdk 36
     ndkVersion "27.0.12077973"
 
