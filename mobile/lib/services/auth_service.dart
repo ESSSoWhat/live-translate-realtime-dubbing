@@ -78,6 +78,7 @@ class AuthService {
         baseUrl: "${ApiConfig.baseUrl.endsWith('/') ? ApiConfig.baseUrl : '${ApiConfig.baseUrl}/'}api/v1",
         connectTimeout: const Duration(seconds: 10),
         receiveTimeout: const Duration(seconds: 10),
+        validateStatus: (int? status) => status != null && status < 400,
       ));
       final r = await dio.post(
         '/auth/refresh',

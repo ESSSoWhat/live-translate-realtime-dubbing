@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
@@ -65,6 +66,15 @@ class SsoService {
         if (userId != null) await QonversionService.identify(userId);
       }
       return body;
+    } on PlatformException catch (e) {
+      if (e.code == 'sign_in_failed' &&
+          (e.message?.contains('ApiException: 10') ?? false)) {
+        throw SsoException(
+          'Google Sign-In is misconfigured. Add your app SHA-1 to the Android OAuth '
+          'client in Google Cloud Console. See android/README.md.',
+        );
+      }
+      rethrow;
     } catch (e) {
       throw _wrapSsoError(e, 'Google');
     }

@@ -18,6 +18,7 @@ class ApiClient {
     _dio.options.baseUrl = base.endsWith('/') ? '${base}api/v1' : '$base/api/v1';
     _dio.options.connectTimeout = const Duration(seconds: 30);
     _dio.options.receiveTimeout = const Duration(seconds: 60);
+    _dio.options.validateStatus = (int? status) => status != null && status < 400;
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
         final token = await AuthService().accessToken();

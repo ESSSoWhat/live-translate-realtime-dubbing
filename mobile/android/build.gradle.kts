@@ -17,6 +17,12 @@ allprojects {
         google()
         mavenCentral()
     }
+
+    configurations.all {
+        resolutionStrategy {
+            force("org.jetbrains.kotlin:kotlin-test:2.1.0")
+        }
+    }
     
     // Make flutter SDK versions available as ext properties for legacy plugins
     afterEvaluate {
@@ -26,15 +32,7 @@ allprojects {
     }
 }
 
-val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
-        .dir("../../build")
-        .get()
-rootProject.layout.buildDirectory.value(newBuildDir)
-
 subprojects {
-    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
     if (project.path != ":app") {
         project.evaluationDependsOn(":app")
     }

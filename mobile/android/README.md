@@ -28,3 +28,28 @@ flutter pub get
 ```
 
 Then run/build Android again.
+
+### Google Sign-In: ApiException 10 (sign_in_failed)
+
+**Error:** `PlatformException(sign_in_failed, com.google.android.gms.common.api.ApiException: 10: , null, null)`
+
+**Cause:** DEVELOPER_ERROR — your app's SHA-1 is not registered for the OAuth client, or package name / client ID is wrong.
+
+**Fix:**
+
+1. **Get your debug SHA-1** (and SHA-256 if you use Play App Signing):
+   ```bash
+   cd mobile/android && ./gradlew :app:signingReport
+   ```
+   Or in Android Studio: Gradle → app → Tasks → android → signingReport. Copy the **SHA-1** (and **SHA-256**) under `debug` (and `release` if you test release builds).
+
+2. **Google Cloud Console** (same project as your Web client ID):
+   - APIs & Services → **Credentials**.
+   - Create or edit an **OAuth 2.0 Client ID** of type **Android**.
+   - **Package name:** `app.livetranslate.live_translate_mobile` (must match `applicationId` in `app/build.gradle`).
+   - **SHA-1:** paste the value from step 1. Add SHA-256 as well if available.
+   - Save.
+
+3. **Web client ID:** Ensure `GOOGLE_WEB_CLIENT_ID` (env or `--dart-define`) is set to your **Web application** client ID, not the Android one. The app uses it as `serverClientId` to get an ID token for your backend.
+
+4. Wait a few minutes after saving credentials, then try sign-in again.
