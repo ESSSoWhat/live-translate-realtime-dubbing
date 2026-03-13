@@ -66,6 +66,9 @@ jobs:
           flutter clean
           flutter pub get
 
+      - name: Accept Android licenses
+        run: yes | flutter doctor --android-licenses || true
+
       - name: Analyze
         run: |
           cd mobile
@@ -79,7 +82,7 @@ jobs:
       - name: Build APK
         run: |
           cd mobile
-          flutter build apk --debug
+          flutter build apk --debug --target-platform android-arm64
 
   # ── Release jobs (on tag v*) ─────────────────────────────────────────────
   release-android:

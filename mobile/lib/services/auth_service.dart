@@ -74,12 +74,15 @@ class AuthService {
 
   Future<bool> _doRefresh(String refresh) async {
     try {
-      final dio = Dio(BaseOptions(
-        baseUrl: "${ApiConfig.baseUrl.endsWith('/') ? ApiConfig.baseUrl : '${ApiConfig.baseUrl}/'}api/v1",
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 10),
-        validateStatus: (int? status) => status != null && status < 400,
-      ));
+      final dio = Dio(
+        BaseOptions(
+          baseUrl:
+              "${ApiConfig.baseUrl.endsWith('/') ? ApiConfig.baseUrl : '${ApiConfig.baseUrl}/'}api/v1",
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
+          validateStatus: (int? status) => status != null && status < 400,
+        ),
+      );
       final r = await dio.post(
         '/auth/refresh',
         data: {'refresh_token': refresh},
@@ -102,7 +105,7 @@ class AuthService {
       if (code == 401 || code == 403) {
         await clear();
       }
-      rethrow;
+      return false;
     }
   }
 }
