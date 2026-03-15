@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "683320997088",
+    "project_id": "livetranslate-488616",
+    "storage_bucket": "livetranslate-488616.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:683320997088:android:d0a43c4aaf159ea0b94c85",
+        "android_client_info": {
+          "package_name": "app.livetranslate.live_translate_mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "683320997088-jbn6670jpgnf9ql3l48a3cif12rk0gr4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCb8p6ZUKRngKlAxGwGx8mCKGZM_6pI6pI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "683320997088-51usimqmqv6uki2531hoq2l9m900ar7l.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -53,3 +53,24 @@ android {
 flutter {
     source "../.."
 }
+
+// Flutter CLI expects APK under build/app/outputs/flutter-apk/ (project root).
+def projectRoot = project.rootDir.parentFile.parentFile
+def dstApkDir = new File(projectRoot, "build/app/outputs/flutter-apk")
+def syncApk = {
+    def srcApkDir = project.file("${project.buildDir}/outputs/flutter-apk")
+    if (srcApkDir.exists()) {
+        dstApkDir.mkdirs()
+        srcApkDir.eachFile { f ->
+            if (f.name.endsWith(".apk")) {
+                java.nio.file.Files.copy(f.toPath(), new File(dstApkDir, f.name).toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
+    }
+}
+afterEvaluate {
+    tasks.findByName("assembleDebug")?.doLast(syncApk)
+    tasks.findByName("assembleRelease")?.doLast(syncApk)
+}
+
