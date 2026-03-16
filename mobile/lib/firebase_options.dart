@@ -10,7 +10,14 @@ class DefaultFirebaseOptions {
       case TargetPlatform.android:
         return android;
       case TargetPlatform.iOS:
+        if (ios.apiKey.startsWith('YOUR_')) {
+          throw UnsupportedError(
+            'iOS Firebase is not configured. Run: flutterfire configure',
+          );
+        }
         return ios;
+      case TargetPlatform.windows:
+        return windows;
       default:
         throw UnsupportedError(
           'DefaultFirebaseOptions are not supported for this platform.',
@@ -19,7 +26,7 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCb8p6ZUKRngKlAxGwGx8mCKGZM_6pI6pI',
+    apiKey: 'AIzaSyBoIhHQQq2-xDleiYaWaKY7u5d_c0R3vNw',
     appId: '1:683320997088:android:d0a43c4aaf159ea0b94c85',
     messagingSenderId: '683320997088',
     projectId: 'livetranslate-488616',
@@ -33,5 +40,14 @@ class DefaultFirebaseOptions {
     projectId: 'livetranslate-488616',
     storageBucket: 'livetranslate-488616.firebasestorage.app',
     iosBundleId: 'app.livetranslate.liveTranslateMobile',
+  );
+
+  // Windows uses the same Firebase project credentials
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyBoIhHQQq2-xDleiYaWaKY7u5d_c0R3vNw',
+    appId: '1:683320997088:android:d0a43c4aaf159ea0b94c85',
+    messagingSenderId: '683320997088',
+    projectId: 'livetranslate-488616',
+    storageBucket: 'livetranslate-488616.firebasestorage.app',
   );
 }

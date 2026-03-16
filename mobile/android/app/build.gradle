@@ -54,12 +54,13 @@ flutter {
     source "../.."
 }
 
-// Flutter CLI expects APK under build/app/outputs/flutter-apk/ (project root).
-def projectRoot = project.rootDir.parentFile.parentFile
+// Flutter CLI expects APK under build/app/outputs/flutter-apk/ (project root = mobile/).
+def projectRoot = rootProject.projectDir.parentFile
 def dstApkDir = new File(projectRoot, "build/app/outputs/flutter-apk")
-def syncApk = {
-    def srcApkDir = project.file("${project.buildDir}/outputs/flutter-apk")
-    if (srcApkDir.exists()) {
+tasks.register("syncFlutterApkToRoot") {
+    doLast {
+        def srcApkDir = project.file("${project.projectDir}/build/outputs/flutter-apk")
+        if (!srcApkDir.exists()) return
         dstApkDir.mkdirs()
         srcApkDir.eachFile { f ->
             if (f.name.endsWith(".apk")) {
@@ -70,7 +71,7 @@ def syncApk = {
     }
 }
 afterEvaluate {
-    tasks.findByName("assembleDebug")?.doLast(syncApk)
-    tasks.findByName("assembleRelease")?.doLast(syncApk)
+    tasks.named("assembleDebug").configure { it.finalizedBy("syncFlutterApkToRoot") }
+    tasks.named("assembleRelease").configure { it.finalizedBy("syncFlutterApkToRoot") }
 }
 
