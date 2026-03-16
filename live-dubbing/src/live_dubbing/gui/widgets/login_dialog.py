@@ -45,6 +45,15 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# OAuth provider domains - used to detect when a redirect leads to the actual OAuth URL.
+# Add new domains here when supporting additional OAuth providers.
+OAUTH_PROVIDER_DOMAINS = (
+    "supabase.co",
+    "supabase.in",
+    "accounts.google.com",
+    "appleid.apple.com",  # Apple Sign-In
+)
+
 
 def _free_tier_defaults() -> dict:
     """Default usage/limits for free tier — used when backend is unreachable.
@@ -277,8 +286,8 @@ class _OAuthWorker(QThread):
         import os as _os
         import urllib.parse as _urlparse  # local import to avoid polluting module scope
 
-        # Domains that signal "this IS the Supabase/Google OAuth URL"
-        _OAUTH_DOMAINS = ("supabase.co", "supabase.in", "accounts.google.com")
+        # Domains that signal "this IS the Supabase/Google/Apple OAuth URL"
+        _OAUTH_DOMAINS = OAUTH_PROVIDER_DOMAINS
         oauth_url: str | None = None
 
         # ── 1a. Direct Supabase URL shortcut (bypasses backend) ──────────
@@ -434,13 +443,13 @@ class _OAuthWorker(QThread):
             _qs = _urlparse.parse_qs(_p.query, keep_blank_values=True)
             _modified = False
 
-            # Patch redirect_to if needed
+            # Patch redirect_to if needed (ensure it points to our local callback server)
             _redirect_to_list = _qs.get("redirect_to")
             _current_rt: str | None = (_redirect_to_list or [""])[0] or None  # type: ignore[list-item]
-            if _current_rt and _current_rt != redirect_uri:
+            if _current_rt != redirect_uri:
                 _qs["redirect_to"] = [redirect_uri]
                 _modified = True
-                logger.info("Patching redirect_to", from_=_current_rt, to=redirect_uri)
+                logger.info("Patching redirect_to", from_=_current_rt or "(none)", to=redirect_uri)
 
             # Inject PKCE params if not present (required for PKCE flow)
             if "code_challenge" not in _qs:
