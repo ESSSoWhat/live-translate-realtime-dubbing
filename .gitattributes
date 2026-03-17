@@ -1,1 +1,15 @@
+# Normalize line endings: checkout with CRLF on Windows, store LF in repo
+* text=auto eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.so binary
+*.dll binary
+*.exe binary
+
 claude.exe filter=lfs diff=lfs merge=lfs -text

@@ -40,6 +40,12 @@ Desktop.ini
 # Claude
 .claude/settings.local.json
 
+# Cursor
+.cursor/
+
+# Python type checker
+.mypy_cache/
+
 # Dart / Flutter
 .dart_tool/
 .flutter-plugins-dependencies
