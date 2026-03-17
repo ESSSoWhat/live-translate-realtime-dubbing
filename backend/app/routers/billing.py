@@ -7,6 +7,7 @@ import json
 import structlog  # pylint: disable=import-error
 import stripe  # pylint: disable=import-error
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status  # pylint: disable=import-error
+from postgrest.exceptions import APIError as PostgrestAPIError  # pylint: disable=import-error
 
 from app.config import get_settings
 from app.dependencies import get_current_user
@@ -372,13 +373,25 @@ async def wix_sync(body: WixSyncRequest, request: Request) -> dict:
         tier = _wix_plan_to_tier(body.plan_id, body.plan_name)
         subscription_status = "active" if tier != "free" else "canceled"
 
-    existing = await sb.table("users").select("id", "tier").eq("email", body.email).maybe_single().execute()
-    if not existing.data:
+    try:
+        existing = await sb.table("users").select("id", "tier").eq("email", body.email).limit(1).execute()
+    except PostgrestAPIError as e:
+        # 204 means no rows found - treat as user not found
+        if e.code == "204" or "Missing response" in str(e):
+            logger.warning("Wix sync: no user found for email", email=body.email)
+            return {"received": True, "updated": False, "reason": "user_not_found"}
+        logger.error("Wix sync: database query failed", email=body.email, error=str(e))
+        raise HTTPException(status_code=500, detail="Database error")
+    except Exception as e:
+        logger.error("Wix sync: database query failed", email=body.email, error=str(e))
+        raise HTTPException(status_code=500, detail="Database error")
+
+    if not existing.data or len(existing.data) == 0:
         logger.warning("Wix sync: no user found for email", email=body.email)
         return {"received": True, "updated": False, "reason": "user_not_found"}
 
-    user_id = existing.data["id"]
-    current_tier = (existing.data.get("tier") or "free").strip().lower()
+    user_id = existing.data[0]["id"]
+    current_tier = (existing.data[0].get("tier") or "free").strip().lower()
     new_tier = _max_tier(current_tier, tier)
 
     await sb.table("users").update({

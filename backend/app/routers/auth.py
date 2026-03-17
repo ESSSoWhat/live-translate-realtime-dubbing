@@ -8,6 +8,7 @@ import urllib.parse
 
 import structlog  # pylint: disable=import-error
 from fastapi import APIRouter, HTTPException, Query, Request, status  # pylint: disable=import-error
+from postgrest.exceptions import APIError as PostgrestAPIError  # pylint: disable=import-error
 from fastapi.responses import JSONResponse, Response  # pylint: disable=import-error
 from pydantic import BaseModel  # pylint: disable=import-error
 
@@ -46,19 +47,30 @@ async def create_or_get_api_key(body: ApiKeyRequest, request: Request) -> dict:
     """
     _verify_wix_secret(request)
     sb = await get_supabase()
-    existing = await sb.table("users").select("id", "email", "tier", "api_key").eq("email", body.email).maybe_single().execute()
-    if existing.data and existing.data.get("api_key"):
+
+    # Query for existing user
+    existing_data = None
+    try:
+        existing = await sb.table("users").select("id", "email", "tier", "api_key").eq("email", body.email).limit(1).execute()
+        if existing.data and len(existing.data) > 0:
+            existing_data = existing.data[0]
+    except PostgrestAPIError as e:
+        if e.code != "204" and "Missing response" not in str(e):
+            logger.error("API key: database query failed", email=body.email, error=str(e))
+            raise HTTPException(status_code=500, detail="Database error")
+
+    if existing_data and existing_data.get("api_key"):
         return {
-            "api_key": existing.data["api_key"],
-            "user_id": str(existing.data["id"]),
-            "email": existing.data["email"],
-            "tier": existing.data.get("tier", "free"),
+            "api_key": existing_data["api_key"],
+            "user_id": str(existing_data["id"]),
+            "email": existing_data["email"],
+            "tier": existing_data.get("tier", "free"),
         }
     api_key = secrets.token_urlsafe(32)
-    if existing.data:
-        await sb.table("users").update({"api_key": api_key}).eq("id", existing.data["id"]).execute()
-        user_id = existing.data["id"]
-        tier = existing.data.get("tier", "free")
+    if existing_data:
+        await sb.table("users").update({"api_key": api_key}).eq("id", existing_data["id"]).execute()
+        user_id = existing_data["id"]
+        tier = existing_data.get("tier", "free")
     else:
         insert_result = (
             await sb.table("users")
