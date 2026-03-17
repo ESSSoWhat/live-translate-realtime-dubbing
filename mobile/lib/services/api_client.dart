@@ -161,6 +161,25 @@ class ApiClient {
     return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
 
+  /// GET /user/me with a raw API key (Wix flow).
+  ///
+  /// This bypasses the auth interceptor and sends `Authorization: Bearer <apiKey>` directly,
+  /// so it can be used before any tokens are stored locally.
+  Future<Map<String, dynamic>> getMeWithApiKey(String apiKey) async {
+    final r = await _dio.get<Map<String, dynamic>>(
+      '/user/me',
+      options: Options(
+        headers: {'Authorization': 'Bearer $apiKey'},
+      ),
+    );
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
   /// GET /user/me — returns user profile with tier, subscription_status, usage.
   Future<Map<String, dynamic>> getMe() async {
     final r = await _dio.get<Map<String, dynamic>>('/user/me');

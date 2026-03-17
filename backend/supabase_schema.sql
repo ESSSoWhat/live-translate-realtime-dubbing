@@ -1,8 +1,7 @@
 -- Live Translate — Supabase schema
 -- Run this in the Supabase SQL Editor
 
--- ── Tier limits (config table) ───────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS tier_limits (
+                                                                                                                                                                        CREATE TABLE IF NOT EXISTS tier_limits (
     tier                TEXT PRIMARY KEY,
     dubbing_seconds     INT  NOT NULL,
     tts_chars           INT  NOT NULL,
@@ -13,17 +12,27 @@ CREATE TABLE IF NOT EXISTS tier_limits (
     stripe_price_id     TEXT
 );
 
-INSERT INTO tier_limits VALUES
-  ('free',    1800,   50000,  1800,   50000,   1,  0.00,  NULL),
-  ('starter', 18000,  500000, 18000,  500000,  5,  9.00,  NULL),  -- fill in Stripe price IDs
-  ('pro',     72000,  2000000,72000,  2000000, 20, 29.00,  NULL)
-ON CONFLICT (tier) DO NOTHING;
+-- Usage caps: free 30 min/mo, hobby 5 hr/mo, pro 15 hr/mo, early_adopters unlimited
+-- Time in seconds; unlimited = max int (2^31 - 1)
+INSERT INTO tier_limits (tier, dubbing_seconds, tts_chars, stt_seconds, translation_chars, voice_clones, price_monthly_usd, stripe_price_id) VALUES
+  ('free',            1800,    50000,    1800,    50000,    1,   0.00,  NULL),   -- 30 min/month (free trial)
+  ('starter',         18000,   500000,   18000,   500000,    5,   9.99,  NULL),   -- 5 hr/month (Hobby)
+  ('pro',             54000,  2000000,   54000,  2000000,   20,  24.99,  NULL),   -- 15 hr/month (Pro)
+  ('early_adopters', 2147483647, 2147483647, 2147483647, 2147483647, 99, 0.00, NULL)  -- unlimited
+ON CONFLICT (tier) DO UPDATE SET
+  dubbing_seconds = EXCLUDED.dubbing_seconds,
+  tts_chars = EXCLUDED.tts_chars,
+  stt_seconds = EXCLUDED.stt_seconds,
+  translation_chars = EXCLUDED.translation_chars,
+  voice_clones = EXCLUDED.voice_clones,
+  price_monthly_usd = EXCLUDED.price_monthly_usd;
 
 -- ── Users ────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    supabase_uid        UUID NOT NULL UNIQUE,
+    supabase_uid        UUID UNIQUE,
     email               TEXT NOT NULL UNIQUE,
+    api_key             TEXT UNIQUE,
     stripe_customer_id  TEXT,
     tier                TEXT NOT NULL DEFAULT 'free' REFERENCES tier_limits(tier),
     subscription_status TEXT NOT NULL DEFAULT 'active',

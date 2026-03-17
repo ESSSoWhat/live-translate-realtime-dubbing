@@ -9,9 +9,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Status**: Alpha (v0.1.0)
 - **Components**:
   - `live-dubbing/` - Windows desktop app (PyQt6 GUI, Python)
-  - `backend/` - FastAPI server for auth, billing, and API proxy
+  - `backend/` - FastAPI server for API proxy, usage tracking, Wix sync and API-key auth
   - `mobile/` - Flutter mobile app (Android/iOS)
-  - `website/` - Next.js marketing/dashboard site
+  - `website/` - Next.js (optional); production site and auth are on **Wix** (www.livetranslate.net)
 
 ## Build, Run, Test Commands
 
@@ -92,10 +92,10 @@ npm run lint                                    # ESLint
 ### Backend Architecture
 
 FastAPI server with routers in `app/routers/`:
-- `auth.py` - Supabase JWT authentication
-- `proxy.py` - ElevenLabs API proxy with usage tracking
-- `billing.py` - Stripe subscription management
-- `user.py` - User profile management
+- `auth.py` - API-key provisioning (Wix-only), legacy Supabase endpoints
+- `proxy.py` - ElevenLabs API proxy with usage tracking (auth via API key)
+- `billing.py` - **Wix sync** (POST `/billing/wix/sync`), optional Stripe/Qonversion
+- `user.py` - User profile and usage (auth via API key)
 
 Services in `app/services/`:
 - `supabase_client.py` - Database operations
@@ -143,11 +143,10 @@ LIVE_TRANSLATE_BACKEND_URL      # Backend URL override
 
 **Backend (.env):**
 ```
-SUPABASE_URL                    # Supabase project URL
-SUPABASE_SERVICE_ROLE_KEY       # Service role key
-SUPABASE_JWT_SECRET             # JWT verification secret
+SUPABASE_DB_URL                 # Postgres (usage/tiers); can be Supabase or any Postgres
+WIX_SYNC_SECRET                 # Required for Wix Velo → POST /billing/wix/sync and POST /auth/api-key
 ELEVENLABS_API_KEY              # For API proxy
-STRIPE_SECRET_KEY               # Stripe billing
+# Optional: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY if using Supabase for DB; STRIPE_* if using Stripe
 ```
 
 **Mobile:**

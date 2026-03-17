@@ -1,23 +1,77 @@
-"""Authentication endpoints — login, register, refresh, logout, OAuth."""
+"""Authentication endpoints — login, register, refresh, logout, OAuth, API key (Wix)."""
 
 from __future__ import annotations
 
 import contextlib
+import secrets
 import urllib.parse
 
 import structlog  # pylint: disable=import-error
-from fastapi import APIRouter, HTTPException, Query, status  # pylint: disable=import-error
+from fastapi import APIRouter, HTTPException, Query, Request, status  # pylint: disable=import-error
 from fastapi.responses import JSONResponse, Response  # pylint: disable=import-error
 from pydantic import BaseModel  # pylint: disable=import-error
 
 from app.config import get_settings
-from app.models.requests import ForgotPasswordRequest, LoginRequest, RefreshRequest, RegisterRequest
+from app.models.requests import ApiKeyRequest, ForgotPasswordRequest, LoginRequest, RefreshRequest, RegisterRequest
 from app.models.responses import AuthResponse, TokenResponse
 from app.services.supabase_client import get_supabase
 from app.services.usage import get_usage_snapshot
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _verify_wix_secret(request: Request) -> None:
+    """Verify Wix request via X-Wix-Sync-Secret or Bearer. Raises HTTPException on failure."""
+    cfg = get_settings()
+    secret = (cfg.wix_sync_secret or "").strip()
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Wix API key not configured. Set WIX_SYNC_SECRET.",
+        )
+    auth = request.headers.get("Authorization") or request.headers.get("X-Wix-Sync-Secret")
+    if not auth:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Wix auth")
+    token = auth.replace("Bearer ", "").strip() if auth.startswith("Bearer ") else auth.strip()
+    if token != secret:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Wix secret")
+
+
+@router.post("/api-key", status_code=status.HTTP_200_OK)
+async def create_or_get_api_key(body: ApiKeyRequest, request: Request) -> dict:
+    """
+    Create or return an API key for the given email (Wix-only).
+    Call from Wix Velo after member login; show the returned api_key once on the account page.
+    """
+    _verify_wix_secret(request)
+    sb = await get_supabase()
+    existing = await sb.table("users").select("id", "email", "tier", "api_key").eq("email", body.email).maybe_single().execute()
+    if existing.data and existing.data.get("api_key"):
+        return {
+            "api_key": existing.data["api_key"],
+            "user_id": str(existing.data["id"]),
+            "email": existing.data["email"],
+            "tier": existing.data.get("tier", "free"),
+        }
+    api_key = secrets.token_urlsafe(32)
+    if existing.data:
+        await sb.table("users").update({"api_key": api_key}).eq("id", existing.data["id"]).execute()
+        user_id = existing.data["id"]
+        tier = existing.data.get("tier", "free")
+    else:
+        insert_result = (
+            await sb.table("users")
+            .insert({"email": body.email, "tier": "free", "subscription_status": "active", "api_key": api_key})
+            .execute()
+        )
+        if not insert_result.data or (isinstance(insert_result.data, list) and len(insert_result.data) == 0):
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create user")
+        row = insert_result.data[0] if isinstance(insert_result.data, list) else insert_result.data
+        user_id = row["id"]
+        tier = row.get("tier", "free")
+    logger.info("API key provisioned", email=body.email, user_id=str(user_id))
+    return {"api_key": api_key, "user_id": str(user_id), "email": body.email, "tier": tier}
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)

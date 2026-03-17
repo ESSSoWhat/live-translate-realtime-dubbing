@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
@@ -18,11 +19,65 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _apiKeyController = TextEditingController();
   final _auth = AuthService();
   final _api = ApiClient();
   final _sso = SsoService();
   bool _loading = false;
   String? _error;
+
+  static const _wixAccountUrl = 'https://www.livetranslate.net/account';
+
+  Future<void> _openWixAccount() async {
+    final uri = Uri.parse(_wixAccountUrl);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      setState(() {
+        _error = 'Could not open website. Please check your connection.';
+      });
+    }
+  }
+
+  Future<void> _loginWithApiKey() async {
+    final key = _apiKeyController.text.trim();
+    if (key.isEmpty) {
+      setState(() {
+        _error = 'Please paste your API key from the website account page.';
+      });
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final profile = await _api.getMeWithApiKey(key);
+      final userId = profile['user_id']?.toString();
+      final email = profile['email']?.toString();
+      final tier = profile['tier']?.toString() ?? 'free';
+      final usage = profile['usage'] as Map<String, dynamic>?;
+
+      await _auth.saveFromAuthResponse({
+        'access_token': key,
+        'user_id': userId,
+        'email': email,
+        'tier': tier,
+        if (usage != null) 'usage': usage,
+      });
+      if (QonversionService.isAvailable && userId != null) {
+        await QonversionService.identify(userId);
+      }
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString().replaceFirst(RegExp(r'^Exception: '), '');
+        _loading = false;
+      });
+    }
+  }
 
   Future<void> _login() async {
     final email = _emailController.text.trim();
@@ -114,6 +169,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _apiKeyController.dispose();
     super.dispose();
   }
 
@@ -165,6 +221,26 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 16),
               ],
               if (showSsoButtons) ...[
+                // Wix is the primary sign-in path: open website and use API key.
+                FilledButton(
+                  onPressed: _loading ? null : _openWixAccount,
+                  child: const Text('Sign in on the website (Wix)'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _apiKeyController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'API key from account page',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: _loading ? null : _loginWithApiKey,
+                  child: const Text('Use API key'),
+                ),
+                const SizedBox(height: 24),
                 OutlinedButton.icon(
                   onPressed: _loading ? null : _signInWithGoogle,
                   icon: const Icon(Icons.g_mobiledata, size: 24),
@@ -192,7 +268,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Text(
-                        'or',
+                        'or sign in with email',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: Theme.of(context).colorScheme.onSurfaceVariant,
                             ),

@@ -29,6 +29,9 @@ class Settings(BaseSettings):  # pylint: disable=too-few-public-methods
     # Qonversion (optional — webhook to sync app/web subscription tier)
     qonversion_webhook_secret: str = ""
 
+    # Wix (optional — sync subscription tier from Wix Pricing Plans; call from Velo)
+    wix_sync_secret: str = ""
+
     # App
     backend_env: str = "development"
     backend_cors_origins: str = "*"

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status  
 
 from app.config import get_settings
 from app.dependencies import get_current_user
-from app.models.requests import CheckoutRequest
+from app.models.requests import CheckoutRequest, WixSyncRequest
 from app.models.responses import CheckoutResponse, PlanInfo, PortalResponse
 from app.services.supabase_client import get_supabase
 
@@ -21,17 +21,25 @@ _TIER_LABELS = {
     "free": "Free",
     "starter": "Starter",
     "pro": "Pro",
+    "early_adopters": "Early Adopters",
 }
 
 # Tier rank for conflict resolution: higher = better. Use max when both Stripe and Qonversion update.
-_TIER_RANK = {"free": 0, "starter": 1, "pro": 2}
+_TIER_RANK = {"free": 0, "starter": 1, "pro": 2, "early_adopters": 3}
 
 
 def _max_tier(a: str, b: str) -> str:
-    """Return the higher of two tiers (free < starter < pro). Unknown tiers treated as free."""
+    """Return the higher of two tiers (free < starter < pro < early_adopters). Unknown tiers treated as free."""
     ra = _TIER_RANK.get((a or "").strip().lower(), 0)
     rb = _TIER_RANK.get((b or "").strip().lower(), 0)
-    return "pro" if ra >= 2 or rb >= 2 else ("starter" if ra >= 1 or rb >= 1 else "free")
+    r = max(ra, rb)
+    if r >= 3:
+        return "early_adopters"
+    if r >= 2:
+        return "pro"
+    if r >= 1:
+        return "starter"
+    return "free"
 
 
 def _stripe_configured() -> bool:
@@ -298,6 +306,87 @@ def _qonversion_product_to_tier(product_id: str | None) -> str:
     if "starter" in pid:
         return "starter"
     return "free"
+
+
+def _wix_plan_to_tier(plan_id: str | None, plan_name: str | None) -> str:
+    """Map Wix plan id/name to backend tier. Limits: free 30min, starter 15hr, pro 25hr, early_adopters unlimited."""
+    for val in (plan_id, plan_name):
+        if not val:
+            continue
+        v = (val or "").lower()
+        if "early adopters" in v or "lifetime" in v and "early" in v:
+            return "early_adopters"
+        if "monthly language unlocked - pro tier" in v or "pro tier" in v:
+            return "pro"
+        if "monthly language unlocked - hobby" in v or "hobby tier" in v:
+            return "starter"
+        if "free trial" in v:
+            return "free"  # 30 min/month
+        if "pro" in v:
+            return "pro"
+        if "starter" in v or "hobby" in v:
+            return "starter"
+    return "free"
+
+
+def _wix_sync_configured() -> bool:
+    """Return True if Wix sync secret is set."""
+    return bool((get_settings().wix_sync_secret or "").strip())
+
+
+def _verify_wix_sync_secret(request: Request) -> None:
+    """Verify Wix sync request via header or Bearer token. Raises HTTPException on failure."""
+    cfg = get_settings()
+    secret = (cfg.wix_sync_secret or "").strip()
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Wix sync not configured. Set WIX_SYNC_SECRET.",
+        )
+    auth = request.headers.get("Authorization") or request.headers.get("X-Wix-Sync-Secret")
+    if not auth:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Wix sync auth")
+    token = auth.replace("Bearer ", "").strip() if auth.startswith("Bearer ") else auth.strip()
+    if token != secret:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Wix sync secret")
+
+
+@router.post("/wix/sync", status_code=status.HTTP_200_OK)
+async def wix_sync(body: WixSyncRequest, request: Request) -> dict:
+    """
+    Sync subscription tier from Wix Pricing Plans.
+
+    Call this from Wix Velo when you have the current member's plan (e.g. on account page
+    or after plan change). Backend finds user by email and updates tier; usage and caps
+    are enforced by existing usage service. Apps get tier/usage from GET /user/usage.
+    """
+    _verify_wix_sync_secret(request)
+    sb = await get_supabase()
+
+    # Resolve tier: explicit canceled/inactive -> free; else map plan_id/plan_name to tier
+    status_val = (body.status or "").strip().upper()
+    if status_val in ("CANCELED", "CANCELLED", "EXPIRED", "INACTIVE"):
+        tier = "free"
+        subscription_status = "canceled"
+    else:
+        tier = _wix_plan_to_tier(body.plan_id, body.plan_name)
+        subscription_status = "active" if tier != "free" else "canceled"
+
+    existing = await sb.table("users").select("id", "tier").eq("email", body.email).maybe_single().execute()
+    if not existing.data:
+        logger.warning("Wix sync: no user found for email", email=body.email)
+        return {"received": True, "updated": False, "reason": "user_not_found"}
+
+    user_id = existing.data["id"]
+    current_tier = (existing.data.get("tier") or "free").strip().lower()
+    new_tier = _max_tier(current_tier, tier)
+
+    await sb.table("users").update({
+        "tier": new_tier,
+        "subscription_status": subscription_status,
+    }).eq("id", user_id).execute()
+    logger.info("Wix sync: tier updated", user_id=user_id, email=body.email, tier=new_tier)
+    return {"received": True, "updated": True, "tier": new_tier}
 
 
 @router.post("/qonversion-webhook", status_code=status.HTTP_200_OK)

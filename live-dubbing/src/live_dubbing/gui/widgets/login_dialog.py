@@ -661,6 +661,39 @@ class _OAuthWorker(QThread):
         )
 
 
+# ── API key worker (Wix flow) ──────────────────────────────────────────────────
+
+class _ApiKeyWorker(QThread):
+    """Validate API key by calling GET /user/me; emit success(user_dict) or error(str)."""
+
+    success = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, base_url: str, api_key: str) -> None:
+        super().__init__()
+        self._base_url = base_url.rstrip("/")
+        self._api_key = api_key.strip()
+
+    def run(self) -> None:
+        if not self._api_key:
+            self.error.emit("Please enter an API key.")
+            return
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                r = client.get(
+                    f"{self._base_url}/api/v1/user/me",
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                )
+            if r.status_code != 200:
+                self.error.emit("Invalid API key or server error. Check the key from the website.")
+                return
+            data = r.json()
+            self.success.emit(data)
+        except Exception as exc:
+            logger.exception("API key validation failed", error=str(exc))
+            self.error.emit("Could not reach the server. Check your connection.")
+
+
 # ── Login Dialog ──────────────────────────────────────────────────────────────
 
 class LoginDialog(QDialog):
@@ -687,6 +720,9 @@ class LoginDialog(QDialog):
         self._reg_btn: QPushButton | None = None
         self._worker: QThread | None = None
         self._oauth_worker: QThread | None = None
+        self._api_key_worker: QThread | None = None
+        self._api_key_input: QLineEdit | None = None
+        self._use_key_btn: QPushButton | None = None
 
         self.setWindowTitle("Live Translate — Sign In")
         self.setMinimumWidth(380)
@@ -774,6 +810,28 @@ class LoginDialog(QDialog):
         btn.setText("\U0001F310  Sign in with Google")  # 🌐 fallback; real G logo not possible in pure Qt
         return btn
 
+    def _wix_button(self) -> QPushButton:
+        """Primary CTA: Sign in with Wix (opens website)."""
+        btn = QPushButton()
+        btn.setMinimumHeight(40)
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        btn.setStyleSheet(
+            """
+            QPushButton {
+                background: #0c6efc;
+                color: #fff;
+                border: none;
+                border-radius: 6px;
+                font-weight: 500;
+                font-size: 14px;
+            }
+            QPushButton:hover { background: #0b5ed7; }
+            QPushButton:disabled { background: #555; color: #999; }
+            """
+        )
+        btn.setText("Sign in with Wix")
+        return btn
+
     def _divider(self, text: str = "or") -> QWidget:
         """Horizontal rule with centred text."""
         w = QWidget()
@@ -805,10 +863,20 @@ class LoginDialog(QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Google sign-in (primary CTA at top)
-        self._google_btn = self._google_button()
-        self._google_btn.clicked.connect(self._on_google_signin)
-        layout.addWidget(self._google_btn)
+        # Wix sign-in (primary CTA)
+        wix_btn = self._wix_button()
+        wix_btn.clicked.connect(self._on_wix_signin)
+        layout.addWidget(wix_btn)
+
+        # API key from Wix account page
+        api_row = QHBoxLayout()
+        self._api_key_input = self._input("Paste API key from account page")
+        self._api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._use_key_btn = self._primary_button("Use API key")
+        self._use_key_btn.clicked.connect(self._on_use_api_key)
+        api_row.addWidget(self._api_key_input)
+        api_row.addWidget(self._use_key_btn)
+        layout.addLayout(api_row)
 
         layout.addWidget(self._divider("or sign in with email"))
 
@@ -844,6 +912,53 @@ class LoginDialog(QDialog):
 
         return page
 
+    def _on_wix_signin(self) -> None:
+        """Open Wix sign-in page in the default browser."""
+        url = self._settings.get_signin_url()
+        webbrowser.open(url)
+        self._show_error("")
+        QMessageBox.information(
+            self,
+            "Sign in with Wix",
+            "After signing in on the website, open your account page, copy your API key, and paste it above.",
+        )
+
+    def _on_use_api_key(self) -> None:
+        """Validate pasted API key and complete sign-in."""
+        if self._api_key_input is None:
+            return
+        key = self._api_key_input.text().strip()
+        if not key:
+            self._show_error("Please paste your API key from the account page.")
+            return
+        self._set_busy(True)
+        self._show_error("")
+        self._api_key_worker = _ApiKeyWorker(self._settings.get_backend_url(), key)
+        self._api_key_worker.success.connect(self._on_api_key_success)
+        self._api_key_worker.error.connect(self._on_api_key_error)
+        self._api_key_worker.finished.connect(lambda: self._set_busy(False))
+        self._api_key_worker.start()
+
+    def _on_api_key_success(self, data: dict) -> None:
+        key = self._api_key_input.text().strip() if self._api_key_input else ""
+        if not key:
+            return
+        self._settings.set_auth_tokens(key, "")
+        user_id = str(data.get("user_id", ""))
+        tier = str(data.get("tier", "free"))
+        self._settings.set_cached_user_info(user_id, tier)
+        usage = data.get("usage") or _free_tier_defaults()
+        self.auth_response = {
+            "user_id": user_id,
+            "email": data.get("email", ""),
+            "tier": tier,
+            "usage": usage,
+        }
+        self.accept()
+
+    def _on_api_key_error(self, message: str) -> None:
+        self._show_error(message)
+
     def _build_register_page(self) -> QWidget:
         assert self._stack is not None
         page = QWidget()
@@ -851,10 +966,10 @@ class LoginDialog(QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Google sign-up option on the register page too
-        google_btn2 = self._google_button()
-        google_btn2.clicked.connect(self._on_google_signin)
-        layout.addWidget(google_btn2)
+        # Wix sign-up (same as login)
+        wix_btn2 = self._wix_button()
+        wix_btn2.clicked.connect(self._on_wix_signin)
+        layout.addWidget(wix_btn2)
 
         layout.addWidget(self._divider("or create account with email"))
 
@@ -906,6 +1021,8 @@ class LoginDialog(QDialog):
         self._reg_btn.setEnabled(not busy)
         if self._google_btn is not None:
             self._google_btn.setEnabled(not busy)
+        if self._use_key_btn is not None:
+            self._use_key_btn.setEnabled(not busy)
         self._login_btn.setText("Signing in…" if busy else "Sign In")
         self._reg_btn.setText("Creating account…" if busy else "Create Account — Free")
         if self._google_btn is not None:

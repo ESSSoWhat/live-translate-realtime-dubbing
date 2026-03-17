@@ -295,20 +295,19 @@ class AppSettings(BaseModel):
             pass
 
     def is_token_valid(self) -> bool:
-        """Quick check: token exists and is not expired (reads exp claim)."""
+        """Quick check: token exists; for JWT also check exp; for API key (non-JWT) consider valid."""
         token = self.get_access_token()
         if not token:
             return False
+        parts = token.split(".")
+        if len(parts) != 3 or len(token) < 20:
+            # API key (from Wix): no expiry check; backend will reject if invalid
+            return True
         try:
             import base64
-            # Decode without verifying signature (server verifies)
-            parts = token.split(".")
-            if len(parts) != 3:
-                return False
             padded = parts[1] + "=" * (-len(parts[1]) % 4)
             payload = json.loads(base64.urlsafe_b64decode(padded))
             import time
-            # Consider token expired 5 min early to allow silent refresh
             return payload.get("exp", 0) > time.time() + 300
         except Exception:
             return False

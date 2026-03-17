@@ -1,23 +1,30 @@
 # Live Translate — Deployment
 
-Deploy backend, website (www.livetranslate.net), mobile (Android/iOS with store submission), and desktop (Windows installer). All deployments are gated by CI tests.
+Deploy backend, website (Wix), mobile (Android/iOS), and desktop (Windows). All deployments are gated by CI tests. **Auth, subscriptions, and API keys are driven by Wix.**
+
+## Wix (website, sign-in, subscriptions, API keys)
+
+- **Website**: [Wix](https://www.wix.com) — host **www.livetranslate.net** on Wix (custom domain in Wix → Domains). Marketing pages, pricing, and account/settings live here.
+- **Sign-in**: Wix **Members** — users sign up and log in on the Wix site (email/password or social login configured in Wix).
+- **Subscriptions**: Wix **Pricing Plans** — plans (Free trial, Hobby, Pro, Early Adopters) and billing are managed in Wix. Backend tier is synced via **POST /api/v1/billing/wix/sync** (see [backend/WIX_SYNC.md](backend/WIX_SYNC.md)).
+- **API keys**: Backend issues per-user API keys. From Wix (Velo), call **POST /api/v1/auth/api-key** with the member’s email (authenticated with `WIX_SYNC_SECRET`); show the returned API key on a members-only account page so users can paste it into the desktop or mobile app.
+- **Configure**: [Wix Dashboard](https://manage.wix.com) → your site → Settings, Members, Pricing Plans, Velo (Code), Secrets Manager for `WIX_SYNC_SECRET` and backend URL.
 
 ## How and where to access your apps
 
 | App | Run locally | Access when deployed |
 | ----- | ----- | ----- |
-| **Website** | `cd website` → `npm run dev` → open <http://localhost:3000> | <https://www.livetranslate.net> (after Vercel/Netlify deploy) |
-| **Backend API** | `cd backend` → `python -m uvicorn app.main:app --reload` → <http://localhost:8000> | Your Railway (or Docker) URL (e.g. `https://your-app.railway.app`) |
-| **Mobile (Android)** | `cd mobile` → `flutter run` (device/emulator) | **Play Store**: [Google Play Console](https://play.google.com/console) → your app → Release → Production. **Pre-release**: same place or install APK from GitHub Release. |
-| **Mobile (iOS)** | `cd mobile` → `flutter run` (Mac + device/simulator) or open `ios/Runner.xcworkspace` in Xcode | **App Store**: [App Store Connect](https://appstoreconnect.apple.com) → My Apps → your app. **TestFlight**: same place. **Builds**: upload IPA from Xcode/Transporter or CI. |
-| **Desktop (Windows)** | `cd live-dubbing` → `python -m live_dubbing` | **Installer**: [GitHub Releases](https://github.com/YOUR_ORG/YOUR_REPO/releases) → pick tag (e.g. `v0.1.0`) → download `LiveTranslate-<tag>.zip` or the Windows installer if you added Inno Setup. |
+| **Website** | Wix Editor / Preview | <https://www.livetranslate.net> (Wix; custom domain) |
+| **Backend API** | `cd backend` → `python -m uvicorn app.main:app --reload` → <http://localhost:8000> | Railway (or Docker) URL (e.g. `https://your-app.railway.app`) — set `WIX_SYNC_SECRET`, `SUPABASE_DB_URL`, `ELEVENLABS_API_KEY`, etc. |
+| **Mobile (Android)** | `cd mobile` → `flutter run` | **Play Store**: [Google Play Console](https://play.google.com/console). Users sign in via **API key** from Wix account page. |
+| **Mobile (iOS)** | `cd mobile` → `flutter run` or Xcode | **App Store**: [App Store Connect](https://appstoreconnect.apple.com). Users sign in via **API key** from Wix account page. |
+| **Desktop (Windows)** | `cd live-dubbing` → `python -m live_dubbing` | **Installer**: [GitHub Releases](https://github.com/YOUR_ORG/YOUR_REPO/releases). Users enter **API key** from Wix account page. |
 
 **Manage / configure**
-- **Website**: [Vercel Dashboard](https://vercel.com/dashboard) or [Netlify](https://app.netlify.com) (project → Domains, Env Vars).
-- **Backend**: [Railway Dashboard](https://railway.app/dashboard) (project → Variables, Deployments).
-- **Android**: [Play Console](https://play.google.com/console) (releases, store listing, signing).
-- **iOS**: [App Store Connect](https://appstoreconnect.apple.com) (TestFlight, App Store, signing in [Developer](https://developer.apple.com/account)).
-- **Releases (APK, AAB, Windows zip)**: GitHub repo → **Releases** (right sidebar or `https://github.com/YOUR_ORG/YOUR_REPO/releases`).
+- **Wix**: Wix Dashboard → site settings, Members, Pricing Plans, Velo, Secrets, custom domain.
+- **Backend**: [Railway Dashboard](https://railway.app/dashboard) (Variables, Deployments).
+- **Android / iOS**: Play Console, App Store Connect (releases, signing).
+- **Releases (APK, AAB, Windows zip)**: GitHub repo → **Releases**.
 
 ---
 
@@ -39,27 +46,25 @@ Deploy backend, website (www.livetranslate.net), mobile (Android/iOS with store 
 
 - **Railway (recommended)**  
   - Connect repo, set root directory to `backend/`.  
-  - Use existing Dockerfile; set env vars from `.env`: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `ELEVENLABS_API_KEY`, `STRIPE_SECRET_KEY` (if used).  
-  - Deploy from `main` or from tag; optional: deploy job in CI via Railway CLI or GitHub integration.
+  - Use existing Dockerfile. Set env vars: `SUPABASE_DB_URL`, `ELEVENLABS_API_KEY`, `WIX_SYNC_SECRET`; optionally `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` if still using Supabase for DB; `STRIPE_*` only if you use Stripe.  
+  - Deploy from `main` or a tag.
 
 - **Generic Docker**  
-  - From repo root: `docker build -f backend/Dockerfile backend` (build context = backend).  
+  - From repo root: `docker build -f backend/Dockerfile backend`.  
   - Run with same env vars, port 8000.
 
 ---
 
-## 2. Website (www.livetranslate.net)
+## 2. Website — Wix (www.livetranslate.net)
 
-- **Vercel**  
-  - Connect repo; set **root directory** to `website/`.  
-  - In Project Settings → Domains, add **www.livetranslate.net** as the production domain. Optionally add **livetranslate.net** and set up a redirect to www (Vercel supports this in Domains).  
-  - Set **NEXTAUTH_URL** to `https://www.livetranslate.net` in Environment Variables so NextAuth redirects and callbacks use the canonical URL.  
-  - Build uses `npm run build` (Next.js); `website/vercel.json` sets framework.  
-  - Set other env vars in Vercel (e.g. Google OAuth, API URL) as needed.  
-  - Deploy on push to `main` via Vercel GitHub integration; production serves at <https://www.livetranslate.net>.
+- **Wix**  
+  - Create or use an existing Wix site. Enable **Members** and **Pricing Plans**.  
+  - In Wix → **Domains**: connect **www.livetranslate.net** (and optionally **livetranslate.net** with redirect to www).  
+  - In **Velo**: add code to call backend **POST /billing/wix/sync** and **POST /auth/api-key** (see [backend/WIX_SYNC.md](backend/WIX_SYNC.md)). Store backend URL and `WIX_SYNC_SECRET` in Wix Secrets Manager.  
+  - Members-only account page: after sync, call API-key endpoint and show the key once so users can copy it into the desktop/mobile app.
 
-- **Netlify**  
-  - Alternatively connect repo, base directory `website/`, build command `npm run build`, publish directory `.next` or use Next.js runtime; add custom domain <https://www.livetranslate.net>.
+- **Optional: Next.js (website/)**  
+  - If you keep the repo’s Next.js site for a separate dashboard or marketing, deploy to Vercel/Netlify with root `website/`. For a Wix-only setup, the live site is Wix; Next.js can be used for internal or redirect pages only.
 
 ---
 
@@ -70,50 +75,10 @@ Deploy backend, website (www.livetranslate.net), mobile (Android/iOS with store 
   - Set `JAVA_HOME` to a JDK 17 install, or in Cursor: **Settings** → search “java configuration runtimes” → add JDK 17; set **Gradle: Java Home** to that JDK.  
   - After changing JDK: open a new terminal; run **Java: Clean Java Language Server Workspace** → Restart, then **Gradle: Refresh Gradle Project**.
 
-- **SSO (Google / Apple)**  
-  - **Google on Android**: Supabase validates the ID token using your Google **web** client ID. Set `GOOGLE_WEB_CLIENT_ID` when building (e.g. `--dart-define=GOOGLE_WEB_CLIENT_ID=YOUR_WEB_CLIENT_ID.apps.googleusercontent.com`). Use the same web client ID as in Supabase → Auth → Providers → Google.  
-  - **Google on Windows/macOS/Linux**: The app opens the system browser and uses the backend’s OAuth flow. In **Supabase** → **Auth** → **URL Configuration** → **Redirect URLs**, add `http://localhost` (and optionally `http://127.0.0.1`) so the callback after Google sign-in is allowed.  
-  - **Apple**: Ensure Sign in with Apple is enabled in Supabase and in the Apple Developer app ID; iOS has Runner.entitlements, Android is supported by the package on API 13+.
-
-### Google Sign-In setup (Web client + Android SHA)
-
-Do this once so the mobile app can use “Continue with Google” and the backend (Supabase) can verify the token.
-
-1. **Google Cloud Console**  
-   - Go to [Google Cloud Console](https://console.cloud.google.com) → your project (or create one) → **APIs & Services** → **Credentials**.  
-   - **Create OAuth 2.0 Client ID** (or use an existing one):  
-     - Application type: **Web application**.  
-     - Name it e.g. “Live Translate Web (Supabase)”.  
-     - Under **Authorized redirect URIs** add your Supabase callback, e.g. `https://<PROJECT_REF>.supabase.co/auth/v1/callback` (find the exact URL in Supabase → Auth → URL Configuration).  
-   - Copy the **Client ID** (ends with `.apps.googleusercontent.com`) and the **Client secret**.  
-   - Optional for web: add your production site (e.g. `https://www.livetranslate.net`) to Authorized JavaScript origins if you use Google Sign-In on the website.
-
-2. **Supabase**  
-   - **Dashboard** → **Authentication** → **Providers** → **Google**.  
-   - Enable Google, paste the **Client ID** and **Client secret** from step 1.  
-   - Save. This is the “web” client Supabase uses to verify ID tokens from the app.
-
-3. **Flutter app — web client ID**  
-   - Build/run the app with that same **Client ID** as the web client:  
-     `flutter run --dart-define=GOOGLE_WEB_CLIENT_ID=YOUR_CLIENT_ID.apps.googleusercontent.com`  
-   - For release builds (e.g. CI or local):  
-     `flutter build apk --dart-define=GOOGLE_WEB_CLIENT_ID=...`  
-   - So: the **same** value as in Supabase → Google provider.
-
-4. **Android — SHA-1 and SHA-256**  
-   - Google requires your app’s package name and signing certificate fingerprint(s).  
-   - **Debug** (local/dev):  
-     ```bash
-     cd mobile/android
-     ./gradlew signingReport
-     ```  
-     Or: `keytool -keystore ~/.android/debug.keystore -list -v` (alias `androiddebugkey`, storepass `android` if prompted).  
-   - **Release**: `keytool -keystore path-to-release-keystore.jks -list -v` (use your upload/ release keystore path and alias).  
-   - In **Google Cloud Console** → **Credentials** → **Create credentials** → **OAuth client ID** → Application type: **Android**.  
-   - Package name: `app.livetranslate.live_translate_mobile`.  
-   - Paste the **SHA-1** from the signing report (and SHA-256 if the form allows). Create one Android client for debug (debug SHA-1) and one for release (release SHA-1), or add both fingerprints to one client if the UI allows.  
-   - The app code uses the **Web** client ID as `GOOGLE_WEB_CLIENT_ID` (for Supabase); the Android client(s) just register the app with Google so sign-in is allowed.  
-   - After adding the Android client(s), wait a few minutes and try “Continue with Google” again.
+- **App auth (Wix + API key)**  
+  - Users sign in on **Wix** (Members). On the Wix account page, Velo calls the backend to sync tier and to create/return an **API key**.  
+  - Desktop and mobile apps **do not** use Google/Apple sign-in to the backend; they ask the user to paste the **API key** from the Wix account page (or scan a QR / deep link). The app sends `Authorization: Bearer <api_key>` to the backend.  
+  - Ensure backend env includes `WIX_SYNC_SECRET` and that Wix Velo calls **POST /billing/wix/sync** and **POST /auth/api-key** as in [backend/WIX_SYNC.md](backend/WIX_SYNC.md).
 
 - **Android (on tag `v*`)**  
   - Workflow: `release-android` runs `flutter test`, then (when secrets set) decodes `ANDROID_KEYSTORE_BASE64` to `mobile/android/upload-keystore.jks` and writes `key.properties`.  
@@ -134,7 +99,7 @@ Do this once so the mobile app can use “Continue with Google” and the backen
 | (iOS) Certificate + provisioning profile | release-ios | For `flutter build ipa` and upload |
 
 **Expo (if you use Expo/React Native)**  
-Set in `.env.local` or in EAS/Expo config: `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_KEY` (Supabase URL and anon key). See `expo/.env.example`.
+Point the app at your backend URL and use the same API-key flow (user pastes key from Wix account page).
 
 ---
 

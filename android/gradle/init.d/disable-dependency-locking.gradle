@@ -1,0 +1,19 @@
+// Init script to disable dependency locking globally
+// This prevents errors when dependencies are resolved but not in lock state
+// This script runs before any build scripts are evaluated
+
+// Disable for all project configurations after projects are loaded
+gradle.projectsLoaded {
+    rootProject.allprojects { project ->
+        project.configurations.all { configuration ->
+            configuration.resolutionStrategy.deactivateDependencyLocking()
+        }
+    }
+    
+    // Also disable for buildscript classpath
+    rootProject.buildscript {
+        configurations.classpath {
+            resolutionStrategy.deactivateDependencyLocking()
+        }
+    }
+}

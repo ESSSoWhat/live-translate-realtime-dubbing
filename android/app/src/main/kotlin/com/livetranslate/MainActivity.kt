@@ -1,0 +1,7 @@
+package com.livetranslate
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity: FlutterActivity() {
+}
+

@@ -107,3 +107,18 @@ class CheckoutRequest(BaseModel):
         if not _is_allowed_redirect_url(v):
             raise ValueError("URL must be livetranslate:// or https:// and not an open redirect")
         return v
+
+
+class WixSyncRequest(BaseModel):
+    """Body for Wix subscription sync (called from Velo when member plan is known)."""
+
+    email: EmailStr
+    plan_id: str | None = None
+    plan_name: str | None = None
+    status: str | None = None  # e.g. ACTIVE, CANCELED
+
+
+class ApiKeyRequest(BaseModel):
+    """Body for API key provision (Wix-only; call after member login)."""
+
+    email: EmailStr
