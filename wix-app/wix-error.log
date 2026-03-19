@@ -1,0 +1,25 @@
+----- CLI crash report at 2026-03-19T14:48:32.509Z
+Error Trace
+NonInteractiveTerminal: NonInteractiveTerminal
+    at ErrorBoundary.componentDidCatch (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\@wix\cli-ui-kit\src\renderer.tsx:30:9)
+    at ErrorBoundary.Mf.f.componentDidCatch.c2.callback (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:104:368)
+    at ce (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:59:189)
+    at hh (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:166:422)
+    at fh (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:165:446)
+    at eh (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:164:480)
+    at ci (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:192:84)
+    at Xh (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:190:396)
+    at Mh (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:182:439)
+    at ad (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:41:105)
+caused by: Error: Raw mode is not supported on the current process.stdin, which Ink uses as input stream by default.
+Read about how to prevent this error on https://github.com/vadimdemedes/ink/#israwmodesupported
+    at value (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\ink\src\components\App.tsx:146:11)
+    at <anonymous> (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\ink\src\hooks\use-input.ts:127:3)
+    at Og (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:151:471)
+    at Ph (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:195:111)
+    at <anonymous> (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\react-reconciler\cjs\react-reconciler.production.min.js:191:391)
+    at J (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\scheduler\cjs\scheduler.production.min.js:13:203)
+    at Immediate.R (C:\Users\son-l\AppData\Local\npm-cache\_npx\b4b80899c877fe3d\node_modules\node_modules\scheduler\cjs\scheduler.production.min.js:14:128)
+    at process.processImmediate (node:internal/timers:485:21)
+Error Info
+{}

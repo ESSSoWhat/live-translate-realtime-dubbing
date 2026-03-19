@@ -1,4 +1,4 @@
-import React, { type FC, useState, useEffect } from 'react';
+import React, { type FC, useState } from 'react';
 import { dashboard } from '@wix/dashboard';
 import {
   Box,
@@ -25,48 +25,54 @@ interface ApiKeyData {
 }
 
 const Index: FC = () => {
-  const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
   const [apiKeyData, setApiKeyData] = useState<ApiKeyData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // For demo purposes, using a test email - in production, get from Wix Members
-  const memberEmail = 'member@example.com';
+  const handleGetApiKey = async () => {
+    if (!email || !email.includes('@')) {
+      setError('Please enter a valid email address');
+      return;
+    }
 
-  useEffect(() => {
-    const fetchApiKey = async () => {
-      try {
-        setLoading(true);
+    try {
+      setLoading(true);
+      setError(null);
 
-        // Sync member tier first
-        await syncMemberTier({ email: memberEmail, tier: 'free' });
+      // Sync member tier first
+      await syncMemberTier({ email, tier: 'free' });
 
-        // Then get/create API key
-        const result = await getApiKey(memberEmail);
+      // Then get/create API key
+      const result = await getApiKey(email);
 
-        if (result.success && result.apiKey) {
-          setApiKeyData({
-            apiKey: result.apiKey,
-            userId: result.userId || '',
-            tier: result.tier || 'free',
-          });
-        } else {
-          setError(result.error || 'Failed to get API key');
-        }
-      } catch (err) {
-        setError(`Error: ${err}`);
-      } finally {
-        setLoading(false);
+      if (result.success && result.apiKey) {
+        setApiKeyData({
+          apiKey: result.apiKey,
+          userId: result.userId || '',
+          tier: result.tier || 'free',
+        });
+      } else {
+        setError(result.error || 'Failed to get API key');
       }
-    };
-
-    fetchApiKey();
-  }, []);
+    } catch (err) {
+      setError(`Error: ${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCopyApiKey = () => {
     dashboard.showToast({
       message: 'API key copied to clipboard!',
       type: 'success',
     });
+  };
+
+  const handleReset = () => {
+    setApiKeyData(null);
+    setEmail('');
+    setError(null);
   };
 
   return (
@@ -89,19 +95,22 @@ const Index: FC = () => {
           <Layout>
             <Cell span={12}>
               <Card>
-                <Card.Header title="Your API Key" subtitle="Use this key in the Live Translate app" />
+                <Card.Header
+                  title="Your API Key"
+                  subtitle="Use this key in the Live Translate desktop app"
+                />
                 <Card.Divider />
                 <Card.Content>
                   {loading ? (
                     <Box align="center" padding="SP6">
                       <Loader size="medium" />
-                    </Box>
-                  ) : error ? (
-                    <Box padding="SP4">
-                      <Text skin="error">{error}</Text>
+                      <Text secondary>Fetching your API key...</Text>
                     </Box>
                   ) : apiKeyData ? (
                     <Box direction="vertical" gap="SP4">
+                      <FormField label="Email">
+                        <Text>{email}</Text>
+                      </FormField>
                       <FormField label="API Key">
                         <Box gap="SP2">
                           <Box flexGrow={1}>
@@ -125,8 +134,36 @@ const Index: FC = () => {
                           {apiKeyData.tier.charAt(0).toUpperCase() + apiKeyData.tier.slice(1)}
                         </Text>
                       </FormField>
+                      <Box marginTop="SP4">
+                        <Button onClick={handleReset} skin="light" size="small">
+                          Use Different Email
+                        </Button>
+                      </Box>
                     </Box>
-                  ) : null}
+                  ) : (
+                    <Box direction="vertical" gap="SP4">
+                      <Text>
+                        Enter the email address associated with your Live Translate account to retrieve your API key.
+                      </Text>
+                      {error && (
+                        <Text skin="error">{error}</Text>
+                      )}
+                      <FormField label="Email Address" required>
+                        <Input
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="your@email.com"
+                          type="email"
+                          onEnterPressed={handleGetApiKey}
+                        />
+                      </FormField>
+                      <Box>
+                        <Button onClick={handleGetApiKey} disabled={!email}>
+                          Get API Key
+                        </Button>
+                      </Box>
+                    </Box>
+                  )}
                 </Card.Content>
               </Card>
             </Cell>

@@ -40,6 +40,13 @@ def create_app() -> FastAPI:
 
     application.add_exception_handler(SupabaseNotConfiguredError, supabase_not_configured)
 
+    # Debug: catch all exceptions and log them
+    async def debug_exception_handler(request, exc):
+        import traceback
+        logger.error("Unhandled exception", error=str(exc), tb=traceback.format_exc())
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+    application.add_exception_handler(Exception, debug_exception_handler)
+
     # CORS (desktop app uses custom protocol, but allow localhost for dev)
     # In production, never use allow_origin_regex with allow_credentials; require explicit allowlist.
     cors_origins = cfg.backend_cors_origins or ""

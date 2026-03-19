@@ -36,7 +36,7 @@ async def get_current_user(authorization: str = Header(...)) -> dict:  # noqa: B
     # API key path (Wix flow): token is the raw api_key from users.api_key
     if not _looks_like_jwt(token):
         result = await sb.table("users").select("*").eq("api_key", token).maybe_single().execute()
-        if result.data:
+        if result and result.data:
             return result.data
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
@@ -61,7 +61,7 @@ async def get_current_user(authorization: str = Header(...)) -> dict:  # noqa: B
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing sub claim")
 
     result = await sb.table("users").select("*").eq("supabase_uid", supabase_uid).maybe_single().execute()
-    if not result.data:
+    if not result or not result.data:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
     return result.data

@@ -5,8 +5,11 @@
  * Call these functions from frontend pages after member login.
  */
 
+import { customTrigger } from '@wix/automations';
+
 const BACKEND_URL = 'https://api.livetranslate.net';
 const WIX_SYNC_SECRET = '5fb67a259259e178e64f04321d044ba0dfc9d2fda583de1b3a09d39a7d93c08a';
+const AUTOMATION_TRIGGER_ID = '376cab86-5237-40e8-b0fa-cabfbf63ba9f';
 
 export interface SyncResult {
   success: boolean;
@@ -47,6 +50,21 @@ export async function syncMemberTier(memberInfo: MemberInfo): Promise<SyncResult
     if (!response.ok) {
       const errorText = await response.text();
       return { success: false, error: `Backend error: ${response.status} - ${errorText}` };
+    }
+
+    // Trigger a Wix Automation custom trigger (best-effort).
+    // Note: the automation permission scope `AUTOMATIONS.TRIGGER_WEBHOOK` is required.
+    try {
+      await customTrigger.runTrigger({
+        triggerId: AUTOMATION_TRIGGER_ID,
+        payload: {
+          email: memberInfo.email,
+          tier: memberInfo.tier || 'free',
+        },
+      });
+    } catch (automationError) {
+      // Don't block backend sync; automation failure shouldn't prevent API key retrieval.
+      console.warn('Wix automation trigger failed:', automationError);
     }
 
     return { success: true };

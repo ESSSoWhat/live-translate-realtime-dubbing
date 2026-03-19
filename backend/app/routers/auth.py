@@ -20,6 +20,27 @@ from app.services.usage import get_usage_snapshot
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
+def _default_usage(tier: str = "free") -> dict:
+    """Return default usage snapshot when DB is unavailable."""
+    from datetime import date, timedelta
+    today = date.today()
+    if today.month == 12:
+        period_end = date(today.year + 1, 1, 1) - timedelta(days=1)
+    else:
+        period_end = date(today.year, today.month + 1, 1) - timedelta(days=1)
+    limits = {"free": (1800, 50000, 1800, 50000, 1), "starter": (7200, 200000, 7200, 200000, 3), "pro": (36000, 1000000, 36000, 1000000, 10)}
+    dub, tts, stt, trans, clones = limits.get(tier, limits["free"])
+    return {
+        "dubbing_seconds_used": 0, "dubbing_seconds_limit": dub,
+        "tts_chars_used": 0, "tts_chars_limit": tts,
+        "stt_seconds_used": 0, "stt_seconds_limit": stt,
+        "translation_chars_used": 0, "translation_chars_limit": trans,
+        "voice_clones_used": 0, "voice_clones_limit": clones,
+        "period_reset_date": str(period_end),
+    }
+
+
+
 
 
 def _verify_wix_secret(request: Request) -> None:
@@ -169,7 +190,7 @@ async def login(body: LoginRequest) -> AuthResponse:
 
     # Fetch internal user row (maybe_single so auto-create path runs when no row)
     result = await sb.table("users").select("*").eq("supabase_uid", resp.user.id).maybe_single().execute()
-    if not result.data:
+    if not result or not result.data:
         # Auto-create if missing (e.g. user registered via web)
         try:
             result = (
@@ -189,7 +210,11 @@ async def login(body: LoginRequest) -> AuthResponse:
     else:
         user_row = result.data if isinstance(result.data, dict) else result.data[0]
 
-    usage = await get_usage_snapshot(str(user_row["id"]))
+    try:
+        usage = await get_usage_snapshot(str(user_row["id"]))
+    except Exception as exc:
+        logger.warning("Failed to fetch usage, using defaults", error=str(exc))
+        usage = _default_usage(user_row["tier"])
 
     return AuthResponse(
         access_token=resp.session.access_token,

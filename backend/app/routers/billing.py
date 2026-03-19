@@ -119,7 +119,7 @@ async def create_checkout(
         if not update_result.data:
             # Another request already set it; use existing customer
             existing = await sb.table("users").select("stripe_customer_id").eq("id", user["id"]).maybe_single().execute()
-            if existing.data and existing.data.get("stripe_customer_id"):
+            if existing and existing.data and existing.data.get("stripe_customer_id"):
                 customer_id = existing.data["stripe_customer_id"]
 
     session = s.checkout.Session.create(
@@ -243,7 +243,7 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(alias=
         invoice = event.data.object
         logger.info("invoice.payment_failed received", invoice_id=getattr(invoice, "id", None), customer=invoice.customer)
         result = await sb.table("users").select("id").eq("stripe_customer_id", invoice.customer).maybe_single().execute()
-        if result.data:
+        if result and result.data:
             await sb.table("users").update({"subscription_status": "past_due"}).eq("id", result.data["id"]).execute()
 
     return {"received": True}
