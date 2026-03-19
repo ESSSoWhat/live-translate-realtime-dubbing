@@ -52,12 +52,15 @@ async def create_or_get_api_key(body: ApiKeyRequest, request: Request) -> dict:
     existing_data = None
     try:
         existing = await sb.table("users").select("id", "email", "tier", "api_key").eq("email", body.email).limit(1).execute()
-        if existing.data and len(existing.data) > 0:
+        if existing is not None and existing.data and len(existing.data) > 0:
             existing_data = existing.data[0]
     except PostgrestAPIError as e:
         if e.code != "204" and "Missing response" not in str(e):
             logger.error("API key: database query failed", email=body.email, error=str(e))
             raise HTTPException(status_code=500, detail="Database error")
+    except Exception as e:
+        # Handle case where execute() returns None or other unexpected errors
+        logger.warning("API key: query returned unexpected result", email=body.email, error=str(e))
 
     if existing_data and existing_data.get("api_key"):
         return {

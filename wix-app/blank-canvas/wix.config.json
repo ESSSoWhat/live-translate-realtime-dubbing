@@ -1,0 +1,5 @@
+{
+  "$schema": "https://dev.wix.com/wix-cli/schemas/wix-config.json",
+  "appId": "48e1404b-6c26-42bc-97df-69033036fb97",
+  "projectId": "blank-canvas"
+}
