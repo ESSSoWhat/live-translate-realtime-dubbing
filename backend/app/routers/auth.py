@@ -159,7 +159,11 @@ async def register(body: RegisterRequest) -> AuthResponse:
             detail="Registration could not be completed",
         ) from exc
 
-    usage = await get_usage_snapshot(str(user_row["id"]))
+    try:
+        usage = await get_usage_snapshot(str(user_row["id"]))
+    except Exception as exc:
+        logger.warning("Failed to fetch usage, using defaults", error=str(exc))
+        usage = _default_usage("free")
 
     return AuthResponse(
         access_token=session.access_token,
@@ -343,7 +347,7 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
         .maybe_single()
         .execute()
     )
-    if not result.data:
+    if not result or not result.data:
         try:
             result = (
                 await sb.table("users")
@@ -366,7 +370,11 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
     else:
         user_row = result.data if isinstance(result.data, dict) else result.data[0]
 
-    usage = await get_usage_snapshot(str(user_row["id"]))
+    try:
+        usage = await get_usage_snapshot(str(user_row["id"]))
+    except Exception as exc:
+        logger.warning("Failed to fetch usage, using defaults", error=str(exc))
+        usage = _default_usage(user_row["tier"])
 
     logger.info("Google OAuth exchange complete", user_id=resp.user.id)
     return AuthResponse(
@@ -418,7 +426,7 @@ async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> Au
         .maybe_single()
         .execute()
     )
-    if not result.data:
+    if not result or not result.data:
         try:
             result = (
                 await sb.table("users")
@@ -441,7 +449,11 @@ async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> Au
     else:
         user_row = result.data if isinstance(result.data, dict) else result.data[0]
 
-    usage = await get_usage_snapshot(str(user_row["id"]))
+    try:
+        usage = await get_usage_snapshot(str(user_row["id"]))
+    except Exception as exc:
+        logger.warning("Failed to fetch usage, using defaults", error=str(exc))
+        usage = _default_usage(user_row["tier"])
 
     logger.info(f"{provider} ID token sign-in complete", user_id=resp.user.id)
     return AuthResponse(

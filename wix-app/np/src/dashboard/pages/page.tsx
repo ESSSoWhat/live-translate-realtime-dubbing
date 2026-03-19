@@ -45,6 +45,7 @@ const Index: FC = () => {
               as="a"
               href="https://dev.wix.com/docs/build-apps/develop-your-app/frameworks/wix-cli/supported-extensions/dashboard-extensions/dashboard-pages/add-dashboard-page-extensions-with-the-cli#add-dashboard-page-extensions-with-the-cli"
               target="_blank"
+              rel="noopener noreferrer"
               prefixIcon={<Icons.ExternalLink />}
             >
               Dashboard pages documentation

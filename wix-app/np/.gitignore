@@ -2,6 +2,11 @@
 node_modules
 dist
 
+# Environment
+.env
+.env.local
+.env.*.local
+
 # Logs
 logs
 *.log

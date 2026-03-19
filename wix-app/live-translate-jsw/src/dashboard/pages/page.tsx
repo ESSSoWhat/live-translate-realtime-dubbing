@@ -56,7 +56,8 @@ const Index: FC = () => {
         setError(result.error || 'Failed to get API key');
       }
     } catch (err) {
-      setError(`Error: ${err}`);
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Error: ${message}`);
     } finally {
       setLoading(false);
     }

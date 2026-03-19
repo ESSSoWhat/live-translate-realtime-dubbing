@@ -44,7 +44,7 @@ def create_app() -> FastAPI:
     async def debug_exception_handler(request, exc):
         import traceback
         logger.error("Unhandled exception", error=str(exc), tb=traceback.format_exc())
-        return JSONResponse(status_code=500, content={"detail": str(exc)})
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
     application.add_exception_handler(Exception, debug_exception_handler)
 
     # CORS (desktop app uses custom protocol, but allow localhost for dev)
