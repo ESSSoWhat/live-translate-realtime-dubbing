@@ -693,6 +693,85 @@ class _ApiKeyWorker(QThread):
             logger.exception("API key validation failed", error=str(exc))
             self.error.emit("Could not reach the server. Check your connection.")
 
+# ── Wix SSO worker ─────────────────────────────────────────────────────────────
+
+class _WixSsoWorker(QThread):
+    """Drive the Wix SSO flow: opens browser, waits for callback with API key."""
+
+    success = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, base_url: str, website_url: str) -> None:
+        super().__init__()
+        self._base_url = base_url.rstrip("/")
+        self._website_url = website_url.rstrip("/")
+
+    def run(self) -> None:
+        try:
+            self._run()
+        except Exception as exc:
+            logger.exception("Unhandled error in _WixSsoWorker", error=str(exc))
+            self.error.emit(f"Unexpected error during Wix sign-in: {exc}")
+
+    def _run(self) -> None:
+        from live_dubbing.services.oauth_callback_server import OAuthCallbackServer
+        import urllib.parse as _urlparse
+
+        server = OAuthCallbackServer()
+        port = server.start()
+        redirect_uri = server.redirect_uri
+        logger.info("Wix SSO callback server started", port=port)
+
+        sso_params = _urlparse.urlencode({"redirect_uri": redirect_uri})
+        sso_url = f"{self._website_url}/account/api-key?{sso_params}"
+        logger.info("Opening Wix SSO URL", url_preview=sso_url[:100])
+
+        try:
+            webbrowser.open(sso_url)
+        except Exception as exc:
+            server.stop()
+            self.error.emit(f"Could not open browser: {exc}")
+            return
+
+        logger.info("Waiting for Wix SSO callback…")
+        result = None
+        remaining = 300.0
+        while remaining > 0 and not self.isInterruptionRequested():
+            result = server.wait_for_token(timeout=min(1.0, remaining))
+            if result is not None:
+                break
+            remaining -= 1.0
+        server.stop()
+
+        if not result:
+            self.error.emit("Wix sign-in timed out or was cancelled. Please try again.")
+            return
+
+        if result.get("error"):
+            self.error.emit(f"Wix sign-in failed: {result.get('error_description') or result.get('error')}")
+            return
+
+        api_key = result.get("api_key") or result.get("access_token")
+        if not api_key:
+            self.error.emit("No API key received from Wix. Please try again or use manual API key entry.")
+            return
+
+        logger.info("Wix SSO callback received — validating API key")
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                r = client.get(f"{self._base_url}/api/v1/user/me", headers={"Authorization": f"Bearer {api_key}"})
+            if r.status_code != 200:
+                self.error.emit("Invalid API key received. Please try again.")
+                return
+            data = r.json()
+            data["_api_key"] = api_key
+            logger.info("Wix SSO complete", user_id=data.get("user_id"), tier=data.get("tier"))
+            self.success.emit(data)
+        except Exception as exc:
+            logger.exception("API key validation failed", error=str(exc))
+            self.error.emit("Could not validate API key. Check your connection.")
+
+
 
 # ── Login Dialog ──────────────────────────────────────────────────────────────
 
@@ -721,6 +800,7 @@ class LoginDialog(QDialog):
         self._worker: QThread | None = None
         self._oauth_worker: QThread | None = None
         self._api_key_worker: QThread | None = None
+        self._wix_sso_worker: QThread | None = None
         self._api_key_input: QLineEdit | None = None
         self._use_key_btn: QPushButton | None = None
 
@@ -913,15 +993,42 @@ class LoginDialog(QDialog):
         return page
 
     def _on_wix_signin(self) -> None:
-        """Open Wix sign-in page in the default browser."""
-        url = self._settings.get_signin_url()
-        webbrowser.open(url)
-        self._show_error("")
-        QMessageBox.information(
-            self,
-            "Sign in with Wix",
-            "After signing in on the website, open your account page, copy your API key, and paste it above.",
+        """Start the Wix SSO flow: open browser and wait for redirect with API key."""
+        assert self._error_label is not None
+        self._set_busy(True)
+        self._error_label.hide()
+
+        worker = _WixSsoWorker(
+            self._settings.get_backend_url(),
+            self._settings.get_website_url(),
         )
+        worker.success.connect(self._on_wix_sso_success)
+        worker.error.connect(self._on_wix_sso_error)
+        worker.finished.connect(worker.deleteLater)
+        self._wix_sso_worker = worker
+        worker.start()
+
+    def _on_wix_sso_success(self, data: dict) -> None:
+        """Handle successful Wix SSO sign-in."""
+        api_key = data.get("_api_key", "")
+        if api_key:
+            self._settings.set_auth_tokens(api_key, "")
+        user_id = str(data.get("user_id", ""))
+        tier = str(data.get("tier", "free"))
+        self._settings.set_cached_user_info(user_id, tier)
+        usage = data.get("usage") or _free_tier_defaults()
+        self.auth_response = {
+            "user_id": user_id,
+            "email": data.get("email", ""),
+            "tier": tier,
+            "usage": usage,
+        }
+        self.accept()
+
+    def _on_wix_sso_error(self, message: str) -> None:
+        """Handle Wix SSO error."""
+        logger.warning("Wix SSO error", message=message)
+        self._show_error(message)
 
     def _on_use_api_key(self) -> None:
         """Validate pasted API key and complete sign-in."""

@@ -86,6 +86,21 @@ _CAPTURE_HTML = """\
     return;
   }
 
+  // ── Wix SSO: API key arrives as a query parameter ────────────────────
+  var apiKey = new URLSearchParams(window.location.search).get('api_key');
+
+  if (apiKey) {
+    document.getElementById('card').className    = 'card success';
+    document.getElementById('title').textContent = 'Signed in!';
+    document.getElementById('sub').textContent   = 'You can close this tab and return to Live Translate.';
+    fetch('/finish', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({api_key: apiKey})
+    });
+    return;
+  }
+
   // ── PKCE flow: a one-time code arrives as a query parameter ───────────
   var code = new URLSearchParams(window.location.search).get('code');
 

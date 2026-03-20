@@ -3,13 +3,26 @@
  *
  * Web module for syncing Wix member data to Live Translate backend.
  * Call these functions from frontend pages after member login.
+ *
+ * Required: Set the WIX_SYNC_SECRET environment variable via Wix CLI:
+ *   wix env set WIX_SYNC_SECRET <your-secret-value>
  */
 
 import { customTrigger } from '@wix/automations';
 
-const BACKEND_URL = 'https://api.livetranslate.net';
-const WIX_SYNC_SECRET = '5fb67a259259e178e64f04321d044ba0dfc9d2fda583de1b3a09d39a7d93c08a';
+// Configuration from environment variables (set via `wix env set`)
+const BACKEND_URL = import.meta.env.BACKEND_URL || 'https://api.livetranslate.net';
+const WIX_SYNC_SECRET = import.meta.env.WIX_SYNC_SECRET;
 const AUTOMATION_TRIGGER_ID = '376cab86-5237-40e8-b0fa-cabfbf63ba9f';
+
+function getSecret(): string {
+  if (!WIX_SYNC_SECRET) {
+    throw new Error(
+      'WIX_SYNC_SECRET not configured. Set it via: wix env set WIX_SYNC_SECRET <value>'
+    );
+  }
+  return WIX_SYNC_SECRET;
+}
 
 export interface SyncResult {
   success: boolean;
@@ -35,11 +48,12 @@ export interface MemberInfo {
  */
 export async function syncMemberTier(memberInfo: MemberInfo): Promise<SyncResult> {
   try {
+    const secret = getSecret();
     const response = await fetch(`${BACKEND_URL}/api/v1/billing/wix/sync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Wix-Sync-Secret': WIX_SYNC_SECRET,
+        'X-Wix-Sync-Secret': secret,
       },
       body: JSON.stringify({
         email: memberInfo.email,
@@ -53,7 +67,6 @@ export async function syncMemberTier(memberInfo: MemberInfo): Promise<SyncResult
     }
 
     // Trigger a Wix Automation custom trigger (best-effort).
-    // Note: the automation permission scope `AUTOMATIONS.TRIGGER_WEBHOOK` is required.
     try {
       await customTrigger.runTrigger({
         triggerId: AUTOMATION_TRIGGER_ID,
@@ -63,13 +76,12 @@ export async function syncMemberTier(memberInfo: MemberInfo): Promise<SyncResult
         },
       });
     } catch (automationError) {
-      // Don't block backend sync; automation failure shouldn't prevent API key retrieval.
       console.warn('Wix automation trigger failed:', automationError);
     }
 
     return { success: true };
   } catch (error) {
-    return { success: false, error: `Network error: ${error}` };
+    return { success: false, error: `Error: ${error}` };
   }
 }
 
@@ -79,11 +91,12 @@ export async function syncMemberTier(memberInfo: MemberInfo): Promise<SyncResult
  */
 export async function getApiKey(email: string): Promise<ApiKeyResult> {
   try {
+    const secret = getSecret();
     const response = await fetch(`${BACKEND_URL}/api/v1/auth/api-key`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Wix-Sync-Secret': WIX_SYNC_SECRET,
+        'X-Wix-Sync-Secret': secret,
       },
       body: JSON.stringify({ email }),
     });
@@ -101,6 +114,6 @@ export async function getApiKey(email: string): Promise<ApiKeyResult> {
       tier: data.tier,
     };
   } catch (error) {
-    return { success: false, error: `Network error: ${error}` };
+    return { success: false, error: `Error: ${error}` };
   }
 }
