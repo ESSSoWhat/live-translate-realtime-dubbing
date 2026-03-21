@@ -36,6 +36,15 @@ $w.onReady(async function () {
         $w('#apiKeyText').hide();
         $w('#copyButton').hide();
 
+        // Store redirect_uri early — Wix login redirect may strip query params when returning
+        const query = wixLocationFrontend.query;
+        const redirectUri = query.redirect_uri;
+        if (redirectUri && isValidRedirectUri(redirectUri)) {
+            try {
+                sessionStorage.setItem('live_translate_redirect_uri', redirectUri);
+            } catch (e) { /* ignore */ }
+        }
+
         // Get current member
         const member = await currentMember.getMember();
 
@@ -56,9 +65,13 @@ $w.onReady(async function () {
 
         const apiKey = result.apiKey;
 
-        // Check for redirect_uri parameter (SSO flow from desktop app)
-        const query = wixLocationFrontend.query;
-        const redirectUri = query.redirect_uri;
+        // Check for redirect_uri: in query (direct load) or sessionStorage (returned from login)
+        const storedUri = (typeof sessionStorage !== 'undefined') ?
+            sessionStorage.getItem('live_translate_redirect_uri') : null;
+        const redirectUri = query.redirect_uri || storedUri;
+        if (storedUri) {
+            try { sessionStorage.removeItem('live_translate_redirect_uri'); } catch (e) { /* ignore */ }
+        }
 
         if (redirectUri && isValidRedirectUri(redirectUri)) {
             // SSO flow: redirect back to desktop app with API key

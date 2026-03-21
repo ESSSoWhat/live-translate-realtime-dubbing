@@ -234,6 +234,28 @@ class AppSettings(BaseModel):
             path = "/" + path
         return f"{self.get_website_url()}{path}"
 
+    def get_wix_sso_entry_url(self, redirect_uri: str) -> str:
+        """Return URL to open for Wix SSO: livetranslate.net login, then api-key callback.
+
+        Uses /login?returnUrl=... to land on livetranslate.net login first. Set
+        LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN=false to open /api-key directly (Wix Members Only
+        will redirect to login when unauthenticated).
+        """
+        import urllib.parse
+
+        use_login = os.environ.get("LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN", "false").lower() in ("1", "true", "yes")
+        api_key_path = os.environ.get("LIVE_TRANSLATE_WIX_API_KEY_PATH", "/api-key").strip()
+        if not api_key_path.startswith("/"):
+            api_key_path = "/" + api_key_path
+        base = self.get_website_url()
+
+        if use_login:
+            api_key_full = f"{api_key_path}?redirect_uri={urllib.parse.quote(redirect_uri, safe='')}"
+            return_url = urllib.parse.quote(api_key_full, safe="")
+            return f"{base}/login?returnUrl={return_url}"
+        sso_params = urllib.parse.urlencode({"redirect_uri": redirect_uri})
+        return f"{base}{api_key_path}?{sso_params}"
+
     def get_download_url(self) -> str:
         """Return app download page URL on the website."""
         return f"{self.get_website_url()}/download"

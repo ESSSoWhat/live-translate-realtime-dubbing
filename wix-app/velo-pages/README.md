@@ -10,8 +10,9 @@ This folder contains the Velo code for the API key page that enables SSO with th
 
 | File | Purpose | Where to add |
 |------|---------|--------------|
-| `api-key-page.js` | Frontend page code | Page code panel |
+| `api-key-page.js` | API key page frontend | API key page code panel |
 | `api-key.web.js` | Backend web module | `backend/` folder |
+| `login-page.js` | Login page returnUrl support | Login page code panel (or masterPage.js) |
 
 ## Setup Instructions
 
@@ -73,12 +74,25 @@ Click **Publish** to make the page live.
 ### SSO Flow (From Desktop App)
 
 1. User clicks "Sign in with Wix" in the desktop app
-2. Browser opens: `https://www.livetranslate.net/api-key?redirect_uri=http://localhost:12345/` (path must match your page)
-3. User logs in to Wix (if not already logged in)
-4. Page fetches API key from backend
-5. Page redirects to: `http://localhost:12345/?api_key=xxx`
-6. Desktop app's callback server receives the API key
-7. User is automatically signed in - browser tab can be closed
+2. Browser opens: `https://www.livetranslate.net/login?returnUrl=%2Fapi-key%3Fredirect_uri%3Dhttp%3A%2F%2Flocalhost%3A12345%2F` (connects to livetranslate.net login first)
+3. User logs in on livetranslate.net (if not already logged in)
+4. After login, Wix redirects to `/api-key?redirect_uri=...`
+5. Page fetches API key from backend
+6. Page redirects to: `http://localhost:12345/?api_key=xxx`
+7. Desktop app's callback server receives the API key
+8. User is automatically signed in — browser tab can be closed
+
+### Login Page Setup (for returnUrl)
+
+For "Sign in with Wix" to open livetranslate.net/login first, add `login-page.js` to your login page:
+
+1. Open your Wix site in the Editor
+2. Go to your **Login** page (slug `/login`)
+3. Click the page (not an element) → code panel at bottom
+4. Paste the contents of `login-page.js`
+5. Publish
+
+This registers `authentication.onLogin` to redirect to the `returnUrl` query param after sign-in. Alternatively, paste the code into `masterPage.js` for site-wide behavior.
 
 ## Security
 
@@ -115,6 +129,7 @@ Check:
 
 Check:
 1. The published page URL matches what you pass as `WIX_ACCOUNT_URL` in the app (e.g. `/api-key`)
-2. The page code is correctly added
-3. The backend module is in `backend/api-key.web.js`
-4. User is logged into Wix in their browser
+2. The page code is exactly from `api-key-page.js` (must check for `redirect_uri` and redirect to localhost)
+3. The backend module is in `backend/api-key.web.js` and `BACKEND_URL` matches your deployed backend
+4. `WIX_SYNC_SECRET` in Wix Secrets Manager matches your backend's `WIX_SYNC_SECRET`
+5. **Tip:** Log into livetranslate.net in your browser first, then click "Sign in with Wix" — avoids query param loss during login redirect

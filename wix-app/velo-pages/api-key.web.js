@@ -10,8 +10,8 @@
 import { Permissions, webMethod } from 'wix-web-module';
 import { getSecret } from 'wix-secrets-backend';
 
-// Backend URL
-const BACKEND_URL = 'https://api.livetranslate.net';
+// Backend URL (must match your deployed backend; desktop app uses api.livetranslate.app)
+const BACKEND_URL = 'https://api.livetranslate.app';
 
 /**
  * Get API key for the current member

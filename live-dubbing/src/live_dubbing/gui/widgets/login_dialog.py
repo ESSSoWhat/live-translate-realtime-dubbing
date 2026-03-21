@@ -695,16 +695,17 @@ class _ApiKeyWorker(QThread):
 
 # ── Wix SSO worker ─────────────────────────────────────────────────────────────
 
+
 class _WixSsoWorker(QThread):
-    """Drive the Wix SSO flow: opens browser, waits for callback with API key."""
+    """Drive the Wix SSO flow: opens livetranslate.net/login, waits for callback with API key."""
 
     success = pyqtSignal(dict)
     error = pyqtSignal(str)
 
-    def __init__(self, base_url: str, api_key_page_url: str) -> None:
+    def __init__(self, base_url: str, settings: "AppSettings") -> None:
         super().__init__()
         self._base_url = base_url.rstrip("/")
-        self._api_key_page_url = api_key_page_url.rstrip("/")
+        self._settings = settings
 
     def run(self) -> None:
         try:
@@ -722,9 +723,8 @@ class _WixSsoWorker(QThread):
         redirect_uri = server.redirect_uri
         logger.info("Wix SSO callback server started", port=port)
 
-        sso_params = _urlparse.urlencode({"redirect_uri": redirect_uri})
-        sso_url = f"{self._api_key_page_url}?{sso_params}"
-        logger.info("Opening Wix SSO URL", url_preview=sso_url[:100])
+        sso_url = self._settings.get_wix_sso_entry_url(redirect_uri)
+        logger.info("Opening livetranslate.net login", url_preview=sso_url[:80])
 
         try:
             webbrowser.open(sso_url)
@@ -772,8 +772,8 @@ class _WixSsoWorker(QThread):
             self.error.emit("Could not validate API key. Check your connection.")
 
 
-
 # ── Login Dialog ──────────────────────────────────────────────────────────────
+
 
 class LoginDialog(QDialog):
     """
@@ -947,6 +947,9 @@ class LoginDialog(QDialog):
         wix_btn = self._wix_button()
         wix_btn.clicked.connect(self._on_wix_signin)
         layout.addWidget(wix_btn)
+        wix_tip = QLabel("Log into livetranslate.net in your browser first if needed.")
+        wix_tip.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(wix_tip)
 
         # API key from Wix account page
         api_row = QHBoxLayout()
@@ -998,10 +1001,7 @@ class LoginDialog(QDialog):
         self._set_busy(True)
         self._error_label.hide()
 
-        worker = _WixSsoWorker(
-            self._settings.get_backend_url(),
-            self._settings.get_wix_api_key_page_url(),
-        )
+        worker = _WixSsoWorker(self._settings.get_backend_url(), self._settings)
         worker.success.connect(self._on_wix_sso_success)
         worker.error.connect(self._on_wix_sso_error)
         worker.finished.connect(worker.deleteLater)
