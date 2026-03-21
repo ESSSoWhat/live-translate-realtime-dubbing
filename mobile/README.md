@@ -50,6 +50,9 @@ For "Continue with Google" to work:
 
 ## Troubleshooting
 
+- **Wix: 404 “PAGE NOT FOUND”**  
+  The live site must **include a published page** for the API key (e.g. [www.livetranslate.net/api-key](https://www.livetranslate.net/api-key)). If you haven’t added/published it, the URL will 404. Match `--dart-define=WIX_ACCOUNT_URL=...` to the **exact** URL from the browser address bar.
+
 - **"Cannot reach API" / connection errors**  
   The app must reach your FastAPI backend. In debug, run the backend on port 8000. On a **physical phone**, `localhost` is the phone itself — use your PC’s LAN IP and `--dart-define=API_BASE_URL=http://192.168.x.x:8000/`.
 

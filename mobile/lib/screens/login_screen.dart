@@ -26,7 +26,11 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
   String? _error;
 
-  static const _wixAccountUrl = 'https://www.livetranslate.net/account';
+  /// Wix page with API key flow — must match the published page URL (see `wix-app/velo-pages/README.md`).
+  static const _wixAccountUrl = String.fromEnvironment(
+    'WIX_ACCOUNT_URL',
+    defaultValue: 'https://www.livetranslate.net/api-key',
+  );
 
   Future<void> _openWixAccount() async {
     final uri = Uri.parse(_wixAccountUrl);
@@ -224,7 +228,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 // Wix is the primary sign-in path: open website and use API key.
                 FilledButton(
                   onPressed: _loading ? null : _openWixAccount,
-                  child: const Text('Sign in on the website (Wix)'),
+                  child: const Text('Open API key page (Wix)'),
                 ),
                 const SizedBox(height: 12),
                 TextField(

@@ -701,10 +701,10 @@ class _WixSsoWorker(QThread):
     success = pyqtSignal(dict)
     error = pyqtSignal(str)
 
-    def __init__(self, base_url: str, website_url: str) -> None:
+    def __init__(self, base_url: str, api_key_page_url: str) -> None:
         super().__init__()
         self._base_url = base_url.rstrip("/")
-        self._website_url = website_url.rstrip("/")
+        self._api_key_page_url = api_key_page_url.rstrip("/")
 
     def run(self) -> None:
         try:
@@ -723,7 +723,7 @@ class _WixSsoWorker(QThread):
         logger.info("Wix SSO callback server started", port=port)
 
         sso_params = _urlparse.urlencode({"redirect_uri": redirect_uri})
-        sso_url = f"{self._website_url}/account/api-key?{sso_params}"
+        sso_url = f"{self._api_key_page_url}?{sso_params}"
         logger.info("Opening Wix SSO URL", url_preview=sso_url[:100])
 
         try:
@@ -1000,7 +1000,7 @@ class LoginDialog(QDialog):
 
         worker = _WixSsoWorker(
             self._settings.get_backend_url(),
-            self._settings.get_website_url(),
+            self._settings.get_wix_api_key_page_url(),
         )
         worker.success.connect(self._on_wix_sso_success)
         worker.error.connect(self._on_wix_sso_error)

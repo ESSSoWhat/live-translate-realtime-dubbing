@@ -1,4 +1,8 @@
-# Wix Velo Page: /account/api-key
+# Wix Velo Page: API key (slug `/api-key` or `/account/api-key`)
+
+**Production:** [www.livetranslate.net/api-key](https://www.livetranslate.net/api-key) uses slug **`api-key`**. The app default `WIX_ACCOUNT_URL` matches that.
+
+**Until a page exists and is published** at your chosen slug, that URL returns **404** in the browser. Add the page below and **Publish**.
 
 This folder contains the Velo code for the API key page that enables SSO with the Live Translate desktop app.
 
@@ -35,7 +39,7 @@ This folder contains the Velo code for the API key page that enables SSO with th
 
 1. In the Editor, click **Add** → **Page** → **Blank Page**
 2. Name it "API Key" or similar
-3. Set the URL to `/account/api-key` (Page Settings → SEO → URL slug)
+3. Set the URL slug (Page Settings → SEO), e.g. **`api-key`** → `https://www.yoursite.net/api-key`, or **`account/api-key`** for a nested path. The mobile app’s `WIX_ACCOUNT_URL` must match **exactly**.
 4. Set permissions to **Members Only** (Page Settings → Permissions)
 
 ### Step 5: Add Page Elements
@@ -61,7 +65,7 @@ Click **Publish** to make the page live.
 
 ### Normal Flow (Visiting the page directly)
 
-1. User visits `https://www.livetranslate.net/account/api-key`
+1. User visits `https://www.livetranslate.net/api-key` (or your published slug)
 2. Wix checks if user is logged in (redirects to login if not)
 3. Page fetches API key from backend
 4. API key is displayed with a copy button
@@ -69,7 +73,7 @@ Click **Publish** to make the page live.
 ### SSO Flow (From Desktop App)
 
 1. User clicks "Sign in with Wix" in the desktop app
-2. Browser opens: `https://www.livetranslate.net/account/api-key?redirect_uri=http://localhost:12345/`
+2. Browser opens: `https://www.livetranslate.net/api-key?redirect_uri=http://localhost:12345/` (path must match your page)
 3. User logs in to Wix (if not already logged in)
 4. Page fetches API key from backend
 5. Page redirects to: `http://localhost:12345/?api_key=xxx`
@@ -110,7 +114,7 @@ Check:
 ### Desktop app times out
 
 Check:
-1. The page URL is exactly `/account/api-key`
+1. The published page URL matches what you pass as `WIX_ACCOUNT_URL` in the app (e.g. `/api-key`)
 2. The page code is correctly added
 3. The backend module is in `backend/api-key.web.js`
 4. User is logged into Wix in their browser

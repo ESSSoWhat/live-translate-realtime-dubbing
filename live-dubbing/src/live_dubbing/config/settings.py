@@ -227,6 +227,13 @@ class AppSettings(BaseModel):
         """Return account/dashboard page URL on the website."""
         return f"{self.get_website_url()}/account"
 
+    def get_wix_api_key_page_url(self) -> str:
+        """Return Wix page URL for API key + SSO redirect (Velo). Default path ``/api-key``."""
+        path = os.environ.get("LIVE_TRANSLATE_WIX_API_KEY_PATH", "/api-key").strip()
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self.get_website_url()}{path}"
+
     def get_download_url(self) -> str:
         """Return app download page URL on the website."""
         return f"{self.get_website_url()}/download"

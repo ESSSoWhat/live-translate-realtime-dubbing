@@ -4,7 +4,7 @@
  * This code handles the SSO flow for the Live Translate desktop app.
  *
  * SETUP INSTRUCTIONS:
- * 1. Create a new page at /account/api-key in Wix Editor
+ * 1. Create a new page (slug e.g. api-key → /api-key) in Wix Editor
  * 2. Add a text element with ID "apiKeyText" to display the API key
  * 3. Add a button with ID "copyButton" to copy the key
  * 4. Add a text element with ID "statusText" for status messages
