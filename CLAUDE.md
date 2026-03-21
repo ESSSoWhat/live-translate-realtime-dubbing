@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - `live-dubbing/` - Windows desktop app (PyQt6 GUI, Python)
   - `backend/` - FastAPI server for API proxy, usage tracking, Wix sync and API-key auth
   - `mobile/` - Flutter mobile app (Android/iOS)
-  - `website/` - Next.js (optional); production site and auth are on **Wix** (www.livetranslate.net)
+  - `website/` - Next.js (optional, dev or separate deploy); **production marketing site is Wix:** [www.livetranslate.net](https://www.livetranslate.net)
 
 ## Build, Run, Test Commands
 
@@ -58,10 +58,12 @@ flutter test                                    # Run tests
 ```
 
 ### Website (website/)
+**Public website:** [www.livetranslate.net](https://www.livetranslate.net) (Wix). The `website/` Next.js app is for local dev or an optional non-Wix deploy (e.g. dashboard); do not confuse it with the Wix-hosted site.
+
 ```bash
 cd website
 npm install
-npm run dev                                     # Dev server on :3000
+npm run dev                                     # Dev server (e.g. :3000)
 npm run build                                   # Production build
 npm run lint                                    # ESLint
 ```

@@ -1,7 +1,7 @@
 """FastAPI application factory."""
 
 import structlog  # type: ignore[import-not-found]
-from fastapi import FastAPI
+from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler  # type: ignore[import-not-found]  # pylint: disable=import-error
@@ -86,6 +86,10 @@ def create_app() -> FastAPI:
     application.include_router(user.router, prefix=prefix)
     application.include_router(proxy.router, prefix=prefix)
     application.include_router(billing.router, prefix=prefix)
+
+    @application.get("/")
+    async def root() -> dict:
+        return {"message": "Live Translate API", "docs": "/docs", "health": "/health"}
 
     @application.get("/health")
     async def health() -> dict:

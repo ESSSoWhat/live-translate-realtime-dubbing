@@ -17,7 +17,7 @@ Real-time audio translation and voice-cloned dubbing. Capture audio, translate w
 | `live-dubbing/` | Windows desktop app (PyQt6, Python). App dubbing + mic translate. |
 | `backend/`      | FastAPI server: auth (Supabase), API proxy (ElevenLabs), billing (Stripe), usage. |
 | `mobile/`       | Flutter app (Android/iOS). Mic translation, auth, paywall. |
-| `website/`      | Next.js site (www.livetranslate.net). Marketing, download, login, dashboard. |
+| `website/`      | Next.js app (local/dev or optional deploy). **Public site:** [www.livetranslate.net](https://www.livetranslate.net) on **Wix** — marketing, downloads, account. |
 
 ## Quick start
 
@@ -44,7 +44,11 @@ python -m uvicorn app.main:app --reload
 
 Runs at `http://localhost:8000`. Set `LIVE_TRANSLATE_BACKEND_URL=http://localhost:8000` to point the desktop app to it.
 
-### Website
+### Website (Wix is production)
+
+The live marketing site is **Wix** at **www.livetranslate.net** (not this repo’s Next.js app).
+
+Optional Next.js app in `website/` (dev dashboard / experiments):
 
 ```bash
 cd website
@@ -52,7 +56,7 @@ npm install
 npm run dev
 ```
 
-Runs at `http://localhost:3000`.
+Runs locally (e.g. `http://localhost:3000`). Do not point **www.livetranslate.net** DNS at this app unless you intentionally replace Wix.
 
 ### Mobile
 

@@ -168,7 +168,14 @@ class SsoService {
       }
       if (e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.connectionTimeout) {
-        return SsoException('Network error. Check your connection.');
+        final host = e.requestOptions.uri.host;
+        final detail = e.message;
+        return SsoException(
+          'Cannot reach API at $host. '
+          'Start the backend (see backend/README) or set '
+          '--dart-define=API_BASE_URL=https://your-api/ '
+          '${detail != null && detail.isNotEmpty ? "($detail)" : ""}',
+        );
       }
     }
     return SsoException('$provider sign-in failed. Please try again.');

@@ -20,6 +20,14 @@ from app.services.usage import get_usage_snapshot
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.get("/", include_in_schema=False)
+async def auth_info() -> dict:
+    """Auth module info; use POST /login, /register, /api-key, etc."""
+    return {"auth": "ok", "endpoints": ["login", "register", "api-key", "refresh", "oauth/google", "oauth/apple"]}
+
+
 def _default_usage(tier: str = "free") -> dict:
     """Return default usage snapshot when DB is unavailable."""
     from datetime import date, timedelta
@@ -38,9 +46,6 @@ def _default_usage(tier: str = "free") -> dict:
         "voice_clones_used": 0, "voice_clones_limit": clones,
         "period_reset_date": str(period_end),
     }
-
-
-
 
 
 def _verify_wix_secret(request: Request) -> None:

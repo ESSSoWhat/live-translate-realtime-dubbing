@@ -2,6 +2,8 @@
 library;
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kDebugMode;
+
 class ApiConfig {
   ApiConfig._();
 
@@ -10,10 +12,18 @@ class ApiConfig {
   static String? _googleWebClientId;
 
   static Future<void> init() async {
-    final u = const String.fromEnvironment(
-      'API_BASE_URL',
-      defaultValue: 'https://api.livetranslate.app',
-    );
+    const envUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
+    final String u;
+    if (envUrl.isNotEmpty) {
+      u = envUrl;
+    } else if (kDebugMode) {
+      // Local FastAPI backend (`cd backend && uvicorn ...`). Android emulator → host via 10.0.2.2.
+      u = Platform.isAndroid ? 'http://10.0.2.2:8000' : 'http://127.0.0.1:8000';
+    } else {
+      // Production: set `--dart-define=API_BASE_URL=https://your-deployed-api/` — do not rely on a
+      // placeholder host. `api.livetranslate.app` may be unset in DNS until you configure it.
+      u = 'https://api.livetranslate.app';
+    }
     _baseUrl = u.endsWith('/') ? u : '$u/';
     _qonversionProjectKey = const String.fromEnvironment(
       'QONVERSION_PROJECT_KEY',

@@ -10,8 +10,10 @@ Android app for real-time mic translation using the Live Translate backend. Tran
    flutter pub get
    flutter create . --project-name live_translate_mobile   # if platform folders are missing
    ```
-3. Configure API base URL (optional):  
-   Pass `--dart-define=API_BASE_URL=https://your-api.com/` when running or building (e.g. `flutter run --dart-define=API_BASE_URL=https://your-api.com/`). If not set, the app uses the default backend URL. Values passed with `--dart-define` apply only to that invocation; for release builds you must pass the same flag (e.g. `flutter build apk --dart-define=API_BASE_URL=https://your-api.com/`). The app can run without the variable using the default backend; configure backend auth/API keys in the app as required (see `lib/config/api_config.dart`).
+3. **API base URL**
+   - **Debug (no flag):** uses `http://127.0.0.1:8000` on desktop/iOS simulator and `http://10.0.2.2:8000` on **Android emulator** (host machine). Start the backend: `cd ../backend` → `python -m uvicorn app.main:app --reload`.
+   - **Physical device / custom host:** use `--dart-define=API_BASE_URL=http://YOUR_LAN_IP:8000/` (or your deployed HTTPS API).
+   - **Release:** pass `--dart-define=API_BASE_URL=https://your-api.com/` if the default production host is not set up in DNS yet.
 
 ## Run
 
@@ -27,7 +29,7 @@ To include the API base URL in the release bundle, pass the same `--dart-define`
 flutter build apk --release --dart-define=API_BASE_URL=https://your-api.com/
 ```
 
-Without `--dart-define=API_BASE_URL=...`, the release build uses the default backend URL.
+Without `--dart-define=API_BASE_URL=...`, release builds use the configured production default in `lib/config/api_config.dart` (ensure that URL resolves or always pass `--dart-define`).
 
 ## Virtual mic on Android
 
@@ -46,6 +48,9 @@ For "Continue with Google" to work:
    `keytool -keystore path-to-keystore -list -v` → add the fingerprints in APIs & Services → Credentials.
 
 ## Troubleshooting
+
+- **"Cannot reach API" / connection errors**  
+  The app must reach your FastAPI backend. In debug, run the backend on port 8000. On a **physical phone**, `localhost` is the phone itself — use your PC’s LAN IP and `--dart-define=API_BASE_URL=http://192.168.x.x:8000/`.
 
 - **Android: "this and base files have different roots" (e.g. `google_sign_in_android:compileDebugUnitTestSources`)**  
   This occurs when the project is on a different Windows drive than the Pub cache (e.g. project on `S:\` and Pub cache on `C:\`). **Fix:** use a Pub cache on the same drive as the project, then refresh dependencies:
