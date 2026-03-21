@@ -10,10 +10,11 @@ Android app for real-time mic translation using the Live Translate backend. Tran
    flutter pub get
    flutter create . --project-name live_translate_mobile   # if platform folders are missing
    ```
-3. **API base URL**
-   - **Debug (no flag):** uses `http://127.0.0.1:8000` on desktop/iOS simulator and `http://10.0.2.2:8000` on **Android emulator** (host machine). Start the backend: `cd ../backend` → `python -m uvicorn app.main:app --reload`.
-   - **Physical device / custom host:** use `--dart-define=API_BASE_URL=http://YOUR_LAN_IP:8000/` (or your deployed HTTPS API).
-   - **Release:** pass `--dart-define=API_BASE_URL=https://your-api.com/` if the default production host is not set up in DNS yet.
+3. **API base URL** (if you omit `--dart-define=API_BASE_URL=...`):
+   - **Windows / macOS / Linux / iOS simulator:** `http://127.0.0.1:8000`
+   - **Android emulator:** `http://10.0.2.2:8000` (reaches your PC’s localhost)
+   - **Physical phone or production API:** you must pass `--dart-define=API_BASE_URL=http://YOUR_LAN_IP:8000/` or your deployed `https://...` URL.  
+   Start the backend: `cd ../backend` → `python -m uvicorn app.main:app --reload`.
 
 ## Run
 
@@ -29,7 +30,7 @@ To include the API base URL in the release bundle, pass the same `--dart-define`
 flutter build apk --release --dart-define=API_BASE_URL=https://your-api.com/
 ```
 
-Without `--dart-define=API_BASE_URL=...`, release builds use the configured production default in `lib/config/api_config.dart` (ensure that URL resolves or always pass `--dart-define`).
+Without `--dart-define=API_BASE_URL=...`, the app targets **localhost** (see above). For a **release APK/IPA** pointing at a hosted API, always pass `--dart-define=API_BASE_URL=https://your-api/`.
 
 ## Virtual mic on Android
 

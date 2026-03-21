@@ -1,7 +1,12 @@
 """FastAPI application factory."""
 
 import structlog  # type: ignore[import-not-found]
-from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
+from fastapi import FastAPI, HTTPException  # pyright: ignore[reportMissingImports]
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler  # type: ignore[import-not-found]  # pylint: disable=import-error
@@ -40,18 +45,25 @@ def create_app() -> FastAPI:
 
     application.add_exception_handler(SupabaseNotConfiguredError, supabase_not_configured)
 
-    # Debug: catch all exceptions and log them
-    async def debug_exception_handler(request, exc):
+    # Log unexpected errors. Do not catch HTTPException / RequestValidationError — they subclass
+    # Exception and would otherwise be turned into misleading 500 responses.
+    async def debug_exception_handler(request, exc: Exception):
+        if isinstance(exc, HTTPException):
+            return await http_exception_handler(request, exc)
+        if isinstance(exc, RequestValidationError):
+            return await request_validation_exception_handler(request, exc)
         import traceback
+
         logger.error("Unhandled exception", error=str(exc), tb=traceback.format_exc())
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
     application.add_exception_handler(Exception, debug_exception_handler)
 
     # CORS (desktop app uses custom protocol, but allow localhost for dev)
     # In production, never use allow_origin_regex with allow_credentials; require explicit allowlist.
     cors_origins = cfg.backend_cors_origins or ""
     if cfg.is_production and (not cors_origins.strip() or cors_origins.strip() == "*"):
-        origins = []
+        origins: list[str] = []
         application.add_middleware(
             CORSMiddleware,
             allow_origins=origins,

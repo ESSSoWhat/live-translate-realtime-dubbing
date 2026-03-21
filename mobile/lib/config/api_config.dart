@@ -2,8 +2,6 @@
 library;
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kDebugMode;
-
 class ApiConfig {
   ApiConfig._();
 
@@ -16,13 +14,16 @@ class ApiConfig {
     final String u;
     if (envUrl.isNotEmpty) {
       u = envUrl;
-    } else if (kDebugMode) {
-      // Local FastAPI backend (`cd backend && uvicorn ...`). Android emulator → host via 10.0.2.2.
-      u = Platform.isAndroid ? 'http://10.0.2.2:8000' : 'http://127.0.0.1:8000';
     } else {
-      // Production: set `--dart-define=API_BASE_URL=https://your-deployed-api/` — do not rely on a
-      // placeholder host. `api.livetranslate.app` may be unset in DNS until you configure it.
-      u = 'https://api.livetranslate.app';
+      // Local FastAPI (`cd backend && uvicorn app.main:app --reload` on port 8000).
+      // Do not default to `api.livetranslate.app` — it has no public DNS as of now.
+      // Android emulator → host machine via 10.0.2.2; iOS simulator & desktop → 127.0.0.1.
+      // Physical phones & production store builds: pass `--dart-define=API_BASE_URL=https://.../`.
+      if (Platform.isAndroid) {
+        u = 'http://10.0.2.2:8000';
+      } else {
+        u = 'http://127.0.0.1:8000';
+      }
     }
     _baseUrl = u.endsWith('/') ? u : '$u/';
     _qonversionProjectKey = const String.fromEnvironment(
