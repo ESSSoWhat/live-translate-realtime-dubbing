@@ -142,20 +142,12 @@ async def check_and_record_quota(user_id: str, event_type: str, quantity: int) -
                     requested=quantity,
                 )
             await conn.execute(
-                """
-                INSERT INTO usage_records (user_id, period_start, period_end, """
-                + col
-                + """)
+                f"""
+                INSERT INTO usage_records (user_id, period_start, period_end, {col})
                 VALUES ($1, $2, $3, $4)
                 ON CONFLICT (user_id, period_start)
-                DO UPDATE SET """
-                + col
-                + " = usage_records."
-                + col
-                + " + EXCLUDED."
-                + col
-                + """,
-                          updated_at = NOW()
+                DO UPDATE SET {col} = usage_records.{col} + EXCLUDED.{col},
+                              updated_at = NOW()
                 """,
                 user_id, period, period_end, quantity,
             )

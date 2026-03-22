@@ -153,7 +153,10 @@ async def synthesize(
     user: dict = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     """Synthesize text to MP3 via ElevenLabs TTS; record usage by character count."""
-    char_count = len(body.text)
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text must not be empty")
+    char_count = len(text)
 
     try:
         await check_and_record_quota(user["id"], "tts", char_count)
@@ -164,7 +167,7 @@ async def synthesize(
     try:
         tts_kwargs = {
             "voice_id": body.voice_id,
-            "text": body.text,
+            "text": text,
             "model_id": body.model_id,
             "voice_settings": {"stability": body.stability, "similarity_boost": body.similarity_boost},
             "output_format": "mp3_44100_128",
