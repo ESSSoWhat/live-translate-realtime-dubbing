@@ -77,8 +77,8 @@ class StatusBar(QWidget):
         # Separator
         layout.addStretch()
 
-        # VB-Cable status
-        self._vb_label = QLabel("VB-Cable: --")
+        # Virtual cable status
+        self._vb_label = QLabel("Virtual cable: --")
         self._vb_label.setStyleSheet("font-size: 12px; color: #aaa;")
         self._vb_label.setToolTip("Virtual audio cable for per-app audio routing")
         layout.addWidget(self._vb_label)
@@ -141,12 +141,12 @@ class StatusBar(QWidget):
             self._indicator.set_state("error")
 
     def set_vb_cable_status(self, installed: bool) -> None:
-        """Update VB-Cable status."""
+        """Update virtual cable status."""
         if installed:
-            self._vb_label.setText("VB-Cable: OK")
+            self._vb_label.setText("Virtual cable: OK")
             self._vb_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
         else:
-            self._vb_label.setText("VB-Cable: Missing")
+            self._vb_label.setText("Virtual cable: --")
             self._vb_label.setStyleSheet("font-size: 12px; color: #F44336;")
 
     def set_api_status(self, configured: bool) -> None:

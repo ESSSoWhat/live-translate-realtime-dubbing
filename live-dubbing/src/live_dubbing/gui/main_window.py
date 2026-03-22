@@ -56,6 +56,7 @@ from live_dubbing.gui.widgets.mic_translate_panel import MicTranslateWidget
 from live_dubbing.gui.widgets.status_bar import StatusBar
 from live_dubbing.gui.widgets.dubbed_window import DubbedWindow
 from live_dubbing.gui.widgets.usage_meter import UsageMeterWidget
+from live_dubbing.gui.widgets.settings_dialog import SettingsDialog
 from live_dubbing.gui.widgets.vb_cable_wizard import VBCableSetupWizard
 
 logger = structlog.get_logger(__name__)
@@ -240,10 +241,7 @@ class MainWindow(QMainWindow):
         # Capture mode selector (first item updated in _on_app_initialized)
         device_row.addWidget(QLabel("Capture:"))
         self._capture_mode_combo = QComboBox()
-        self._capture_mode_combo.addItem(
-            "Selected app only (VB-Cable)",
-            "vbcable",
-        )
+        self._capture_mode_combo.addItem("Selected app only", "vbcable")
         self._capture_mode_combo.addItem(
             "All system audio",
             "system",
@@ -251,11 +249,6 @@ class MainWindow(QMainWindow):
         self._capture_mode_combo.setCurrentIndex(1)  # Default system; updated in _on_app_initialized
         self._capture_mode_combo.setMinimumWidth(220)
         self._capture_mode_combo.setMaxVisibleItems(5)
-        self._capture_mode_combo.setToolTip(
-            "Selected app only: Captures only the selected app's audio. "
-            "On Windows 10 21H2+ no setup required; older Windows need VB-Cable.\n"
-            "All system audio: Captures everything (browser, games, notifications, etc.)."
-        )
         device_row.addWidget(self._capture_mode_combo)
 
         device_row.addSpacing(15)
@@ -277,6 +270,12 @@ class MainWindow(QMainWindow):
         )
         device_row.addWidget(self._output_device_combo)
 
+        self._refresh_devices_btn = QPushButton("Refresh")
+        self._refresh_devices_btn.setFixedWidth(60)
+        self._refresh_devices_btn.setToolTip("Refresh output device list")
+        self._refresh_devices_btn.clicked.connect(self._populate_output_devices)
+        device_row.addWidget(self._refresh_devices_btn)
+
         # Output volume slider
         device_row.addSpacing(15)
         device_row.addWidget(QLabel("Volume:"))
@@ -293,6 +292,12 @@ class MainWindow(QMainWindow):
         self._volume_label.setMinimumWidth(32)
         self._volume_label.setStyleSheet("color: #888; font-size: 11px;")
         device_row.addWidget(self._volume_label)
+
+        self._mute_cb = QCheckBox("Mute")
+        self._mute_cb.setToolTip("Mute TTS output temporarily")
+        self._mute_cb.setStyleSheet("QCheckBox { color: #888; font-size: 11px; }")
+        self._mute_cb.toggled.connect(self._on_mute_toggled)
+        device_row.addWidget(self._mute_cb)
 
         device_row.addStretch()
 
@@ -631,6 +636,16 @@ class MainWindow(QMainWindow):
         transcription_group = QGroupBox("Live Transcription (Original)")
         transcription_group.setMinimumHeight(80)
         transcription_layout = QVBoxLayout(transcription_group)
+        transcription_header = QHBoxLayout()
+        transcription_header.addStretch()
+        self._clear_transcription_btn = QPushButton("Clear")
+        self._clear_transcription_btn.setFixedWidth(50)
+        self._clear_transcription_btn.setToolTip("Clear transcription text")
+        self._clear_transcription_btn.clicked.connect(
+            lambda: self._transcription_text.clear()
+        )
+        transcription_header.addWidget(self._clear_transcription_btn)
+        transcription_layout.addLayout(transcription_header)
         self._transcription_text = QTextEdit()
         self._transcription_text.setReadOnly(True)
         self._transcription_text.setMaximumHeight(100)
@@ -683,6 +698,12 @@ class MainWindow(QMainWindow):
         self._popout_btn.setFixedWidth(70)
         self._popout_btn.clicked.connect(self._on_popout_clicked)
         dubbed_toolbar.addWidget(self._popout_btn)
+
+        self._clear_translation_btn = QPushButton("Clear")
+        self._clear_translation_btn.setFixedWidth(50)
+        self._clear_translation_btn.setToolTip("Clear translation text")
+        self._clear_translation_btn.clicked.connect(self._on_clear_translation)
+        dubbed_toolbar.addWidget(self._clear_translation_btn)
 
         translation_layout.addLayout(dubbed_toolbar)
 
@@ -833,6 +854,17 @@ class MainWindow(QMainWindow):
             sign_out_action = account_menu.addAction("Sign Out")
             if sign_out_action is not None:
                 sign_out_action.triggered.connect(self._on_sign_out)
+
+        # Tools menu
+        tools_menu = menu_bar.addMenu("&Tools")
+        if tools_menu is not None:
+            refresh_action = tools_menu.addAction("&Refresh Audio Devices")
+            if refresh_action is not None:
+                refresh_action.triggered.connect(self._populate_output_devices)
+            tools_menu.addSeparator()
+            settings_action = tools_menu.addAction("&Settings…")
+            if settings_action is not None:
+                settings_action.triggered.connect(self._open_settings)
 
         # Debug menu
         debug_menu = menu_bar.addMenu("&Debug")
@@ -1066,6 +1098,8 @@ class MainWindow(QMainWindow):
 
     def _on_volume_changed(self, value: int) -> None:
         """Update output volume from slider and persist."""
+        if self._mute_cb.isChecked():
+            return
         volume = value / 100.0
         self._volume_label.setText(f"{value}%")
         self._orchestrator.set_output_volume(volume)
@@ -1074,6 +1108,25 @@ class MainWindow(QMainWindow):
             ConfigManager().save(self._settings)
         except Exception as e:
             logger.warning("Could not save volume setting", error=str(e))
+
+    def _on_mute_toggled(self, checked: bool) -> None:
+        """Mute or unmute TTS output."""
+        if checked:
+            self._orchestrator.set_output_volume(0.0)
+        else:
+            vol = self._volume_slider.value() / 100.0
+            self._orchestrator.set_output_volume(vol)
+
+    def _on_clear_translation(self) -> None:
+        """Clear translation text in main view and detached window."""
+        self._translation_text.clear()
+        if self._dubbed_window is not None:
+            self._dubbed_window.clear_text()
+
+    def _open_settings(self) -> None:
+        """Open the settings dialog."""
+        dialog = SettingsDialog(self._settings, self)
+        dialog.exec()
 
     @pyqtSlot()
     def _on_start_clicked(self) -> None:
@@ -1155,7 +1208,7 @@ class MainWindow(QMainWindow):
         msg = QMessageBox(self)
         msg.setWindowTitle("Isolate Selected App Audio")
         msg.setText(
-            f"Route only '{session.name}' to VB-Cable for isolation:\n\n"
+            f"Route only '{session.name}' to your virtual cable for isolation:\n\n"
             "1. Open Sound settings (right-click speaker icon)\n"
             f"2. App volume → find '{session.name}' → set Output to 'CABLE Input'\n\n"
             "Only this app's audio will be captured. Other apps play normally."
@@ -1299,18 +1352,20 @@ class MainWindow(QMainWindow):
         self._status_bar.set_api_status(has_key)
 
     def _update_capture_mode_combo(self) -> None:
-        """Update capture mode combo based on process loopback support."""
+        """Update capture mode combo. Selected app uses process loopback or VB-Cable."""
         if not self._orchestrator:
             return
         plb = self._orchestrator.is_process_loopback_supported
         self._capture_mode_combo.blockSignals(True)
-        if plb:
-            self._capture_mode_combo.setItemText(0, "Selected app only")
-            self._capture_mode_combo.setItemData(0, "process_loopback")
-        else:
-            self._capture_mode_combo.setItemText(0, "Selected app only (VB-Cable)")
-            self._capture_mode_combo.setItemData(0, "vbcable")
-        # Default to "All system audio" for reliability (process loopback often fails with 0x8000000E)
+        self._capture_mode_combo.setItemText(0, "Selected app only")
+        self._capture_mode_combo.setItemData(
+            0, "process_loopback" if plb else "vbcable"
+        )
+        self._capture_mode_combo.setToolTip(
+            "Selected app only: Captures just the chosen app. Uses process loopback (Win 10 21H2+) "
+            "or VB-Cable when that fails.\n"
+            "All system audio: Captures everything (browser, games, etc.)."
+        )
         self._capture_mode_combo.setCurrentIndex(1)
         self._capture_mode_combo.blockSignals(False)
 
@@ -1773,9 +1828,45 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "Warning", message)
 
     def _on_process_loopback_failed(self, event: Event) -> None:
-        """Process loopback failed; schedule fallback to system loopback."""
+        """Process loopback failed; offer VB-Cable (Selected app) or fall back to system audio."""
         err = event.data.get("error", "")
-        logger.warning("Process loopback failed, switching to system audio", error=err)
+        logger.warning("Process loopback failed", error=err)
+
+        state = self._orchestrator.get_state_snapshot()
+        session = state.translation_config.target_app if state.translation_config else None
+
+        if self._orchestrator.is_vb_cable_installed and session:
+            # VB-Cable built into Selected app: offer to route and capture
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Selected App via VB-Cable")
+            msg.setText(
+                f"Route '{session.name}' to VB-Cable to capture only that app:\n\n"
+                "1. Click 'Open Sound settings'\n"
+                f"2. App volume → find '{session.name}' → Output: CABLE Input\n\n"
+                "Then click OK. Or Cancel to capture all system audio."
+            )
+            open_settings = msg.addButton("Open Sound settings", QMessageBox.ButtonRole.ActionRole)
+            ok_btn = msg.addButton(QMessageBox.StandardButton.Ok)
+            msg.addButton(QMessageBox.StandardButton.Cancel)
+
+            while True:
+                msg.exec()
+                clicked = msg.clickedButton()
+                if clicked == open_settings:
+                    try:
+                        import os
+                        os.startfile("ms-settings:apps-volume")  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    continue
+                if clicked == ok_btn and self._async_worker:
+                    self._async_worker.run_coroutine(
+                        self._orchestrator.fallback_to_vb_cable(),
+                    )
+                    return
+                break
+
+        # No VB-Cable or user chose Cancel: fall back to system audio
         if self._async_worker:
             self._async_worker.run_coroutine(
                 self._orchestrator.fallback_to_system_loopback(),

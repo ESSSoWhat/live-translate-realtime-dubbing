@@ -271,7 +271,10 @@ class Orchestrator:
 
         # Only require VB-Cable if not using fallback and process loopback not supported
         if not use_system_fallback and not self._process_loopback_supported and not self._vb_cable_installed:
-            raise RuntimeError("VB-Cable not installed")
+            raise RuntimeError(
+                "Virtual cable not installed. Install VB-Cable or VAC (free), "
+                "or use 'All system audio' mode."
+            )
 
         if not self._elevenlabs_service:
             raise RuntimeError("ElevenLabs API key not configured")
@@ -330,7 +333,7 @@ class Orchestrator:
                 else:
                     raise RuntimeError(
                         "No audio capture device available. "
-                        "Please ensure VB-Audio Virtual Cable is properly installed."
+                        "Please ensure a virtual cable (VB-Cable, VAC) is installed."
                     )
 
             # Start voice cloning process (dynamic mode)
@@ -521,11 +524,67 @@ class Orchestrator:
         if self._translation_state == TranslationState.CLONING_VOICE:
             self._set_translation_state(TranslationState.TRANSLATING)
 
+    async def fallback_to_vb_cable(self) -> None:
+        """
+        Switch from failed process loopback to VB-Cable capture (Selected app).
+
+        User must have routed the app to CABLE Input. Called after routing dialog OK.
+        """
+        if self._app_state != AppState.RUNNING or not self._translation_config:
+            return
+        if not self._audio_capture or not self._audio_routing or not self._vb_cable_installed:
+            return
+
+        target_app = self._translation_config.target_app
+        target_name = target_app.name
+        logger.info("Process loopback failed, using VB-Cable for selected app", app=target_name)
+
+        # Cancel no-audio check
+        if self._no_audio_check_task and not self._no_audio_check_task.done():
+            self._no_audio_check_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._no_audio_check_task
+        self._no_audio_check_task = None
+
+        await self._audio_capture.stop()
+
+        try:
+            await self._audio_routing.route_app_to_virtual(target_app.pid)
+        except RuntimeError as e:
+            logger.error("VB-Cable fallback failed", error=str(e))
+            self._event_bus.emit_warning(str(e))
+            await self.stop_translation()
+            return
+
+        device_id = self._audio_routing.get_capture_device_id()
+        from live_dubbing.audio.routing import CaptureMode
+
+        self._audio_routing.set_capture_mode(CaptureMode.VB_CABLE)
+
+        await self._audio_capture.start(
+            device_id=device_id,
+            pid=None,
+            on_audio_chunk=self._on_audio_chunk,
+        )
+
+        self._event_bus.emit(
+            EventType.AUDIO_CAPTURE_STARTED,
+            {"capture_mode": "vb_cable", "fallback": True},
+        )
+        self._event_bus.emit_warning(
+            f"Using virtual cable to capture {target_name}. Route it to your cable in Sound settings."
+        )
+
+        self._no_audio_check_task = asyncio.create_task(
+            self._check_no_audio_loop(target_name, "vb_cable"),
+        )
+
     async def fallback_to_system_loopback(self) -> None:
         """
         Switch from failed process loopback to system loopback capture.
 
-        Called when process loopback activation fails (e.g. 0x8000000E).
+        Called when process loopback activation fails (e.g. 0x8000000E) and
+        user declines VB-Cable or it's not installed.
         """
         if self._app_state != AppState.RUNNING or not self._translation_config:
             return

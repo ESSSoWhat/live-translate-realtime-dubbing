@@ -247,7 +247,7 @@ def _capture_loop(
             # 0x8000000E often indicates COM/threading or unsupported config
             hint = (
                 " Try ensuring the target app is playing audio. "
-                "If it persists, use 'All system audio' mode with VB-Cable."
+                "If it persists, use 'All system audio' mode."
                 if hr == 0x8000000E
                 else ""
             )

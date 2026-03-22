@@ -51,11 +51,11 @@ class WelcomePage(WizardPage):
 
         explanation = QLabel(
             "This app needs to capture audio from a specific application.\n\n"
-            "Windows doesn't natively support per-app audio capture, so we use "
-            "VB-Audio Virtual Cable to route audio.\n\n"
+            "When Windows per-app capture isn't available, a virtual cable "
+            "(VB-Cable, VAC, etc.) routes the app's audio.\n\n"
             "This wizard will help you:\n"
-            "• Check if VB-Cable is installed\n"
-            "• Install VB-Cable if needed\n"
+            "• Check if a virtual cable is installed\n"
+            "• Install one if needed (free)\n"
             "• Configure your app's audio output\n\n"
             "The setup only takes a few minutes."
         )
@@ -75,7 +75,7 @@ class DetectionPage(WizardPage):
         super().__init__(parent)
         self._detect_func = detect_func
 
-        title = QLabel("Checking for VB-Cable...")
+        title = QLabel("Checking for virtual cable...")
         title.setFont(QFont("", 14, QFont.Weight.Bold))
         self._layout.addWidget(title)
 
@@ -134,7 +134,7 @@ class DetectionPage(WizardPage):
                 "VB-Audio Virtual Cable is installed!\n\n"
                 "Click Next to configure audio routing."
             )
-            self._status_label.setText("VB-Cable detected successfully.")
+            self._status_label.setText("Virtual cable detected.")
         else:
             self._result_icon.setText("✗")
             self._result_icon.setStyleSheet("color: #f44336; font-size: 48px;")
@@ -142,7 +142,7 @@ class DetectionPage(WizardPage):
                 "VB-Audio Virtual Cable is not installed.\n\n"
                 "Click Next to download and install it."
             )
-            self._status_label.setText("VB-Cable not found.")
+            self._status_label.setText("No virtual cable found.")
 
         self.detection_complete.emit(found)
 
@@ -165,7 +165,7 @@ class InstallPage(WizardPage):
         instructions.setWordWrap(True)
         self._layout.addWidget(instructions)
 
-        download_btn = QPushButton("Open VB-Cable Download Page")
+        download_btn = QPushButton("Open Virtual Cable Download Page")
         download_btn.setMinimumHeight(40)
         download_btn.setStyleSheet("""
             QPushButton {
@@ -214,7 +214,7 @@ class InstallPage(WizardPage):
         self._recheck_callback = callback
 
     def _open_download_page(self) -> None:
-        """Open VB-Cable download page in browser."""
+        """Open virtual cable download page in browser."""
         import webbrowser
         webbrowser.open("https://vb-audio.com/Cable/")
 
@@ -341,7 +341,7 @@ class FallbackPage(WizardPage):
         self._layout.addWidget(title)
 
         explanation = QLabel(
-            "If you don't want to install VB-Cable, you can use system audio "
+            "If you don't want to install a virtual cable, you can use system audio "
             "capture instead.\n\n"
             "Limitations of system capture:\n"
             "• Captures ALL system audio, not just one app\n"
@@ -580,7 +580,7 @@ class VBCableSetupWizard(QDialog):
             self,
             "Use System Audio?",
             "This will capture ALL system audio, not just your target app.\n\n"
-            "Are you sure you want to continue without VB-Cable?",
+            "Are you sure you want to continue without a virtual cable?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 

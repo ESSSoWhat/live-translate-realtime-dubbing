@@ -1,12 +1,16 @@
 """
 Virtual audio device routing for per-app audio isolation.
+
+Uses process loopback when available (no virtual cable). Falls back to
+any compatible virtual cable (VB-Cable, VAC, etc.) when needed.
 """
 
-import re
 from dataclasses import dataclass
 from enum import Enum
 
 import structlog
+
+from live_dubbing.audio import virtual_cable
 
 logger = structlog.get_logger(__name__)
 
@@ -14,21 +18,21 @@ logger = structlog.get_logger(__name__)
 class CaptureMode(Enum):
     """Audio capture mode."""
 
-    VB_CABLE = "vb_cable"  # Per-app capture via VB-Cable
-    PROCESS_LOOPBACK = "process_loopback"  # Per-app capture via Windows API (no VB-Cable)
-    SYSTEM_LOOPBACK = "system_loopback"  # Capture all system audio
+    VB_CABLE = "vb_cable"  # Per-app via virtual cable (VB-Cable, VAC, etc.)
+    PROCESS_LOOPBACK = "process_loopback"  # Per-app via Windows API (no cable)
+    SYSTEM_LOOPBACK = "system_loopback"  # All system audio
     NONE = "none"  # No capture configured
 
 
 @dataclass
 class VirtualDevice:
-    """Information about a virtual audio device."""
+    """Information about a virtual audio device (for routing compatibility)."""
 
     name: str
     device_id: str
-    input_id: str | None = None  # For routing audio TO the device
-    output_id: str | None = None  # For capturing audio FROM the device
-    is_vb_cable: bool = False
+    input_id: str | None = None  # Apps output to this
+    output_id: str | None = None  # We capture from this
+    is_vb_cable: bool = False  # True for any virtual cable (kept for compat)
 
 
 @dataclass
@@ -46,23 +50,9 @@ class VirtualAudioRouter:
     """
     Manages virtual audio device detection and routing.
 
-    This class detects VB-Audio Virtual Cable and helps configure
-    audio routing for per-application capture.
+    Uses the virtual_cable module to detect any compatible cable
+    (VB-Cable, VAC, etc.). Process loopback is preferred when available.
     """
-
-    # Known virtual device name patterns
-    VB_CABLE_PATTERNS = [
-        r"CABLE Input",
-        r"CABLE Output",
-        r"VB-Audio Virtual Cable",
-        r"VB-Cable",
-    ]
-
-    VOICEMEETER_PATTERNS = [
-        r"VoiceMeeter",
-        r"Voicemeeter Input",
-        r"Voicemeeter Output",
-    ]
 
     def __init__(self) -> None:
         self._virtual_devices: list[VirtualDevice] = []
@@ -74,158 +64,83 @@ class VirtualAudioRouter:
 
     def detect_virtual_devices(self) -> list[VirtualDevice]:
         """
-        Detect installed virtual audio devices using pyaudiowpatch.
+        Detect virtual audio devices (cables + VoiceMeeter).
 
-        Uses pyaudiowpatch (not sounddevice) to ensure device indices
-        are compatible with the capture module.
-
-        Returns:
-            List of detected virtual audio devices
+        Uses virtual_cable for VB-Cable, VAC, and compatible products.
         """
-        devices = []
+        devices: list[VirtualDevice] = []
+        cable = virtual_cable.get_virtual_cable()
+        if cable:
+            vdev = VirtualDevice(
+                name=cable.name,
+                device_id=cable.input_device_id,
+                input_id=cable.input_device_id,
+                output_id=cable.output_device_id,
+                is_vb_cable=True,
+            )
+            devices.append(vdev)
 
         try:
+            import re
+
             import pyaudiowpatch as pyaudio
 
             pa = pyaudio.PyAudio()
-
-            vb_cable_input = None
-            vb_cable_output = None
-
             for i in range(pa.get_device_count()):
-                device = pa.get_device_info_by_index(i)
-                name = device.get("name", "")
-                device_id = str(i)
-
-                # Check for VB-Cable
-                for pattern in self.VB_CABLE_PATTERNS:
-                    if re.search(pattern, name, re.IGNORECASE):
-                        is_input = device.get("maxInputChannels", 0) > 0
-                        is_output = device.get("maxOutputChannels", 0) > 0
-
-                        if "Input" in name or (is_output and not is_input):
-                            # This is where apps OUTPUT to (virtual speaker)
-                            vb_cable_input = VirtualDevice(
-                                name=name,
-                                device_id=device_id,
-                                input_id=device_id,
-                                is_vb_cable=True,
-                            )
-                        elif "Output" in name or (is_input and not is_output):
-                            # This is where we CAPTURE from (virtual mic)
-                            vb_cable_output = VirtualDevice(
-                                name=name,
-                                device_id=device_id,
-                                output_id=device_id,
-                                is_vb_cable=True,
-                            )
-                        break
-
-                # Check for VoiceMeeter
-                for pattern in self.VOICEMEETER_PATTERNS:
-                    if re.search(pattern, name, re.IGNORECASE):
-                        virtual_device = VirtualDevice(
-                            name=name,
-                            device_id=device_id,
-                            is_vb_cable=False,
-                        )
-                        devices.append(virtual_device)
-                        break
-
+                dev = pa.get_device_info_by_index(i)
+                name = dev.get("name", "")
+                if re.search(r"VoiceMeeter|Voicemeeter", name, re.IGNORECASE):
+                    devices.append(
+                        VirtualDevice(name=name, device_id=str(i), is_vb_cable=False)
+                    )
             pa.terminate()
-
-            # Combine VB-Cable input/output into single device
-            if vb_cable_input and vb_cable_output:
-                combined = VirtualDevice(
-                    name="VB-Audio Virtual Cable",
-                    device_id=vb_cable_input.device_id,
-                    input_id=vb_cable_input.device_id,
-                    output_id=vb_cable_output.device_id,
-                    is_vb_cable=True,
-                )
-                devices.insert(0, combined)  # Prefer VB-Cable
-            elif vb_cable_input:
-                devices.insert(0, vb_cable_input)
-            elif vb_cable_output:
-                devices.insert(0, vb_cable_output)
-
-            self._virtual_devices = devices
-            logger.info("Detected virtual audio devices", count=len(devices))
-
-            for device in devices:
-                logger.debug(
-                    "Virtual device",
-                    name=device.name,
-                    input_id=device.input_id,
-                    output_id=device.output_id,
-                )
-
-            return devices
-
-        except ImportError:
-            logger.error("pyaudiowpatch not installed")
-            return []
         except Exception as e:
-            logger.exception("Failed to detect virtual devices", error=str(e))
-            return []
+            logger.debug("VoiceMeeter scan skipped", error=str(e))
+
+        self._virtual_devices = devices
+        logger.info("Detected virtual devices", count=len(devices))
+        return devices
 
     def get_vb_cable(self) -> VirtualDevice | None:
         """
-        Get VB-Audio Virtual Cable device if installed.
+        Get virtual cable device if installed (VB-Cable, VAC, or compatible).
 
-        Returns:
-            VirtualDevice for VB-Cable or None if not found
+        Kept as get_vb_cable for API compatibility.
         """
         if not self._virtual_devices:
             self.detect_virtual_devices()
-
-        for device in self._virtual_devices:
-            if device.is_vb_cable:
-                return device
+        for d in self._virtual_devices:
+            if d.is_vb_cable and d.output_id:
+                return d
         return None
 
     def is_vb_cable_installed(self) -> bool:
-        """Check if VB-Audio Virtual Cable is installed."""
+        """Check if any compatible virtual cable is installed."""
         return self.get_vb_cable() is not None
 
     async def route_app_to_virtual(self, pid: int) -> RoutingConfig:
         """
-        Configure routing for a specific application.
+        Configure routing for per-app capture via virtual cable.
 
-        Note: Windows doesn't allow programmatic per-app audio routing.
-        This method returns instructions for manual configuration.
-
-        Args:
-            pid: Process ID of the application
-
-        Returns:
-            RoutingConfig with setup instructions
+        Note: Windows doesn't allow programmatic per-app routing.
+        User must set the app's output to the virtual cable in Sound settings.
         """
-        vb_cable = self.get_vb_cable()
-
-        if not vb_cable:
-            raise RuntimeError("VB-Audio Virtual Cable not installed")
-
-        # Ensure we have the output device ID for capture
-        if not vb_cable.output_id:
+        cable = self.get_vb_cable()
+        if not cable:
             raise RuntimeError(
-                "VB-Audio Virtual Cable output device not found. "
-                "Please ensure VB-Cable is properly installed and restart the app."
+                "No virtual cable found. Install VB-Cable or VAC (free): "
+                "https://vb-audio.com/Cable/"
             )
+        if not cable.output_id:
+            raise RuntimeError("Virtual cable output device not found. Reinstall the cable driver.")
 
-        # Set the capture device
-        self._capture_device_id = vb_cable.output_id
+        self._capture_device_id = cable.output_id
         logger.info("Capture device set", device_id=self._capture_device_id)
-
-        # Generate instructions for user
-        instructions = self._generate_routing_instructions(pid, vb_cable)
-
         self._routing_active = True
-
         return RoutingConfig(
-            virtual_device=vb_cable,
+            virtual_device=cable,
             requires_user_action=True,
-            instructions=instructions,
+            instructions=self._generate_routing_instructions(pid, cable),
         )
 
     def configure_process_loopback(self, pid: int) -> RoutingConfig:
@@ -276,20 +191,18 @@ class VirtualAudioRouter:
         return self._target_pid
 
     def _generate_routing_instructions(
-        self, pid: int, vb_cable: VirtualDevice
+        self, pid: int, cable: VirtualDevice
     ) -> str:
-        """Generate user instructions for audio routing."""
-        return """
+        """Generate user instructions for routing app to virtual cable."""
+        return f"""
 To isolate and capture ONLY the selected app's audio:
 
-1. Right-click the speaker icon in the Windows taskbar
-2. Select "Open Sound settings"
-3. Scroll down and click "App volume and device preferences"
-4. Find the target application in the list
-5. Change its "Output" dropdown to "CABLE Input (VB-Audio Virtual Cable)"
+1. Right-click the speaker icon → "Open Sound settings"
+2. Click "App volume and device preferences"
+3. Find the target app → set its "Output" to your virtual cable
+   (e.g. CABLE Input, Line 1, or {cable.name})
 
-Only that app's audio will be captured for translation.
-Other applications continue playing to your normal speakers.
+Only that app's audio will be captured. Other apps play to normal speakers.
 """
 
     async def restore_original_routing(self, pid: int) -> None:
@@ -328,8 +241,8 @@ Other applications continue playing to your normal speakers.
         return self._routing_active
 
     def get_setup_url(self) -> str:
-        """Get URL to download VB-Audio Virtual Cable."""
-        return "https://vb-audio.com/Cable/"
+        """Get URL to download a free virtual cable."""
+        return virtual_cable.get_setup_url()
 
     def get_default_output_device(self) -> str | None:
         """

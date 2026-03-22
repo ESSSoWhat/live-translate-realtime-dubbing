@@ -165,7 +165,7 @@ class AudioCapture:
                 device_info = self._get_default_loopback_device()
 
             if not device_info:
-                error_msg = "No capture device available. Please check VB-Cable installation."
+                error_msg = "No capture device available. Check virtual cable installation."
                 logger.error(error_msg)
                 raise RuntimeError(error_msg)
 
