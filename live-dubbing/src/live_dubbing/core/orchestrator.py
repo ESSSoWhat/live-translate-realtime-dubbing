@@ -168,10 +168,39 @@ class Orchestrator:
     async def _init_elevenlabs(self) -> None:
         """Initialize ElevenLabs service or BackendProxyService.
 
-        Prefers BackendProxyService when user is signed in (usage tracked).
-        Falls back to direct ElevenLabs when only API key is present.
+        Prefers BackendProxyService when user is signed in (usage tracked),
+        unless prefer_direct_api is set (for offline / flaky network).
         """
         from live_dubbing.services.elevenlabs_service import ElevenLabsService
+
+        self._usage_reporter = None
+        api_key = self._settings.get_elevenlabs_api_key()
+
+        # ── Direct API when preferred (offline mode) or no token ─────────────
+        if api_key and (
+            self._settings.prefer_direct_api or not self._settings.is_token_valid()
+        ):
+            from live_dubbing.services.usage_reporter import UsageReporter
+
+            openai_key = self._settings.get_openai_api_key()
+            self._elevenlabs_service = ElevenLabsService(
+                api_key=api_key,
+                openai_api_key=openai_key,
+            )
+            # When signed in, report usage to backend for direct API mode
+            if self._settings.is_token_valid():
+                token = self._settings.get_access_token()
+                if token:
+                    self._usage_reporter = UsageReporter(
+                        self._settings.get_backend_url(),
+                        token,
+                    )
+            logger.info(
+                "ElevenLabs service initialised (direct API key)",
+                offline_mode=self._settings.prefer_direct_api,
+                usage_tracked=self._usage_reporter is not None,
+            )
+            return
 
         # ── Monetised path: use backend proxy when signed in (usage tracked) ──
         if self._settings.is_token_valid():
@@ -187,17 +216,6 @@ class Orchestrator:
                 on_token_refreshed=_on_token_refreshed,
             )
             logger.info("Backend proxy service initialised (usage tracked)")
-            return
-
-        # ── Direct ElevenLabs when no token (no usage tracking) ───────────
-        api_key = self._settings.get_elevenlabs_api_key()
-        if api_key:
-            openai_key = self._settings.get_openai_api_key()
-            self._elevenlabs_service = ElevenLabsService(
-                api_key=api_key,
-                openai_api_key=openai_key,
-            )
-            logger.info("ElevenLabs service initialised (direct API key)")
             return
 
         logger.warning("No ElevenLabs API key or auth token configured")
@@ -220,6 +238,7 @@ class Orchestrator:
             voice_similarity=self._settings.voice_clone.voice_similarity,
             use_premade_voice_id=self._settings.voice_clone.use_premade_voice_id,
             auto_clone_voice=self._settings.voice_clone.auto_clone_voice,
+            usage_reporter=getattr(self, "_usage_reporter", None),
         )
         self._processing_pipeline = ProcessingPipeline(
             elevenlabs_service=self._elevenlabs_service,

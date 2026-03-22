@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-BACKEND_BASE_URL_DEFAULT = "https://api.livetranslate.app"  # override via env
+BACKEND_BASE_URL_DEFAULT = "https://livetranslatedubtool-production.up.railway.app"  # override via env
 
 
 class AuthExpiredException(Exception):

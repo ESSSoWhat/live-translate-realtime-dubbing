@@ -1,19 +1,29 @@
-"""Settings dialog (API key configuration removed — not user-accessible)."""
+"""Settings dialog."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QLabel,
+    QLineEdit,
+    QVBoxLayout,
+)
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QWidget
 
     from live_dubbing.config.settings import AppSettings
 
+_PLACEHOLDER = "••••••••••••"
+
 
 class SettingsDialog(QDialog):
-    """Placeholder settings dialog; API configuration is not exposed in the UI."""
+    """Settings dialog with API mode option."""
 
     def __init__(
         self,
@@ -25,7 +35,7 @@ class SettingsDialog(QDialog):
         self._saved = False
 
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(360)
         self.setModal(True)
         self._setup_ui()
 
@@ -36,13 +46,50 @@ class SettingsDialog(QDialog):
         layout.addWidget(
             QLabel("API keys are configured via sign-in or environment variables.")
         )
-        layout.addWidget(QLabel("No settings are available in this dialog."))
+
+        form = QFormLayout()
+        self._elevenlabs_input = QLineEdit()
+        self._elevenlabs_input.setPlaceholderText("Paste for direct API mode")
+        self._elevenlabs_input.setEchoMode(QLineEdit.EchoMode.Password)
+        if self._settings.get_elevenlabs_api_key():
+            self._elevenlabs_input.setText(_PLACEHOLDER)
+        form.addRow("ElevenLabs API key:", self._elevenlabs_input)
+        layout.addLayout(form)
+
+        self._prefer_direct_cb = QCheckBox("Use direct API (offline mode)")
+        self._prefer_direct_cb.setChecked(self._settings.prefer_direct_api)
+        self._prefer_direct_cb.setToolTip(
+            "When enabled, use ELEVENLABS_API_KEY directly instead of the backend. "
+            "Useful when the backend is unreachable. Usage is not tracked."
+        )
+        layout.addWidget(self._prefer_direct_cb)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self._on_accept)
         layout.addWidget(buttons)
+
+    def _on_accept(self) -> None:
+        # ElevenLabs API key: save only if user entered a new key (not placeholder)
+        key_text = self._elevenlabs_input.text().strip()
+        if key_text and key_text != _PLACEHOLDER:
+            self._settings.set_elevenlabs_api_key(key_text)
+            self._saved = True
+        elif not key_text and self._settings.get_elevenlabs_api_key():
+            self._settings.set_elevenlabs_api_key("")
+            self._saved = True
+
+        prev = self._settings.prefer_direct_api
+        self._settings.prefer_direct_api = self._prefer_direct_cb.isChecked()
+        if prev != self._settings.prefer_direct_api:
+            self._saved = True
+            try:
+                from live_dubbing.config.settings import ConfigManager
+                ConfigManager().save(self._settings)
+            except Exception:
+                pass
+        self.accept()
 
     @property
     def was_saved(self) -> bool:
-        """Whether the user saved; always False as there is nothing to save."""
+        """Whether the user saved changes."""
         return self._saved

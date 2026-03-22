@@ -123,3 +123,14 @@ class ApiKeyRequest(BaseModel):
     """Body for API key provision (Wix-only; call after member login)."""
 
     email: EmailStr
+
+
+class UsageReportRequest(BaseModel):
+    """Body for reporting usage (direct API mode; retroactive report)."""
+
+    event_type: str = Field(
+        ...,
+        pattern="^(stt|tts|dub|translate|clone)$",
+        description="Event type: stt, tts, dub, translate, clone",
+    )
+    quantity: int = Field(..., ge=1, le=1_000_000, description="Amount used (seconds for stt/dub, chars for tts/translate)")

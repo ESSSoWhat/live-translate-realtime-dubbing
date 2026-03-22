@@ -10,7 +10,10 @@ from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from live_dubbing.services.usage_reporter import UsageReporter
 
 import numpy as np
 import soundfile as sf
@@ -175,6 +178,7 @@ class PipelineConfig:
     use_premade_voice_id: str | None = None  # Skip cloning; use this voice
     use_dubbing_api: bool = False  # Dubbing API is batch (~30s latency); use STT+translate+TTS for real-time
     auto_clone_voice: bool = True  # Auto-clone speaker voice on start
+    usage_reporter: "UsageReporter | None" = None  # Report usage when using direct ElevenLabs
 
 
 @dataclass
@@ -738,6 +742,8 @@ class ProcessingPipeline:
             cloned = await self._voice_manager.create_dynamic_clone()
             self._cloned_voice = cloned
             self._stats.voice_clone_ready = True
+            if self._config.usage_reporter:
+                self._config.usage_reporter.report("clone", 1)
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
                 {"voice_id": cloned.voice_id},
@@ -748,13 +754,22 @@ class ProcessingPipeline:
             )
         except Exception as e:
             logger.exception("Voice clone failed, keeping fallback", error=str(e))
+            err_s = redact_secrets(str(e))
             self._event_bus.emit(
                 EventType.VOICE_CLONE_FAILED,
-                {"error": redact_secrets(str(e))},
+                {"error": err_s},
             )
+            hint = ""
+            if "getaddrinfo" in err_s or "connection" in err_s.lower():
+                hint = " Check that the backend URL is reachable (or clear LIVE_TRANSLATE_BACKEND_URL to use production)."
+            elif "401" in err_s or "session" in err_s.lower() or "expired" in err_s.lower():
+                hint = " Sign in again from Account → Sign in."
+            elif "402" in err_s or "quota" in err_s.lower():
+                hint = " Voice clone limit reached. Upgrade your plan for more."
             self._event_bus.emit_warning(
-                "Voice clone failed — using default voice for TTS. You can still hear translated speech.",
-                {"error": redact_secrets(str(e))[:100]},
+                "Voice clone failed — using default voice for TTS. You can still hear translated speech."
+                + hint,
+                {"error": err_s[:100]},
             )
 
     async def _run_manual_voice_clone(self) -> None:
@@ -763,6 +778,8 @@ class ProcessingPipeline:
             if not self._voice_manager:
                 return
             cloned = await self._voice_manager.create_dynamic_clone()
+            if self._config.usage_reporter:
+                self._config.usage_reporter.report("clone", 1)
             # Don't swap active voice — let the user activate it from the list
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
@@ -916,6 +933,11 @@ class ProcessingPipeline:
                         language=self._config.source_language,
                     )
 
+                    # Report STT usage when using direct API
+                    if self._config.usage_reporter and audio_wav:
+                        stt_sec = max(1, len(audio_wav) // 32000)  # 16-bit mono 16kHz
+                        self._config.usage_reporter.report("stt", stt_sec)
+
                     transcription = (result.text or "").strip()
                     self._stats.last_transcription = transcription
 
@@ -933,6 +955,9 @@ class ProcessingPipeline:
                     text_for_tts = await self._translate_for_tts(
                         transcription, result.language_code
                     )
+                    # Report translation usage when using direct API (if we translated)
+                    if self._config.usage_reporter and text_for_tts and text_for_tts != transcription:
+                        self._config.usage_reporter.report("translate", max(1, len(text_for_tts)))
 
                     # Emit translation result so UI shows it immediately
                     if text_for_tts.strip() and text_for_tts != transcription:
@@ -1015,6 +1040,12 @@ class ProcessingPipeline:
                         stability=self._config.voice_stability,
                         similarity_boost=self._config.voice_similarity,
                     )
+
+                    # Report TTS and dub usage when using direct API
+                    if self._config.usage_reporter:
+                        self._config.usage_reporter.report("tts", max(1, len(text)))
+                        dub_sec = max(1, len(audio_bytes) // 16000)  # MP3 ~128kbps rough
+                        self._config.usage_reporter.report("dub", dub_sec)
 
                     # Convert to float32 for playback (TTS returns MP3)
                     playback_bytes = _tts_audio_to_float32_bytes(audio_bytes)

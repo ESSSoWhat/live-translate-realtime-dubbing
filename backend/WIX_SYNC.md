@@ -2,6 +2,15 @@
 
 **Wix** is the source for sign-in (Members), subscriptions (Pricing Plans), and for provisioning **API keys** that desktop and mobile apps use to call the backend. The backend tracks usage and enforces tier limits; tier is driven by Wix via the sync endpoint below.
 
+## Wix site setup
+
+Create a **Members Account** page (e.g. at `/account-settings` or `/members-area`) so logged-in members can:
+- See their API key (from `POST /auth/api-key`)
+- View subscription and usage (optional)
+- Link to upgrade
+
+Desktop app opens this via "Account → Manage account on web" (default: `/account-settings`). Override with `LIVE_TRANSLATE_ACCOUNT_PATH` if needed.
+
 ## Tier limits (usage caps per month)
 
 | Tier             | Dubbing / STT cap | Wix plan |

@@ -1210,6 +1210,8 @@ class MainWindow(QMainWindow):
         """Open the settings dialog."""
         dialog = SettingsDialog(self._settings, self)
         dialog.exec()
+        if dialog.was_saved and self._async_worker:
+            self._async_worker.run_coroutine(self._orchestrator.reinit_elevenlabs())
 
     @pyqtSlot()
     def _on_start_clicked(self) -> None:
@@ -1323,23 +1325,32 @@ class MainWindow(QMainWindow):
 
     def _handle_translation_error(self, error_msg: str) -> None:
         """Handle translation error from async worker."""
-        logger.error("Translation failed", error=error_msg)
-        self.show_error(f"Translation failed: {error_msg}")
+        try:
+            logger.error("Translation failed", error=error_msg)
+            self.show_error(f"Translation failed: {error_msg}")
+        except Exception as e:
+            logger.exception("Error showing translation failure", error=str(e))
 
-        # Reset UI state
-        self._start_btn.setEnabled(True)
-        self._stop_btn.setEnabled(False)
-        self._app_selector.set_enabled(True)
-        self._language_panel.set_enabled(True)
-        self._capture_mode_combo.setEnabled(True)
-        self._capture_channel_combo.setEnabled(True)
-        self._is_running = False
-        self._app_selector._update_info_label()
-        self._language_panel._on_language_changed()
-
-        # Reset progress bar
-        self._clone_progress.setValue(0)
-        self._clone_progress.setFormat("Ready")
+        # Reset UI state (guard each in case widgets were destroyed)
+        try:
+            self._start_btn.setEnabled(True)
+            self._stop_btn.setEnabled(False)
+            if hasattr(self, "_app_selector") and self._app_selector:
+                self._app_selector.set_enabled(True)
+                self._app_selector._update_info_label()
+            if hasattr(self, "_language_panel") and self._language_panel:
+                self._language_panel.set_enabled(True)
+                self._language_panel._on_language_changed()
+            if hasattr(self, "_capture_mode_combo") and self._capture_mode_combo:
+                self._capture_mode_combo.setEnabled(True)
+            if hasattr(self, "_capture_channel_combo") and self._capture_channel_combo:
+                self._capture_channel_combo.setEnabled(True)
+            self._is_running = False
+            if hasattr(self, "_clone_progress") and self._clone_progress:
+                self._clone_progress.setValue(0)
+                self._clone_progress.setFormat("Ready")
+        except Exception as e:
+            logger.exception("Error resetting UI after translation failure", error=str(e))
 
     @pyqtSlot(object)
     def _on_app_initialized(self, event: Event) -> None:

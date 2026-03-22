@@ -195,9 +195,12 @@ class AppSettings(BaseModel):
     # Advanced settings
     enable_debug_logging: bool = False
     max_latency_warning_ms: int = Field(default=2000, ge=500, le=10000)
+    # When True, use direct ElevenLabs API even when signed in (for offline / flaky network).
+    # Usage is not tracked when this is enabled.
+    prefer_direct_api: bool = True
 
     # Backend URL (can be overridden by LIVE_TRANSLATE_BACKEND_URL env var)
-    backend_base_url: str = "https://api.livetranslate.app"
+    backend_base_url: str = "https://livetranslatedubtool-production.up.railway.app"
     # Website for upgrade, account, and help (LIVE_TRANSLATE_WEBSITE_URL env override)
     website_base_url: str = "https://www.livetranslate.net"
 
@@ -226,8 +229,14 @@ class AppSettings(BaseModel):
         return f"{self.get_website_url()}/login"
 
     def get_account_url(self) -> str:
-        """Return account/dashboard page URL on the website."""
-        return f"{self.get_website_url()}/account"
+        """Return account/dashboard page URL on the website.
+
+        Override via LIVE_TRANSLATE_ACCOUNT_PATH if Wix uses a different path.
+        """
+        path = os.environ.get("LIVE_TRANSLATE_ACCOUNT_PATH", "/account-settings").strip()
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self.get_website_url()}{path}"
 
     def get_wix_api_key_page_url(self) -> str:
         """Return Wix page URL for API key + SSO redirect (Velo). Default path ``/api-key``."""

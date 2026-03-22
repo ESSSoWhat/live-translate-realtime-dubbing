@@ -16,9 +16,10 @@ def _enable_faulthandler() -> None:
     """Enable faulthandler to capture segfaults and other low-level crashes.
 
     This helps debug crashes in native libraries like PortAudio (sounddevice).
+    Output goes to stderr (redirected to app.log when windowed).
     """
     with contextlib.suppress(Exception):
-        faulthandler.enable()
+        faulthandler.enable(all_threads=True)
 
 
 def _fix_stdio_for_windowed_app() -> None:
