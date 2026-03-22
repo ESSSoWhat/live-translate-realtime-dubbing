@@ -11,15 +11,20 @@
  */
 
 import { authentication } from 'wix-members-frontend';
-import wixLocation from 'wix-location-frontend';
+import wixLocationFrontend from 'wix-location-frontend';
 
 $w.onReady(function () {
-    const query = wixLocation.query;
-    const returnUrl = query.returnUrl;
+    // returnUrl from query (direct /login?returnUrl=...) or from sessionStorage (homepage sso_return)
+    const query = wixLocationFrontend.query;
+    let returnUrl = query.returnUrl;
+    if (!returnUrl && typeof sessionStorage !== 'undefined') {
+        returnUrl = sessionStorage.getItem('live_translate_sso_return_url');
+        if (returnUrl) sessionStorage.removeItem('live_translate_sso_return_url');
+    }
 
     if (returnUrl && isValidReturnUrl(returnUrl)) {
         authentication.onLogin(() => {
-            wixLocation.to(returnUrl);
+            wixLocationFrontend.to(returnUrl);
         });
     }
 });

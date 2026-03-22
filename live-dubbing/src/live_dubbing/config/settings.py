@@ -42,6 +42,7 @@ def _load_env_file() -> None:
     wanted = {
         "OPENAI_API_KEY",
         "ELEVENLABS_API_KEY",
+        "LIVE_TRANSLATE_API_KEY",
         "LIVE_TRANSLATE_SUPABASE_URL",
         "LIVE_TRANSLATE_SUPABASE_ANON_KEY",
     }
@@ -235,11 +236,14 @@ class AppSettings(BaseModel):
         return f"{self.get_website_url()}{path}"
 
     def get_wix_sso_entry_url(self, redirect_uri: str) -> str:
-        """Return URL to open for Wix SSO. Uses /app-auth by default to preserve redirect_uri.
+        """Return URL to open for Wix SSO.
 
-        - /app-auth (public): loads first, redirects to /api-key?redirect_uri=... so the param
-          survives the Wix login redirect. Set LIVE_TRANSLATE_WIX_APP_AUTH_PATH="" to skip.
-        - /api-key (Members Only): gets API key and redirects back to the desktop app.
+        Login bar (default): Opens homepage with ?sso_return=... so the user sees the full
+        site and uses the login bar (Sign in in header). homepage-sso.js stores the path
+        for the login page. Set LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN=1 for /login directly.
+
+        app-auth path: If LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN=0 and app-auth is set, uses
+        /app-auth which redirects to /api-key?redirect_uri=...
         """
         import urllib.parse
 
@@ -248,8 +252,24 @@ class AppSettings(BaseModel):
         if not api_key_path.startswith("/"):
             api_key_path = "/" + api_key_path
         # Use /app-auth by default (preserves redirect_uri through login). Set to "" to use /api-key directly.
-        app_auth_path = os.environ.get("LIVE_TRANSLATE_WIX_APP_AUTH_PATH", "/app-auth").strip()
+        # Login-bar: open homepage so user uses the site's login bar (Sign in / Log in in header)
+        # Passes sso_return via query; homepage-sso.js stores it for the login page.
+        # Set LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN=1 to open /login directly instead.
+        use_login_bar = os.environ.get("LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN", "0").strip() in ("0", "false", "no")
+        if use_login_bar:
+            destination = f"{api_key_path}?{urllib.parse.urlencode({'redirect_uri': redirect_uri})}"
+            sso_return = urllib.parse.quote(destination, safe="")
+            return f"{base}/?sso_return={sso_return}"
 
+        # Login-first: open /login directly (dedicated login page)
+        use_login_first = os.environ.get("LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN", "0").strip() in ("1", "true", "yes")
+        if use_login_first:
+            destination = f"{api_key_path}?{urllib.parse.urlencode({'redirect_uri': redirect_uri})}"
+            return_url = urllib.parse.quote(destination, safe="")
+            return f"{base}/login?returnUrl={return_url}"
+
+        # app-auth: public page that forwards to api-key with redirect_uri
+        app_auth_path = os.environ.get("LIVE_TRANSLATE_WIX_APP_AUTH_PATH", "/app-auth").strip()
         if app_auth_path.startswith("/"):
             sso_params = urllib.parse.urlencode({"redirect_uri": redirect_uri})
             return f"{base}{app_auth_path}?{sso_params}"
@@ -401,6 +421,13 @@ class AppSettings(BaseModel):
         key = os.environ.get("ELEVENLABS_API_KEY")
         if key:
             self._elevenlabs_api_key = key
+
+    def set_auth_token_from_env(self) -> None:
+        """Load backend API key from LIVE_TRANSLATE_API_KEY env and store as auth token."""
+        _load_env_file()
+        key = os.environ.get("LIVE_TRANSLATE_API_KEY")
+        if key:
+            self.set_auth_tokens(key.strip(), "")
 
 
 class ConfigManager:

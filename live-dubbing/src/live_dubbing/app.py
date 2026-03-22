@@ -131,6 +131,7 @@ class Application:
         self._settings = self._config_manager.load()
         self._settings.set_openai_api_key_from_env()
         self._settings.set_elevenlabs_api_key_from_env()
+        self._settings.set_auth_token_from_env()
 
         # Create Qt application
         self._qt_app = QApplication(sys.argv)

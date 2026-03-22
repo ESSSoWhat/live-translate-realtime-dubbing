@@ -24,7 +24,25 @@ Add a **public** page (not Members Only) with slug `app-auth`:
 
 This page receives `redirect_uri` and immediately redirects to `/api-key?redirect_uri=...`, preserving the param through the Wix login flow.
 
-## 3. redirect_uri must point to `/app-auth`
+## 3. Login bar flow (default) — use site header to sign in
+
+The desktop app opens the **homepage** with `?sso_return=...` so users see the full site and click "Sign in" in the login bar. Add both:
+
+**homepage-sso.js** (homepage or master page):
+1. Paste `homepage-sso.js` into the homepage code panel (or `masterPage.js` for site-wide)
+2. Stores `sso_return` in sessionStorage when the app opens `/?sso_return=...`
+
+**login-page.js** (login page):
+1. Create or use your Members Login page (slug `/login`)
+2. Add a Login element if not already present
+3. Paste `login-page.js` — it reads returnUrl from the query or from sessionStorage (set by homepage)
+4. `authentication.onLogin` redirects to the api-key page after sign-in
+
+**Alternatives:**
+- `LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN=1` — open `/login` directly instead of homepage
+- `LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN=0` and no homepage-sso — falls back to `/app-auth` if configured
+
+## 4. redirect_uri must point to `/app-auth` (when not using login-first)
 
 Wherever you construct the OAuth/SSO entry URL (in the desktop app this is `get_wix_sso_entry_url()`):
 
@@ -32,7 +50,7 @@ Wherever you construct the OAuth/SSO entry URL (in the desktop app this is `get_
 - The desktop app already uses `/app-auth` by default via `LIVE_TRANSLATE_WIX_APP_AUTH_PATH`.
 - If you support multiple environments, keep this environment-driven (e.g. `WEBSITE_URL + LIVE_TRANSLATE_WIX_APP_AUTH_PATH`).
 
-## 4. Set `LIVE_TRANSLATE_WIX_APP_AUTH_PATH`
+## 5. Set `LIVE_TRANSLATE_WIX_APP_AUTH_PATH` (when not using login-first)
 
 In the desktop app's deployment/environment:
 
@@ -42,7 +60,7 @@ LIVE_TRANSLATE_WIX_APP_AUTH_PATH=/app-auth
 
 The desktop app defaults to `/app-auth`; set this explicitly only if you need to override. Redeploy so the value is picked up.
 
-## 5. Add the fallback link on the api-key page
+## 6. Add the fallback link on the api-key page
 
 On the api-key page's markup (in Wix Editor):
 
@@ -52,7 +70,7 @@ On the api-key page's markup (in Wix Editor):
 
 `api-key-page.js` will show this link with text "Click here if the app didn't sign in" when the automatic redirect may have been blocked (e.g. popup blockers). The link’s `href` is set to the completion URL so the user can click to finish sign-in.
 
-## 6. Backend config: BACKEND_URL and WIX_SYNC_SECRET
+## 7. Backend config: BACKEND_URL and WIX_SYNC_SECRET
 
 **BACKEND_URL** (in `api-key.web.js`):
 
@@ -71,6 +89,7 @@ On the api-key page's markup (in Wix Editor):
 
 ## Quick checklist
 
+- [ ] Homepage uses `homepage-sso.js`; login page uses `login-page.js` (login bar flow)
 - [ ] api-key page uses only `api-key-page.js`, no old custom logic
 - [ ] `api-key.web.js` is in backend folder; `BACKEND_URL` is correct
 - [ ] Public page `/app-auth` created with `app-auth-page.js`
