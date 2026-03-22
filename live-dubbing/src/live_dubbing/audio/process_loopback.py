@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from ctypes import wintypes
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import structlog
@@ -128,6 +128,7 @@ def _capture_loop(
     _chunk_size_ms: int,
     audio_queue: queue.Queue[tuple[bytes, int]],
     is_capturing: threading.Event,
+    on_error: Callable[[str], None] | None = None,
 ) -> None:
     """Main capture loop for process loopback (runs in thread)."""
     ole32 = None
@@ -136,9 +137,9 @@ def _capture_loop(
         mmdevapi = ctypes.windll.mmdevapi  # type: ignore[attr-defined]
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
 
-        # CoInitializeEx MTA
-        COINIT_MULTITHREADED = 0x0
-        ole32.CoInitializeEx(None, COINIT_MULTITHREADED)
+        # CoInitializeEx STA - ActivateAudioInterfaceAsync for capture may require STA
+        COINIT_APARTMENTTHREADED = 0x2
+        ole32.CoInitializeEx(None, COINIT_APARTMENTTHREADED)
 
         result_holder: dict[str, Any] = {}
         completion_event = threading.Event()
@@ -243,7 +244,14 @@ def _capture_loop(
         )
 
         if hr != 0:
-            raise RuntimeError(f"ActivateAudioInterfaceAsync failed: 0x{hr:08X}")
+            # 0x8000000E often indicates COM/threading or unsupported config
+            hint = (
+                " Try ensuring the target app is playing audio. "
+                "If it persists, use 'All system audio' mode with VB-Cable."
+                if hr == 0x8000000E
+                else ""
+            )
+            raise RuntimeError(f"ActivateAudioInterfaceAsync failed: 0x{hr:08X}.{hint}")
 
         completion_event.wait(timeout=10.0)
         if "error" in result_holder:
@@ -265,47 +273,28 @@ def _capture_loop(
                 ("cbSize", wintypes.WORD),
             ]
 
-        # IAudioClient vtbl: 0-2 IUnknown, 3 Init, 4 GetBufferSize, 5-6, 7 IsFormatSupported,
-        # 8 GetMixFormat, 9 GetDevicePeriod, 10 Start, 11 Stop, 12 Reset, 13 SetEventHandle, 14 GetService
+        # IAudioClient vtbl: 0-2 IUnknown, 3 Init, 4 GetBufferSize, ...
         ac_vtbl = ctypes.cast(audio_client, ctypes.POINTER(ctypes.c_void_p))
 
-        # Use GetMixFormat to get actual device format (often float32 @ 48kHz).
-        # Process loopback may return E_NOTIMPL - then use fallback with AUTOCONVERT.
-        get_mix_format = ctypes.CFUNCTYPE(
-            ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(ctypes.POINTER(WAVEFORMATEX))
-        )(ctypes.cast(ac_vtbl[8], ctypes.c_void_p))  # type: ignore[arg-type]
-        ppwfx = ctypes.POINTER(WAVEFORMATEX)()
-        hr = get_mix_format(audio_client, ctypes.byref(ppwfx))
-        use_mix_format = hr == 0 and ppwfx and ppwfx.contents.nSamplesPerSec > 0
-
-        if use_mix_format:
-            wfx_ptr = ppwfx
-            wfx = ppwfx.contents
-            init_flags = AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK
-            logger.info(
-                "Process loopback mix format",
-                tag=wfx.wFormatTag,
-                ch=wfx.nChannels,
-                rate=wfx.nSamplesPerSec,
-                bits=wfx.wBitsPerSample,
-                align=wfx.nBlockAlign,
-            )
-        else:
-            wfx = WAVEFORMATEX(
-                wFormatTag=WAVE_FORMAT_PCM,
-                nChannels=2,
-                nSamplesPerSec=44100,
-                nAvgBytesPerSec=44100 * 2 * 2,
-                nBlockAlign=4,
-                wBitsPerSample=16,
-                cbSize=0,
-            )
-            wfx_ptr = ctypes.pointer(wfx)
-            init_flags = (
-                AUDCLNT_STREAMFLAGS_LOOPBACK
-                | AUDCLNT_STREAMFLAGS_EVENTCALLBACK
-                | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
-            )
+        # Use fixed 16-bit PCM 44100 stereo (matches Microsoft sample). AUTOCONVERTPCM
+        # lets the system convert from native format. GetMixFormat often fails for process
+        # loopback (E_NOTIMPL) or returns formats that cause issues.
+        wfx = WAVEFORMATEX(
+            wFormatTag=WAVE_FORMAT_PCM,
+            nChannels=2,
+            nSamplesPerSec=44100,
+            nAvgBytesPerSec=44100 * 2 * 2,
+            nBlockAlign=4,
+            wBitsPerSample=16,
+            cbSize=0,
+        )
+        wfx_ptr = ctypes.pointer(wfx)
+        init_flags = (
+            AUDCLNT_STREAMFLAGS_LOOPBACK
+            | AUDCLNT_STREAMFLAGS_EVENTCALLBACK
+            | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+        )
+        logger.info("Process loopback using 16-bit PCM 44100 stereo (AUTOCONVERT)")
 
         init_fn = ctypes.CFUNCTYPE(
             ctypes.c_long,
@@ -377,10 +366,10 @@ def _capture_loop(
             kernel32.CloseHandle(sample_event)
             raise RuntimeError(f"IAudioClient::Start failed: 0x{hr:08X}")
 
+        logger.info("Process loopback capture started", pid=pid, target_rate=sample_rate)
+
+        # IAudioCaptureClient vtbl: 0-2 IUnknown, 3 GetBuffer, 4 ReleaseBuffer, 5 GetNextPacketSize
         cc_vtbl = ctypes.cast(capture_client, ctypes.POINTER(ctypes.c_void_p))
-        get_next_packet = ctypes.CFUNCTYPE(
-            ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(wintypes.UINT)
-        )(ctypes.cast(cc_vtbl[3], ctypes.c_void_p))  # type: ignore[arg-type]
         get_buffer_fn = ctypes.CFUNCTYPE(
             ctypes.c_long,
             ctypes.c_void_p,
@@ -389,15 +378,18 @@ def _capture_loop(
             ctypes.POINTER(wintypes.DWORD),
             ctypes.POINTER(UINT64),
             ctypes.POINTER(UINT64),
-        )(ctypes.cast(cc_vtbl[4], ctypes.c_void_p))  # type: ignore[arg-type]
+        )(ctypes.cast(cc_vtbl[3], ctypes.c_void_p))  # type: ignore[arg-type]
         release_buffer_fn = ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.UINT)(
-            ctypes.cast(cc_vtbl[5], ctypes.c_void_p)  # type: ignore[arg-type]
+            ctypes.cast(cc_vtbl[4], ctypes.c_void_p)  # type: ignore[arg-type]
         )
+        get_next_packet_size = ctypes.CFUNCTYPE(
+            ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(wintypes.UINT)
+        )(ctypes.cast(cc_vtbl[5], ctypes.c_void_p))  # type: ignore[arg-type]
 
-        device_rate = int(wfx.nSamplesPerSec)
-        device_channels = int(wfx.nChannels)
-        bytes_per_frame = int(wfx.nBlockAlign)
-        is_float = wfx.wFormatTag == WAVE_FORMAT_IEEE_FLOAT
+        device_rate = 44100
+        device_channels = 2
+        bytes_per_frame = 4  # 16-bit stereo
+        is_float = False
 
         plb_chunk_count = 0
 
@@ -422,7 +414,7 @@ def _capture_loop(
 
             while True:
                 frames_avail = wintypes.UINT()
-                hr = get_next_packet(capture_client, ctypes.byref(frames_avail))
+                hr = get_next_packet_size(capture_client, ctypes.byref(frames_avail))
                 if hr != 0 or frames_avail.value == 0:
                     break
 
@@ -474,6 +466,12 @@ def _capture_loop(
 
                 release_buffer_fn(capture_client, num_frames)
 
+        logger.info(
+            "Process loopback capture stopped",
+            pid=pid,
+            total_chunks=plb_chunk_count,
+        )
+
         stop_fn = ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(
             ctypes.cast(ac_vtbl[11], ctypes.c_void_p)  # type: ignore[arg-type]
         )
@@ -482,6 +480,11 @@ def _capture_loop(
 
     except Exception as e:
         logger.exception("Process loopback capture error", error=str(e))
+        if on_error:
+            try:
+                on_error(str(e))
+            except Exception:
+                pass
     finally:
         if ole32:
             ole32.CoUninitialize()
@@ -493,6 +496,7 @@ def run_process_loopback_capture(
     chunk_size_ms: int,
     audio_queue: queue.Queue[tuple[bytes, int]],
     is_capturing: threading.Event,
+    on_error: Callable[[str], None] | None = None,
 ) -> None:
     """
     Start process loopback capture in a daemon thread.
@@ -506,7 +510,7 @@ def run_process_loopback_capture(
     """
     thread = threading.Thread(
         target=_capture_loop,
-        args=(pid, sample_rate, chunk_size_ms, audio_queue, is_capturing),
+        args=(pid, sample_rate, chunk_size_ms, audio_queue, is_capturing, on_error),
         daemon=True,
     )
     thread.start()

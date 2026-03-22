@@ -791,6 +791,12 @@ class MainWindow(QMainWindow):
         )
         self._unsubscribers.append(unsub)
 
+        unsub = self._event_bus.subscribe(
+            EventType.PROCESS_LOOPBACK_FAILED,
+            self._on_process_loopback_failed,
+        )
+        self._unsubscribers.append(unsub)
+
     def _setup_debug_window(self) -> None:
         """Set up the debug window as a dock widget."""
         self._debug_window = DebugWindow(
@@ -1146,26 +1152,40 @@ class MainWindow(QMainWindow):
 
     def _show_routing_configuration(self, session: AudioSessionInfo) -> None:
         """Show routing dialog when VB-Cable is already installed."""
-        result = QMessageBox.information(
-            self,
-            "Isolate Selected App Audio",
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Isolate Selected App Audio")
+        msg.setText(
             f"Route only '{session.name}' to VB-Cable for isolation:\n\n"
             "1. Open Sound settings (right-click speaker icon)\n"
-            "2. App volume → find '{0}' → set Output to 'CABLE Input'\n\n"
-            "Only this app's audio will be captured. Other apps play normally.\n\n"
-            "Click OK when done, or Cancel to capture all system audio instead.".format(
-                session.name,
-            ),
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            f"2. App volume → find '{session.name}' → set Output to 'CABLE Input'\n\n"
+            "Only this app's audio will be captured. Other apps play normally."
         )
+        msg.setInformativeText(
+            "Click OK when done, or Cancel to capture all system audio instead."
+        )
+        open_settings = msg.addButton("Open Sound settings", QMessageBox.ButtonRole.ActionRole)
+        ok_btn = msg.addButton(QMessageBox.StandardButton.Ok)
+        msg.addButton(QMessageBox.StandardButton.Cancel)
 
-        if result == QMessageBox.StandardButton.Cancel:
-            # Fall back to system audio
+        while True:
+            msg.exec()
+            clicked = msg.clickedButton()
+            if clicked == open_settings:
+                try:
+                    import os
+
+                    os.startfile("ms-settings:apps-volume")  # type: ignore[attr-defined]
+                except Exception:
+                    msg.setInformativeText(
+                        "Could not open. Open manually: "
+                        "right-click speaker → Sound settings → App volume."
+                    )
+                continue
+            if clicked == ok_btn:
+                self._start_translation(session, use_fallback=False)
+                return
             self._start_translation(session, use_fallback=True)
             return
-
-        # Start translation with VB-Cable
-        self._start_translation(session, use_fallback=False)
 
     def _on_wizard_complete(self, session: AudioSessionInfo, vb_cable_used: bool, fallback_used: bool) -> None:
         """Handle wizard completion."""
@@ -1283,7 +1303,6 @@ class MainWindow(QMainWindow):
         if not self._orchestrator:
             return
         plb = self._orchestrator.is_process_loopback_supported
-        vb_ready = self._orchestrator.is_vb_cable_installed
         self._capture_mode_combo.blockSignals(True)
         if plb:
             self._capture_mode_combo.setItemText(0, "Selected app only")
@@ -1291,7 +1310,8 @@ class MainWindow(QMainWindow):
         else:
             self._capture_mode_combo.setItemText(0, "Selected app only (VB-Cable)")
             self._capture_mode_combo.setItemData(0, "vbcable")
-        self._capture_mode_combo.setCurrentIndex(0 if (plb or vb_ready) else 1)
+        # Default to "All system audio" for reliability (process loopback often fails with 0x8000000E)
+        self._capture_mode_combo.setCurrentIndex(1)
         self._capture_mode_combo.blockSignals(False)
 
     @pyqtSlot(object)
@@ -1751,6 +1771,15 @@ class MainWindow(QMainWindow):
         message = event.data.get("message", "Unknown warning")
         logger.warning("Warning", message=message)
         QMessageBox.warning(self, "Warning", message)
+
+    def _on_process_loopback_failed(self, event: Event) -> None:
+        """Process loopback failed; schedule fallback to system loopback."""
+        err = event.data.get("error", "")
+        logger.warning("Process loopback failed, switching to system audio", error=err)
+        if self._async_worker:
+            self._async_worker.run_coroutine(
+                self._orchestrator.fallback_to_system_loopback(),
+            )
 
     def show_error(self, message: str) -> None:
         """Display error message to user."""

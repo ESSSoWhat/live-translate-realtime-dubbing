@@ -65,6 +65,7 @@ class AudioCapture:
         device_id: str | None = None,
         pid: int | None = None,
         on_audio_chunk: AudioCallback | None = None,
+        on_process_loopback_error: Callable[[str], None] | None = None,
     ) -> None:
         """
         Start audio capture.
@@ -73,6 +74,7 @@ class AudioCapture:
             device_id: Device ID/index to capture from (None for default/process loopback)
             pid: Process ID for process loopback capture (overrides device_id when set)
             on_audio_chunk: Async callback for each audio chunk
+        on_process_loopback_error: Called when process loopback fails (sync, from thread)
         """
         if self._is_capturing.is_set():
             logger.warning("Capture already running")
@@ -105,6 +107,7 @@ class AudioCapture:
                     chunk_size_ms=self._chunk_size_ms,
                     audio_queue=self._audio_queue,
                     is_capturing=self._is_capturing,
+                    on_error=on_process_loopback_error,
                 )
             else:
                 raise RuntimeError(

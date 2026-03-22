@@ -4,6 +4,8 @@ Core Orchestrator - Coordinates all subsystems and manages application state.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -67,6 +69,7 @@ class Orchestrator:
         self._process_loopback_supported = False
         self._is_initialized = False
         self._event_unsubscribers: list[Callable[[], None]] = []
+        self._no_audio_check_task: asyncio.Task[None] | None = None
 
     async def initialize(self) -> None:
         """Initialize all subsystems."""
@@ -361,10 +364,16 @@ class Orchestrator:
             # Start audio capture AFTER pipeline is ready
             if self._audio_capture is None:
                 raise RuntimeError("Audio capture not initialized")
+            on_plb_error = None
+            if capture_pid:
+                on_plb_error = lambda err: self._event_bus.emit(
+                    EventType.PROCESS_LOOPBACK_FAILED, {"error": err}
+                )
             await self._audio_capture.start(
                 device_id=device_id,
                 pid=capture_pid,
                 on_audio_chunk=self._on_audio_chunk,
+                on_process_loopback_error=on_plb_error,
             )
 
             # Start playback with configured output device
@@ -390,6 +399,11 @@ class Orchestrator:
                     "target_language": target_language,
                     "capture_mode": capture_mode,
                 },
+            )
+
+            # Start background task to warn if no audio received
+            self._no_audio_check_task = asyncio.create_task(
+                self._check_no_audio_loop(target_app.name, capture_mode),
             )
 
         except Exception as e:
@@ -435,6 +449,13 @@ class Orchestrator:
         )
 
         try:
+            # Cancel no-audio check task
+            if self._no_audio_check_task and not self._no_audio_check_task.done():
+                self._no_audio_check_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._no_audio_check_task
+            self._no_audio_check_task = None
+
             # Stop audio capture
             if self._audio_capture:
                 await self._audio_capture.stop()
@@ -500,6 +521,67 @@ class Orchestrator:
         if self._translation_state == TranslationState.CLONING_VOICE:
             self._set_translation_state(TranslationState.TRANSLATING)
 
+    async def fallback_to_system_loopback(self) -> None:
+        """
+        Switch from failed process loopback to system loopback capture.
+
+        Called when process loopback activation fails (e.g. 0x8000000E).
+        """
+        if self._app_state != AppState.RUNNING or not self._translation_config:
+            return
+        if not self._audio_capture or not self._audio_routing:
+            return
+
+        target_name = self._translation_config.target_app.name
+        logger.info("Process loopback failed, falling back to system loopback", app=target_name)
+
+        # Cancel no-audio check
+        if self._no_audio_check_task and not self._no_audio_check_task.done():
+            self._no_audio_check_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._no_audio_check_task
+        self._no_audio_check_task = None
+
+        # Stop capture (process loopback thread already exited; stop consumer)
+        await self._audio_capture.stop()
+
+        # Configure system loopback
+        from live_dubbing.audio.routing import CaptureMode
+
+        try:
+            self._audio_routing.configure_system_loopback()
+        except RuntimeError as e:
+            logger.error("System loopback fallback failed", error=str(e))
+            self._event_bus.emit_warning(
+                f"Process loopback failed and no system loopback device found: {e} "
+                "Use 'All system audio' mode instead."
+            )
+            await self.stop_translation()
+            return
+
+        device_id = self._audio_routing.get_capture_device_id()
+        self._audio_routing.set_capture_mode(CaptureMode.SYSTEM_LOOPBACK)
+
+        # Restart capture with device
+        await self._audio_capture.start(
+            device_id=device_id,
+            pid=None,
+            on_audio_chunk=self._on_audio_chunk,
+        )
+
+        self._event_bus.emit(
+            EventType.AUDIO_CAPTURE_STARTED,
+            {"capture_mode": "system_loopback", "fallback": True},
+        )
+        self._event_bus.emit_warning(
+            f"Process loopback unavailable. Using all system audio for {target_name}."
+        )
+
+        # Restart no-audio check
+        self._no_audio_check_task = asyncio.create_task(
+            self._check_no_audio_loop(target_name, "system_loopback"),
+        )
+
     def _set_translation_state(self, new_state: TranslationState) -> None:
         """Set translation state and emit event."""
         if self._translation_state != new_state:
@@ -512,6 +594,51 @@ class Orchestrator:
                 EventType.TRANSLATION_STATE_CHANGED,
                 {"old_state": old_state, "new_state": new_state},
             )
+
+    async def _check_no_audio_loop(self, app_name: str, capture_mode: str) -> None:
+        """Warn user if no audio received after 5 seconds."""
+        import time
+
+        warned = False
+        start = time.time()
+        while True:
+            await asyncio.sleep(2.0)
+            if not self._translation_config or self._translation_state == TranslationState.IDLE:
+                return
+            elapsed = time.time() - start
+            chunks = (
+                self._pipeline_stats.total_chunks_processed
+                if self._pipeline_stats
+                else 0
+            )
+            if chunks > 0:
+                return  # Audio flowing, no need to warn
+            if elapsed >= 5.0 and not warned:
+                warned = True
+                if capture_mode == "process_loopback":
+                    hint = (
+                        "Make sure the app is playing sound (e.g. play a video). "
+                        "If this persists, switch to 'All system audio'."
+                    )
+                elif capture_mode == "vb_cable":
+                    hint = (
+                        f"Route {app_name} to CABLE Input: Sound settings → App volume "
+                        f"→ {app_name} → Output: CABLE Input."
+                    )
+                else:
+                    hint = (
+                        "Ensure audio is playing through your default output device "
+                        "(e.g. play a video in any app)."
+                    )
+                self._event_bus.emit_warning(
+                    f"No audio detected from {app_name}. {hint}",
+                    {"app_name": app_name, "capture_mode": capture_mode},
+                )
+                logger.warning(
+                    "No audio chunks received",
+                    app=app_name,
+                    elapsed=round(elapsed, 1),
+                )
 
     def get_state_snapshot(self) -> ApplicationStateSnapshot:
         """Get current application state snapshot."""

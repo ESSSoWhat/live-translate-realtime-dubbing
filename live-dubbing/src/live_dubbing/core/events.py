@@ -48,6 +48,7 @@ class EventType(Enum):
     # Errors
     ERROR_OCCURRED = auto()
     WARNING_OCCURRED = auto()
+    PROCESS_LOOPBACK_FAILED = auto()
 
     # Stats
     LATENCY_UPDATE = auto()
