@@ -744,7 +744,10 @@ class _WixSsoWorker(QThread):
         server.stop()
 
         if not result:
-            self.error.emit("Wix sign-in timed out or was cancelled. Please try again.")
+            self.error.emit(
+                "Sign-in timed out. Complete sign-in in the browser, then paste your API key below, "
+                "or try again."
+            )
             return
 
         if result.get("error"):
@@ -803,6 +806,8 @@ class LoginDialog(QDialog):
         self._wix_sso_worker: QThread | None = None
         self._api_key_input: QLineEdit | None = None
         self._use_key_btn: QPushButton | None = None
+        self._wix_btn: QPushButton | None = None
+        self._wix_btn_reg: QPushButton | None = None
 
         self.setWindowTitle("Live Translate — Sign In")
         self.setMinimumWidth(380)
@@ -891,7 +896,7 @@ class LoginDialog(QDialog):
         return btn
 
     def _wix_button(self) -> QPushButton:
-        """Primary CTA: Sign in with Wix (opens website)."""
+        """Primary CTA: one-click SSO via livetranslate.net."""
         btn = QPushButton()
         btn.setMinimumHeight(40)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -909,7 +914,7 @@ class LoginDialog(QDialog):
             QPushButton:disabled { background: #555; color: #999; }
             """
         )
-        btn.setText("Sign in with Wix")
+        btn.setText("Sign in with livetranslate.net")
         return btn
 
     def _divider(self, text: str = "or") -> QWidget:
@@ -943,23 +948,31 @@ class LoginDialog(QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Wix sign-in (primary CTA)
-        wix_btn = self._wix_button()
-        wix_btn.clicked.connect(self._on_wix_signin)
-        layout.addWidget(wix_btn)
-        wix_tip = QLabel("Log into livetranslate.net in your browser first if needed.")
+        # SSO (primary): one click, sign in on web, app completes automatically
+        self._wix_btn = self._wix_button()
+        self._wix_btn.clicked.connect(self._on_wix_signin)
+        layout.addWidget(self._wix_btn)
+        wix_tip = QLabel("Opens browser — sign in and you're done.")
         wix_tip.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(wix_tip)
 
-        # API key from Wix account page
-        api_row = QHBoxLayout()
-        self._api_key_input = self._input("Paste API key from account page")
+        # API key fallback (collapsed)
+        self._api_key_widget = QWidget()
+        api_fallback_layout = QVBoxLayout(self._api_key_widget)
+        api_fallback_layout.setContentsMargins(0, 0, 0, 0)
+        self._api_key_input = self._input("API key from account page")
         self._api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._use_key_btn = self._primary_button("Use API key")
+        self._use_key_btn = QPushButton("Use API key")
+        self._use_key_btn.setFlat(True)
+        self._use_key_btn.setStyleSheet("QPushButton { color: #4f8cff; }")
         self._use_key_btn.clicked.connect(self._on_use_api_key)
-        api_row.addWidget(self._api_key_input)
-        api_row.addWidget(self._use_key_btn)
-        layout.addLayout(api_row)
+        api_fallback_layout.addWidget(self._api_key_input)
+        api_fallback_layout.addWidget(self._use_key_btn)
+        self._api_key_widget.hide()
+        api_trouble_lnk = self._link_button("Having trouble? Use API key")
+        api_trouble_lnk.clicked.connect(lambda: self._api_key_widget.setVisible(not self._api_key_widget.isVisible()))
+        layout.addWidget(api_trouble_lnk)
+        layout.addWidget(self._api_key_widget)
 
         layout.addWidget(self._divider("or sign in with email"))
 
@@ -984,14 +997,6 @@ class LoginDialog(QDialog):
         bottom.addWidget(to_register)
         bottom.addStretch()
         layout.addLayout(bottom)
-
-        web_row = QHBoxLayout()
-        web_row.addWidget(QLabel("Prefer the web?"))
-        signin_web_btn = self._link_button("Sign in or create account on the web")
-        signin_web_btn.clicked.connect(self._open_signin_on_web)
-        web_row.addWidget(signin_web_btn)
-        web_row.addStretch()
-        layout.addLayout(web_row)
 
         return page
 
@@ -1073,10 +1078,10 @@ class LoginDialog(QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Wix sign-up (same as login)
-        wix_btn2 = self._wix_button()
-        wix_btn2.clicked.connect(self._on_wix_signin)
-        layout.addWidget(wix_btn2)
+        # SSO (same flow as login)
+        self._wix_btn_reg = self._wix_button()
+        self._wix_btn_reg.clicked.connect(self._on_wix_signin)
+        layout.addWidget(self._wix_btn_reg)
 
         layout.addWidget(self._divider("or create account with email"))
 
@@ -1103,14 +1108,6 @@ class LoginDialog(QDialog):
         bottom.addStretch()
         layout.addLayout(bottom)
 
-        web_row = QHBoxLayout()
-        web_row.addWidget(QLabel("Prefer the web?"))
-        signin_web_btn = self._link_button("Sign in or create account on the web")
-        signin_web_btn.clicked.connect(self._open_signin_on_web)
-        web_row.addWidget(signin_web_btn)
-        web_row.addStretch()
-        layout.addLayout(web_row)
-
         return page
 
     # ── Actions ───────────────────────────────────────────────────────────────
@@ -1130,6 +1127,12 @@ class LoginDialog(QDialog):
             self._google_btn.setEnabled(not busy)
         if self._use_key_btn is not None:
             self._use_key_btn.setEnabled(not busy)
+        if self._wix_btn is not None:
+            self._wix_btn.setEnabled(not busy)
+            self._wix_btn.setText("Signing in…" if busy else "Sign in with livetranslate.net")
+        if self._wix_btn_reg is not None:
+            self._wix_btn_reg.setEnabled(not busy)
+            self._wix_btn_reg.setText("Signing in…" if busy else "Sign in with livetranslate.net")
         self._login_btn.setText("Signing in…" if busy else "Sign In")
         self._reg_btn.setText("Creating account…" if busy else "Create Account — Free")
         if self._google_btn is not None:
@@ -1147,10 +1150,6 @@ class LoginDialog(QDialog):
         assert self._error_label is not None
         self._error_label.setText(message)
         self._error_label.show()        # Show AFTER _set_busy so it stays visible
-
-    def _open_signin_on_web(self) -> None:
-        """Open the official website sign-in page in the default browser."""
-        webbrowser.open(self._settings.get_signin_url())
 
     def _on_auth_success(self, data: dict) -> None:
         access = data.get("access_token")

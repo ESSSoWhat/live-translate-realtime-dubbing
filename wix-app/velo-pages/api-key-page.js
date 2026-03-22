@@ -8,16 +8,17 @@
  * 2. Add a text element with ID "apiKeyText" to display the API key
  * 3. Add a button with ID "copyButton" to copy the key
  * 4. Add a text element with ID "statusText" for status messages
- * 5. Set the page to "Members Only" in page settings
- * 6. Paste this code in the page's code panel
- * 7. Add the backend module (api-key.web.js) to your backend folder
- * 8. Add WIX_SYNC_SECRET to Wix Secrets Manager
+ * 5. Add a Link element with ID "completeSignInLink" (initially hidden) — fallback when redirect is blocked
+ * 6. Set the page to "Members Only" in page settings
+ * 7. Paste this code in the page's code panel (replace any existing code)
+ * 8. Add the backend module (api-key.web.js) to your backend folder
+ * 9. Add WIX_SYNC_SECRET to Wix Secrets Manager
  */
 
 import wixLocationFrontend from 'wix-location-frontend';
 import { currentMember } from 'wix-members-frontend';
 import wixWindowFrontend from 'wix-window-frontend';
-import { getApiKeyForMember } from 'backend/api-key.web';
+import { getApiKeyForMember, syncMemberToBackend } from 'backend/api-key.web';
 
 // Trusted redirect hosts (for security)
 const TRUSTED_HOSTS = [
@@ -29,12 +30,38 @@ const TRUSTED_HOSTS = [
     'www.livetranslate.net',
 ];
 
+function setStatus(msg) {
+    try { $w('#statusText').text = msg; } catch (e) { /* element may not exist */ }
+}
+
+/**
+ * Show the completeSignInLink fallback when redirect may have been blocked.
+ * Call this after attempting wixLocationFrontend.to() or if redirect fails.
+ */
+function showCompleteSignInFallback(finalUrl) {
+    try {
+        const lnk = $w('#completeSignInLink');
+        if (lnk) {
+            lnk.link = finalUrl;
+            lnk.text = 'Click here if the app didn\'t sign in';
+            lnk.show();
+            setStatus('If the app didn\'t open, click the link above.');
+        }
+    } catch (e) { /* Link element may not exist */ }
+}
+
+function showKey(apiKey) {
+    try {
+        $w('#apiKeyText').text = apiKey;
+        $w('#apiKeyText').show();
+        $w('#copyButton').show();
+    } catch (e) { setStatus('API key: ' + apiKey); }
+}
+
 $w.onReady(async function () {
     try {
-        // Show loading state
-        $w('#statusText').text = 'Loading your API key...';
-        $w('#apiKeyText').hide();
-        $w('#copyButton').hide();
+        setStatus('Loading your API key...');
+        try { $w('#apiKeyText').hide(); $w('#copyButton').hide(); } catch (e) { /* ignore */ }
 
         // Store redirect_uri early — Wix login redirect may strip query params when returning
         const query = wixLocationFrontend.query;
@@ -49,17 +76,20 @@ $w.onReady(async function () {
         const member = await currentMember.getMember();
 
         if (!member || !member.loginEmail) {
-            $w('#statusText').text = 'Please log in to view your API key.';
+            setStatus('Please log in to view your API key.');
             return;
         }
 
         const email = member.loginEmail;
 
+        // Sync tier first — auto-provisions user + API key if new
+        await syncMemberToBackend(email);
+
         // Get API key from backend (via web module)
         const result = await getApiKeyForMember(email);
 
         if (!result.success || !result.apiKey) {
-            $w('#statusText').text = result.error || 'Could not retrieve API key. Please try again.';
+            setStatus(result.error || 'Could not retrieve API key. Please try again.');
             return;
         }
 
@@ -68,41 +98,36 @@ $w.onReady(async function () {
         // Check for redirect_uri: in query (direct load) or sessionStorage (returned from login)
         const storedUri = (typeof sessionStorage !== 'undefined') ?
             sessionStorage.getItem('live_translate_redirect_uri') : null;
-        const redirectUri = query.redirect_uri || storedUri;
+        const uriForRedirect = query.redirect_uri || storedUri;
         if (storedUri) {
             try { sessionStorage.removeItem('live_translate_redirect_uri'); } catch (e) { /* ignore */ }
         }
 
-        if (redirectUri && isValidRedirectUri(redirectUri)) {
-            // SSO flow: redirect back to desktop app with API key
-            $w('#statusText').text = 'Signing you in... You can close this tab.';
-
-            // Build redirect URL with api_key parameter
-            const separator = redirectUri.includes('?') ? '&' : '?';
-            const finalUrl = `${redirectUri}${separator}api_key=${encodeURIComponent(apiKey)}`;
-
-            // Small delay so user sees the message
+        if (uriForRedirect && isValidRedirectUri(uriForRedirect)) {
+            const separator = uriForRedirect.includes('?') ? '&' : '?';
+            const finalUrl = `${uriForRedirect}${separator}api_key=${encodeURIComponent(apiKey)}`;
+            setStatus('Signing you in...');
+            // Try automatic redirect first
             setTimeout(() => {
                 wixLocationFrontend.to(finalUrl);
-            }, 500);
+                // Fallback: show completeSignInLink in case redirect is blocked (e.g. popup blockers)
+                setTimeout(() => showCompleteSignInFallback(finalUrl), 1500);
+            }, 300);
             return;
         }
 
-        // Normal flow: display API key on page
-        $w('#apiKeyText').text = apiKey;
-        $w('#apiKeyText').show();
-        $w('#copyButton').show();
-        $w('#statusText').text = 'Copy this API key to use in the Live Translate app:';
-
-        // Setup copy button
-        $w('#copyButton').onClick(() => {
-            wixWindowFrontend.copyToClipboard(apiKey);
-            $w('#statusText').text = 'API key copied to clipboard!';
-        });
+        showKey(apiKey);
+        setStatus('Copy this API key to use in the Live Translate app:');
+        try {
+            $w('#copyButton').onClick(() => {
+                wixWindowFrontend.copyToClipboard(apiKey);
+                setStatus('API key copied!');
+            });
+        } catch (e) { /* ignore */ }
 
     } catch (error) {
         console.error('Error loading API key page:', error);
-        $w('#statusText').text = 'An error occurred. Please refresh the page.';
+        setStatus('An error occurred. Please refresh the page.');
     }
 });
 

@@ -16,6 +16,7 @@
 - **Tier sync:** `POST /api/v1/billing/wix/sync`
   - **Auth:** Header `X-Wix-Sync-Secret: <WIX_SYNC_SECRET>` or `Authorization: Bearer <WIX_SYNC_SECRET>`
   - **Body (JSON):** `email` (required), `plan_id`, `plan_name`, `status` (optional)
+  - **Auto-provision:** If user does not exist, creates user with API key. If user exists without API key, assigns one. API key is thus automatically assigned when Wix sync runs (e.g. on account page load).
 - **API key (for desktop/mobile):** `POST /api/v1/auth/api-key`
   - **Auth:** Same as above (`X-Wix-Sync-Secret` or `Authorization: Bearer <secret>`)
   - **Body (JSON):** `email` (required)

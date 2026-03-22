@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
 import structlog  # pylint: disable=import-error
 import stripe  # pylint: disable=import-error
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status  # pylint: disable=import-error
@@ -374,31 +375,55 @@ async def wix_sync(body: WixSyncRequest, request: Request) -> dict:
         subscription_status = "active" if tier != "free" else "canceled"
 
     try:
-        existing = await sb.table("users").select("id", "tier").eq("email", body.email).limit(1).execute()
-    except PostgrestAPIError as e:
-        # 204 means no rows found - treat as user not found
-        if e.code == "204" or "Missing response" in str(e):
-            logger.warning("Wix sync: no user found for email", email=body.email)
-            return {"received": True, "updated": False, "reason": "user_not_found"}
-        logger.error("Wix sync: database query failed", email=body.email, error=str(e))
-        raise HTTPException(status_code=500, detail="Database error")
-    except Exception as e:
-        logger.error("Wix sync: database query failed", email=body.email, error=str(e))
-        raise HTTPException(status_code=500, detail="Database error")
+        existing = await sb.table("users").select("id", "tier", "api_key").eq("email", body.email).limit(1).execute()
+    except (PostgrestAPIError, Exception) as e:
+        if isinstance(e, PostgrestAPIError) and (e.code == "204" or "Missing response" in str(e)):
+            existing_data = []
+        else:
+            logger.error("Wix sync: database query failed", email=body.email, error=str(e))
+            raise HTTPException(status_code=500, detail="Database error") from e
+    else:
+        existing_data = existing.data or []
 
-    if not existing.data or len(existing.data) == 0:
-        logger.warning("Wix sync: no user found for email", email=body.email)
-        return {"received": True, "updated": False, "reason": "user_not_found"}
+    if not existing_data:
+        # Auto-provision: create user with API key so app access is ready
+        api_key = secrets.token_urlsafe(32)
+        try:
+            ins = await sb.table("users").insert({
+                "email": body.email,
+                "tier": tier,
+                "subscription_status": subscription_status,
+                "api_key": api_key,
+            }).execute()
+        except Exception as e:
+            logger.error("Wix sync: insert failed", email=body.email, error=str(e))
+            raise HTTPException(status_code=500, detail="Database error")
+        if ins.data and len(ins.data) > 0:
+            row = ins.data[0] if isinstance(ins.data, list) else ins.data
+            user_id = row["id"]
+            logger.info("Wix sync: user created with API key", user_id=str(user_id), email=body.email, tier=tier)
+            return {"received": True, "updated": True, "tier": tier, "user_created": True}
+        raise HTTPException(status_code=500, detail="Failed to create user")
 
-    user_id = existing.data[0]["id"]
-    current_tier = (existing.data[0].get("tier") or "free").strip().lower()
+    user_id = existing_data[0]["id"]
+    current_tier = (existing_data[0].get("tier") or "free").strip().lower()
     new_tier = _max_tier(current_tier, tier)
+    has_api_key = bool(existing_data[0].get("api_key"))
 
-    await sb.table("users").update({
-        "tier": new_tier,
-        "subscription_status": subscription_status,
-    }).eq("id", user_id).execute()
-    logger.info("Wix sync: tier updated", user_id=user_id, email=body.email, tier=new_tier)
+    if not has_api_key:
+        api_key = secrets.token_urlsafe(32)
+        await sb.table("users").update({
+            "api_key": api_key,
+            "tier": new_tier,
+            "subscription_status": subscription_status,
+        }).eq("id", user_id).execute()
+        logger.info("Wix sync: API key assigned, tier updated", user_id=user_id, email=body.email, tier=new_tier)
+    else:
+        await sb.table("users").update({
+            "tier": new_tier,
+            "subscription_status": subscription_status,
+        }).eq("id", user_id).execute()
+        logger.info("Wix sync: tier updated", user_id=user_id, email=body.email, tier=new_tier)
     return {"received": True, "updated": True, "tier": new_tier}
 
 

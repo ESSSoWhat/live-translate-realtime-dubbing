@@ -90,13 +90,19 @@ _CAPTURE_HTML = """\
   var apiKey = new URLSearchParams(window.location.search).get('api_key');
 
   if (apiKey) {
-    document.getElementById('card').className    = 'card success';
-    document.getElementById('title').textContent = 'Signed in!';
-    document.getElementById('sub').textContent   = 'You can close this tab and return to Live Translate.';
+    document.getElementById('sub').textContent = 'Completing sign-in…';
     fetch('/finish', {
       method:  'POST',
       headers: {'Content-Type': 'application/json'},
       body:    JSON.stringify({api_key: apiKey})
+    }).then(function(r) {
+      document.getElementById('card').className    = 'card success';
+      document.getElementById('title').textContent = 'Signed in!';
+      document.getElementById('sub').textContent   = 'You can close this tab and return to Live Translate.';
+    }).catch(function() {
+      document.getElementById('card').className = 'card error';
+      document.getElementById('title').textContent = 'Sign-in failed';
+      document.getElementById('sub').textContent = 'Could not contact app. Please try again.';
     });
     return;
   }
@@ -187,7 +193,10 @@ class OAuthCallbackServer:
 
     @property
     def redirect_uri(self) -> str:
-        """Return the full callback URL to pass as the OAuth redirect_uri."""
+        """Return the full callback URL to pass as the OAuth redirect_uri.
+
+        Uses trailing slash for consistency with OAuth conventions.
+        """
         return f"http://localhost:{self._port}/"
 
     def start(self) -> int:

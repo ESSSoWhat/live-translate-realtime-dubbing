@@ -235,24 +235,24 @@ class AppSettings(BaseModel):
         return f"{self.get_website_url()}{path}"
 
     def get_wix_sso_entry_url(self, redirect_uri: str) -> str:
-        """Return URL to open for Wix SSO: livetranslate.net login, then api-key callback.
+        """Return URL to open for Wix SSO. Uses /app-auth by default to preserve redirect_uri.
 
-        Uses /login?returnUrl=... to land on livetranslate.net login first. Set
-        LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN=false to open /api-key directly (Wix Members Only
-        will redirect to login when unauthenticated).
+        - /app-auth (public): loads first, redirects to /api-key?redirect_uri=... so the param
+          survives the Wix login redirect. Set LIVE_TRANSLATE_WIX_APP_AUTH_PATH="" to skip.
+        - /api-key (Members Only): gets API key and redirects back to the desktop app.
         """
         import urllib.parse
 
-        use_login = os.environ.get("LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN", "false").lower() in ("1", "true", "yes")
+        base = self.get_website_url()
         api_key_path = os.environ.get("LIVE_TRANSLATE_WIX_API_KEY_PATH", "/api-key").strip()
         if not api_key_path.startswith("/"):
             api_key_path = "/" + api_key_path
-        base = self.get_website_url()
+        # Use /app-auth by default (preserves redirect_uri through login). Set to "" to use /api-key directly.
+        app_auth_path = os.environ.get("LIVE_TRANSLATE_WIX_APP_AUTH_PATH", "/app-auth").strip()
 
-        if use_login:
-            api_key_full = f"{api_key_path}?redirect_uri={urllib.parse.quote(redirect_uri, safe='')}"
-            return_url = urllib.parse.quote(api_key_full, safe="")
-            return f"{base}/login?returnUrl={return_url}"
+        if app_auth_path.startswith("/"):
+            sso_params = urllib.parse.urlencode({"redirect_uri": redirect_uri})
+            return f"{base}{app_auth_path}?{sso_params}"
         sso_params = urllib.parse.urlencode({"redirect_uri": redirect_uri})
         return f"{base}{api_key_path}?{sso_params}"
 
