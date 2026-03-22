@@ -15,30 +15,57 @@
 
 import { Permissions, webMethod } from 'wix-web-module';
 import { getSecret } from 'wix-secrets-backend';
+import { orders } from 'wix-pricing-plans.v2';
 
 // Base URL of backend (POST /api/v1/billing/wix/sync, POST /api/v1/auth/api-key)
 const BACKEND_URL = 'https://api.livetranslate.app';
 
 /**
- * Sync member tier to backend; creates user + API key if new (call early on account load).
+ * Get current member's active subscription plan from Wix Pricing Plans.
+ * @returns {{ planId: string|null, planName: string|null, status: string|null }}
+ */
+async function getMemberPlan() {
+    try {
+        const list = await orders.memberListOrders();
+        const ordersList = list?.orders || [];
+        const active = ordersList.find(o => o.status === 'ACTIVE') || ordersList[0];
+        return {
+            planId: active?.planId ?? null,
+            planName: active?.planName ?? null,
+            status: active?.status ?? null,
+        };
+    } catch (e) {
+        console.warn('Could not fetch member plan:', e);
+        return { planId: null, planName: null, status: null };
+    }
+}
+
+/**
+ * Sync member tier to backend using website subscription level.
+ * Fetches member's Wix Pricing Plan and syncs to backend so app uses correct usage package.
+ * Creates user + API key if new (call early on account load).
  * @param {string} email - Member's email
- * @param {string} [planId] - Wix plan ID if known
- * @param {string} [planName] - Wix plan name if known
  * @returns {Promise<{received: boolean, updated?: boolean, tier?: string}>}
  */
 export const syncMemberToBackend = webMethod(
     Permissions.SiteMember,
-    async (email, planId, planName) => {
+    async (email) => {
         try {
             const secret = await getSecret('WIX_SYNC_SECRET');
             if (!secret) return { received: false };
+            const { planId, planName, status } = await getMemberPlan();
             const res = await fetch(`${BACKEND_URL}/api/v1/billing/wix/sync`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Wix-Sync-Secret': secret,
                 },
-                body: JSON.stringify({ email, plan_id: planId || '', plan_name: planName || '' }),
+                body: JSON.stringify({
+                    email,
+                    plan_id: planId || undefined,
+                    plan_name: planName || undefined,
+                    status: status || undefined,
+                }),
             });
             if (!res.ok) return { received: false };
             return await res.json();

@@ -31,8 +31,10 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSplitter,
+    QStackedWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -177,8 +179,20 @@ class MainWindow(QMainWindow):
         """Set up the user interface."""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
+        root_layout = QVBoxLayout(central_widget)
+        root_layout.setSpacing(0)
+        root_layout.setContentsMargins(0, 0, 0, 0)
 
-        main_layout = QVBoxLayout(central_widget)
+        # Scrollable content
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        scroll_content = QWidget()
+        main_layout = QVBoxLayout(scroll_content)
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(10, 10, 10, 10)
 
@@ -223,17 +237,24 @@ class MainWindow(QMainWindow):
         device_group = QGroupBox("Audio Devices")
         device_row = QHBoxLayout(device_group)
 
-        # Capture mode selector
+        # Capture mode selector (first item updated in _on_app_initialized)
         device_row.addWidget(QLabel("Capture:"))
         self._capture_mode_combo = QComboBox()
-        self._capture_mode_combo.addItem("System Audio (all audio, no setup)", "system")
-        self._capture_mode_combo.addItem("VB-Cable (per-app, requires setup)", "vbcable")
-        self._capture_mode_combo.setCurrentIndex(0)  # Default to system audio
-        self._capture_mode_combo.setMinimumWidth(240)
+        self._capture_mode_combo.addItem(
+            "Selected app only (VB-Cable)",
+            "vbcable",
+        )
+        self._capture_mode_combo.addItem(
+            "All system audio",
+            "system",
+        )
+        self._capture_mode_combo.setCurrentIndex(1)  # Default system; updated in _on_app_initialized
+        self._capture_mode_combo.setMinimumWidth(220)
         self._capture_mode_combo.setMaxVisibleItems(5)
         self._capture_mode_combo.setToolTip(
-            "System Audio captures all system sound.\n"
-            "VB-Cable routes per-app audio (requires VB-Cable installed)."
+            "Selected app only: Captures only the selected app's audio. "
+            "On Windows 10 21H2+ no setup required; older Windows need VB-Cable.\n"
+            "All system audio: Captures everything (browser, games, notifications, etc.)."
         )
         device_row.addWidget(self._capture_mode_combo)
 
@@ -274,7 +295,6 @@ class MainWindow(QMainWindow):
         device_row.addWidget(self._volume_label)
 
         device_row.addStretch()
-        main_layout.addWidget(device_group)
 
         # Middle section: Controls and status
         control_group = QGroupBox("Controls")
@@ -559,19 +579,37 @@ class MainWindow(QMainWindow):
         self._audio_meter = AudioMeter("Input Level")
         control_layout.addWidget(self._audio_meter)
 
-        main_layout.addWidget(control_group)
-
-        # Mic Translate section (embedded in main UI, detachable)
-        self._mic_group = QGroupBox("Mic Translate")
-        mic_header = QHBoxLayout()
-        mic_header.addStretch()
-        self._mic_detach_btn = QPushButton("Detach")
+        # Translation source: App Audio | Microphone (integrated)
+        source_row = QHBoxLayout()
+        source_row.addWidget(QLabel("Source:"))
+        self._source_combo = QComboBox()
+        self._source_combo.addItem("App Audio", "app")
+        self._source_combo.addItem("Microphone", "mic")
+        self._source_combo.setMinimumWidth(140)
+        self._source_combo.setToolTip(
+            "App Audio: translate audio from the selected app.\n"
+            "Microphone: speak into your mic, output to virtual cable (Discord, Zoom, etc.)."
+        )
+        self._source_combo.currentIndexChanged.connect(self._on_source_changed)
+        source_row.addWidget(self._source_combo)
+        source_row.addStretch()
+        self._mic_detach_btn = QPushButton("Detach Mic")
         self._mic_detach_btn.setToolTip("Open Mic Translate in a separate dock window")
-        self._mic_detach_btn.setFixedWidth(70)
+        self._mic_detach_btn.setFixedWidth(80)
         self._mic_detach_btn.clicked.connect(self._on_mic_detach_clicked)
-        mic_header.addWidget(self._mic_detach_btn)
-        self._mic_layout = QVBoxLayout(self._mic_group)
-        self._mic_layout.addLayout(mic_header)
+        self._mic_detach_btn.setVisible(False)  # shown when Mic source selected
+        source_row.addWidget(self._mic_detach_btn)
+        main_layout.addLayout(source_row)
+
+        # Stacked content: App Audio (device+controls) | Microphone (mic translate)
+        self._translation_stack = QStackedWidget()
+        app_page = QWidget()
+        app_page_layout = QVBoxLayout(app_page)
+        app_page_layout.setContentsMargins(0, 0, 0, 0)
+        app_page_layout.addWidget(device_group)
+        app_page_layout.addWidget(control_group)
+        self._translation_stack.addWidget(app_page)
+
         self._mic_translate_widget = MicTranslateWidget(
             mic_translator=self._mic_translator,
             orchestrator=self._orchestrator,
@@ -580,11 +618,11 @@ class MainWindow(QMainWindow):
             async_worker=self._async_worker,
             parent=self,
         )
-        self._mic_layout.addWidget(self._mic_translate_widget)
+        self._translation_stack.addWidget(self._mic_translate_widget)
         self._mic_dock: QDockWidget | None = None
-        self._mic_placeholder: QWidget | None = None  # shown when detached
-        self._mic_reattaching = False  # re-entrancy guard for dock close/reattach
-        main_layout.addWidget(self._mic_group)
+        self._mic_placeholder: QWidget | None = None
+        self._mic_reattaching = False
+        main_layout.addWidget(self._translation_stack)
 
         # Bottom section: Live output
         output_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -667,9 +705,22 @@ class MainWindow(QMainWindow):
         self._usage_meter.upgrade_requested.connect(self._on_upgrade_requested)
         main_layout.addWidget(self._usage_meter)
 
-        # Status bar
+        scroll_area.setWidget(scroll_content)
+        root_layout.addWidget(scroll_area, 1)
+
+        # Status bar (fixed at bottom)
         self._status_bar = StatusBar()
-        main_layout.addWidget(self._status_bar)
+        root_layout.addWidget(self._status_bar)
+
+    def _on_source_changed(self, index: int) -> None:
+        """Switch between App Audio and Microphone translation source."""
+        self._translation_stack.setCurrentIndex(index)
+        self._mic_detach_btn.setVisible(index == 1)
+        # Stop the other mode when switching
+        if index == 0 and self._mic_translator.is_running and self._async_worker:
+            self._async_worker.run_coroutine(self._mic_translator.stop())
+        elif index == 1 and self._is_running:
+            self._on_stop_clicked()
 
     def _connect_events(self) -> None:
         """Connect to event bus events."""
@@ -839,24 +890,19 @@ class MainWindow(QMainWindow):
                 | Qt.DockWidgetArea.RightDockWidgetArea
             )
             self._mic_dock.setMinimumSize(360, 420)
-            # Re-attach when user closes the dock
             self._mic_dock.visibilityChanged.connect(self._on_mic_dock_visibility_changed)
-        # Reparent widget from main layout to dock
-        self._mic_layout.removeWidget(self._mic_translate_widget)
+        self._translation_stack.removeWidget(self._mic_translate_widget)
         self._mic_dock.setWidget(self._mic_translate_widget)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._mic_dock)
         self._mic_dock.show()
-        # Placeholder with Re-attach button
         self._mic_placeholder = QWidget()
         place_layout = QVBoxLayout(self._mic_placeholder)
-        place_layout.addWidget(
-            QLabel("Mic Translate is in a separate window.")
-        )
+        place_layout.addWidget(QLabel("Mic Translate is in a separate window."))
         reattach_btn = QPushButton("Re-attach")
         reattach_btn.setToolTip("Move Mic Translate back into the main window")
         reattach_btn.clicked.connect(self._on_mic_reattach_clicked)
         place_layout.addWidget(reattach_btn)
-        self._mic_layout.addWidget(self._mic_placeholder)
+        self._translation_stack.addWidget(self._mic_placeholder)
         self._mic_detach_btn.setEnabled(False)
 
     def _on_mic_dock_visibility_changed(self, visible: bool) -> None:
@@ -883,10 +929,10 @@ class MainWindow(QMainWindow):
             widget = self._mic_dock.widget()
             if widget is not None:
                 self._mic_dock.setWidget(None)
-                self._mic_layout.removeWidget(self._mic_placeholder)
+                self._translation_stack.removeWidget(self._mic_placeholder)
                 self._mic_placeholder.deleteLater()
                 self._mic_placeholder = None
-                self._mic_layout.addWidget(widget)
+                self._translation_stack.insertWidget(1, widget)
             self._mic_dock.hide()
             self.removeDockWidget(self._mic_dock)
             self._mic_detach_btn.setEnabled(True)
@@ -1059,7 +1105,10 @@ class MainWindow(QMainWindow):
 
         capture_mode = self._capture_mode_combo.currentData()
 
-        if capture_mode == "vbcable":
+        if capture_mode == "process_loopback":
+            # Native per-app capture: start directly, no setup
+            self._start_translation(session, use_fallback=False)
+        elif capture_mode == "vbcable":
             # VB-Cable mode: check installation, show routing instructions
             if not self._orchestrator.is_vb_cable_installed:
                 self._show_vb_cable_wizard(session)
@@ -1099,11 +1148,14 @@ class MainWindow(QMainWindow):
         """Show routing dialog when VB-Cable is already installed."""
         result = QMessageBox.information(
             self,
-            "Configure Audio Routing",
-            f"Route '{session.name}' audio to VB-Cable:\n\n"
-            "1. Click 'Open Sound Settings' below\n"
-            "2. Find your app and change Output to 'CABLE Input'\n\n"
-            "Click OK when done, or Cancel to use System Audio instead.",
+            "Isolate Selected App Audio",
+            f"Route only '{session.name}' to VB-Cable for isolation:\n\n"
+            "1. Open Sound settings (right-click speaker icon)\n"
+            "2. App volume → find '{0}' → set Output to 'CABLE Input'\n\n"
+            "Only this app's audio will be captured. Other apps play normally.\n\n"
+            "Click OK when done, or Cancel to capture all system audio instead.".format(
+                session.name,
+            ),
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
         )
 
@@ -1214,6 +1266,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot(object)
     def _on_app_initialized(self, event: Event) -> None:
         """Handle app initialized event."""
+        self._update_capture_mode_combo()
         self._refresh_sessions()
         self._status_bar.set_app_state(AppState.READY)
 
@@ -1224,6 +1277,22 @@ class MainWindow(QMainWindow):
         )
         self._api_banner.setVisible(not has_key)
         self._status_bar.set_api_status(has_key)
+
+    def _update_capture_mode_combo(self) -> None:
+        """Update capture mode combo based on process loopback support."""
+        if not self._orchestrator:
+            return
+        plb = self._orchestrator.is_process_loopback_supported
+        vb_ready = self._orchestrator.is_vb_cable_installed
+        self._capture_mode_combo.blockSignals(True)
+        if plb:
+            self._capture_mode_combo.setItemText(0, "Selected app only")
+            self._capture_mode_combo.setItemData(0, "process_loopback")
+        else:
+            self._capture_mode_combo.setItemText(0, "Selected app only (VB-Cable)")
+            self._capture_mode_combo.setItemData(0, "vbcable")
+        self._capture_mode_combo.setCurrentIndex(0 if (plb or vb_ready) else 1)
+        self._capture_mode_combo.blockSignals(False)
 
     @pyqtSlot(object)
     def _on_audio_level(self, event: Event) -> None:

@@ -78,5 +78,6 @@ class ApplicationStateSnapshot:
     translation_config: TranslationConfig | None = None
     pipeline_stats: PipelineStats = field(default_factory=PipelineStats)
     vb_cable_installed: bool = False
+    process_loopback_supported: bool = False
     api_key_configured: bool = False
     error_message: str | None = None

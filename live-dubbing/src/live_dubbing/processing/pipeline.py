@@ -244,8 +244,8 @@ class ProcessingPipeline:
         self._event_bus = event_bus
         self._config = config or PipelineConfig()
 
-        # Initialize components (lower threshold = more sensitive speech detection)
-        self._vad = SileroVAD(threshold=0.08, min_silence_duration_ms=300)
+        # Initialize components (lower threshold = more sensitive, captures quieter speech)
+        self._vad = SileroVAD(threshold=0.05, min_silence_duration_ms=250)
         self._voice_manager: VoiceCloneManager | None = None
         if elevenlabs_service:
             # Create persistent voice store
@@ -264,9 +264,9 @@ class ProcessingPipeline:
         self._voice_capture_start_time: float = 0.0
         self._is_cloning_in_background = False
 
-        # Async queues
-        self._vad_queue: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=50)
-        self._stt_queue: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=20)
+        # Async queues (larger to reduce drops when pipeline is briefly slow)
+        self._vad_queue: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=100)
+        self._stt_queue: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=30)
         self._tts_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=20)
         self._output_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=50)
 
@@ -283,14 +283,14 @@ class ProcessingPipeline:
         # Speech buffer for STT
         self._speech_buffer: list[np.ndarray] = []
         self._speech_buffer_duration_sec = 0.0
-        self._min_stt_duration_sec = 1.5  # Minimum speech duration for STT (need enough for meaningful translation)
-        self._max_speech_buffer_sec = 10.0  # Flush to STT after this even without silence
+        self._min_stt_duration_sec = 0.5  # Minimum speech duration for STT
+        self._max_speech_buffer_sec = 8.0  # Flush to STT after this even without silence
         self._processing_start_time: float = 0.0
         self._last_stt_flush_time: float = 0.0
 
         # Silence tracking — bridge short pauses so we capture full sentences
         self._silence_count = 0  # consecutive silence chunks
-        self._silence_flush_threshold = 8  # flush after this many silence chunks (~800ms at 100ms chunks)
+        self._silence_flush_threshold = 5  # flush after ~500ms silence
 
         # Output suppression — prevent feedback loop when dubbed audio plays back
         # through the same device being captured (system loopback mode)
@@ -1068,8 +1068,8 @@ class ProcessingPipeline:
                 # to prevent feedback loop (dubbed audio being re-captured)
                 # float32 at 24kHz = 4 bytes per sample
                 playback_duration_sec = len(audio_bytes) / (4 * 24000)
-                # Add a small margin (0.3s) to account for buffering latency
-                self._output_suppress_until = time.time() + playback_duration_sec + 0.3
+                # Add a small margin (0.2s) to account for buffering latency
+                self._output_suppress_until = time.time() + playback_duration_sec + 0.2
 
                 # Deliver to callback
                 if self._on_output:

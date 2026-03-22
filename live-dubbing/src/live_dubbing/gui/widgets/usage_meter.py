@@ -161,9 +161,15 @@ class UsageMeterWidget(QFrame):
             self._fetcher = None
 
     def _on_fetcher_failed(self) -> None:
-        """On fetch failure keep previous data; show message if we have none."""
+        """On fetch failure keep previous data; use free-tier defaults if none."""
         if not self._usage:
-            self._usage_label.setText("Could not load usage")
+            self._usage = {
+                "tier": "free",
+                "dubbing_seconds_used": 0,
+                "dubbing_seconds_limit": 1800,
+            }
+            self.set_tier("free")
+            self._update_display()
 
     def _on_usage_fetched(self, data: dict) -> None:
         self._usage = data

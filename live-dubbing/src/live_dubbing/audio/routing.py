@@ -15,6 +15,7 @@ class CaptureMode(Enum):
     """Audio capture mode."""
 
     VB_CABLE = "vb_cable"  # Per-app capture via VB-Cable
+    PROCESS_LOOPBACK = "process_loopback"  # Per-app capture via Windows API (no VB-Cable)
     SYSTEM_LOOPBACK = "system_loopback"  # Capture all system audio
     NONE = "none"  # No capture configured
 
@@ -66,6 +67,7 @@ class VirtualAudioRouter:
     def __init__(self) -> None:
         self._virtual_devices: list[VirtualDevice] = []
         self._capture_device_id: str | None = None
+        self._target_pid: int | None = None
         self._routing_active = False
         self._capture_mode: CaptureMode = CaptureMode.NONE
         self._default_output_device_id: str | None = None
@@ -226,12 +228,59 @@ class VirtualAudioRouter:
             instructions=instructions,
         )
 
+    def configure_process_loopback(self, pid: int) -> RoutingConfig:
+        """
+        Configure native per-process loopback capture (Windows 10 21H2+).
+
+        No VB-Cable or manual routing required.
+
+        Args:
+            pid: Target process ID to capture
+
+        Returns:
+            RoutingConfig for process loopback mode
+        """
+        from live_dubbing.audio.process_loopback import is_process_loopback_supported
+
+        if not is_process_loopback_supported():
+            raise RuntimeError(
+                "Process loopback requires Windows 10 21H2 (build 20348) or Windows 11."
+            )
+
+        self._capture_mode = CaptureMode.PROCESS_LOOPBACK
+        self._target_pid = pid
+        self._capture_device_id = None
+        self._routing_active = True
+
+        logger.info(
+            "Configured process loopback capture",
+            pid=pid,
+            mode=self._capture_mode.value,
+        )
+
+        return RoutingConfig(
+            virtual_device=None,
+            capture_mode=CaptureMode.PROCESS_LOOPBACK,
+            requires_user_action=False,
+            instructions="Process loopback capture active. No setup required.",
+        )
+
+    def is_process_loopback_supported(self) -> bool:
+        """Check if native process loopback is supported on this system."""
+        from live_dubbing.audio.process_loopback import is_process_loopback_supported
+
+        return is_process_loopback_supported()
+
+    def get_target_pid(self) -> int | None:
+        """Get target process ID for process loopback mode."""
+        return self._target_pid
+
     def _generate_routing_instructions(
         self, pid: int, vb_cable: VirtualDevice
     ) -> str:
         """Generate user instructions for audio routing."""
         return """
-To capture audio from the selected application:
+To isolate and capture ONLY the selected app's audio:
 
 1. Right-click the speaker icon in the Windows taskbar
 2. Select "Open Sound settings"
@@ -239,22 +288,18 @@ To capture audio from the selected application:
 4. Find the target application in the list
 5. Change its "Output" dropdown to "CABLE Input (VB-Audio Virtual Cable)"
 
-Alternatively:
-1. Open Windows Settings > System > Sound
-2. Click "Volume mixer" under Advanced
-3. Find the app and change its output device
-
-The app will now route its audio through VB-Cable for translation.
-Your other applications will continue playing normally.
+Only that app's audio will be captured for translation.
+Other applications continue playing to your normal speakers.
 """
 
     async def restore_original_routing(self, pid: int) -> None:
         """
         Restore original audio routing for an application.
 
-        Note: User must manually restore in Windows settings.
+        Note: User must manually restore in Windows settings for VB-Cable mode.
         """
         self._routing_active = False
+        self._target_pid = None
         logger.info("Routing deactivated", pid=pid)
 
     def get_capture_device_id(self) -> str | None:
@@ -413,7 +458,9 @@ Your other applications will continue playing normally.
         return {
             "vb_cable_installed": vb_cable is not None,
             "vb_cable_ready": vb_cable is not None and vb_cable.output_id is not None,
+            "process_loopback_supported": self.is_process_loopback_supported(),
             "capture_mode": self._capture_mode.value,
             "capture_device_id": self._capture_device_id,
+            "target_pid": self._target_pid,
             "routing_active": self._routing_active,
         }

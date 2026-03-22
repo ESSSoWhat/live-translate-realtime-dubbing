@@ -116,6 +116,7 @@ class WixSyncRequest(BaseModel):
     plan_id: str | None = None
     plan_name: str | None = None
     status: str | None = None  # e.g. ACTIVE, CANCELED
+    tier: str | None = None  # Optional: website can send tier directly when already resolved
 
 
 class ApiKeyRequest(BaseModel):

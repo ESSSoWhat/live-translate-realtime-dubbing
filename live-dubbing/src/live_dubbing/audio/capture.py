@@ -50,7 +50,8 @@ class AudioCapture:
         # State
         self._is_capturing = threading.Event()
         self._capture_thread: threading.Thread | None = None
-        self._audio_queue: queue.Queue = queue.Queue(maxsize=100)
+        self._capture_pid: int | None = None  # Process loopback mode
+        self._audio_queue: queue.Queue = queue.Queue(maxsize=200)
         self._callback: AudioCallback | None = None
         self._device_index: int | None = None
         self._consumer_task: asyncio.Task | None = None
@@ -62,13 +63,15 @@ class AudioCapture:
     async def start(
         self,
         device_id: str | None = None,
+        pid: int | None = None,
         on_audio_chunk: AudioCallback | None = None,
     ) -> None:
         """
         Start audio capture.
 
         Args:
-            device_id: Device ID/index to capture from (None for default)
+            device_id: Device ID/index to capture from (None for default/process loopback)
+            pid: Process ID for process loopback capture (overrides device_id when set)
             on_audio_chunk: Async callback for each audio chunk
         """
         if self._is_capturing.is_set():
@@ -77,22 +80,42 @@ class AudioCapture:
 
         self._callback = on_audio_chunk
         self._device_index = int(device_id) if device_id else None
+        self._capture_pid = pid
 
         logger.info(
             "Starting audio capture",
             device=device_id,
+            pid=pid,
             sample_rate=self._sample_rate,
             chunk_ms=self._chunk_size_ms,
         )
 
         self._is_capturing.set()
 
-        # Start capture in separate thread
-        self._capture_thread = threading.Thread(
-            target=self._capture_loop,
-            daemon=True,
-        )
-        self._capture_thread.start()
+        if pid is not None:
+            from live_dubbing.audio.process_loopback import (
+                is_process_loopback_supported,
+                run_process_loopback_capture,
+            )
+
+            if is_process_loopback_supported():
+                run_process_loopback_capture(
+                    pid=pid,
+                    sample_rate=self._sample_rate,
+                    chunk_size_ms=self._chunk_size_ms,
+                    audio_queue=self._audio_queue,
+                    is_capturing=self._is_capturing,
+                )
+            else:
+                raise RuntimeError(
+                    "Process loopback requires Windows 10 21H2+ (build 20348)."
+                )
+        else:
+            self._capture_thread = threading.Thread(
+                target=self._capture_loop,
+                daemon=True,
+            )
+            self._capture_thread.start()
 
         # Start async consumer (keep reference to prevent garbage collection)
         self._consumer_task = asyncio.create_task(self._consume_audio())
@@ -110,10 +133,11 @@ class AudioCapture:
             self._consumer_task.cancel()
             self._consumer_task = None
 
-        # Wait for capture thread to finish
+        # Wait for capture thread to finish (device-based only; process loopback uses daemon)
         if self._capture_thread:
             self._capture_thread.join(timeout=2.0)
             self._capture_thread = None
+        self._capture_pid = None
 
         # Clear queue
         while not self._audio_queue.empty():
@@ -155,13 +179,15 @@ class AudioCapture:
             )
 
             # Open stream (self._pa asserted above)
+            # Use 2x chunk for frames_per_buffer to reduce overflow drops under load
+            chunk_frames = int(device_sample_rate * self._chunk_size_ms / 1000)
             self._stream = self._pa.open(
                 format=pyaudio.paFloat32,
                 channels=device_channels,
                 rate=device_sample_rate,
                 input=True,
                 input_device_index=device_info.get("index"),
-                frames_per_buffer=int(device_sample_rate * self._chunk_size_ms / 1000),
+                frames_per_buffer=chunk_frames * 2,
             )
 
             logger.info(

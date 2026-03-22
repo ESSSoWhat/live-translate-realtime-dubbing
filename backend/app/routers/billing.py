@@ -365,11 +365,14 @@ async def wix_sync(body: WixSyncRequest, request: Request) -> dict:
     _verify_wix_sync_secret(request)
     sb = await get_supabase()
 
-    # Resolve tier: explicit canceled/inactive -> free; else map plan_id/plan_name to tier
+    # Resolve tier: explicit canceled/inactive -> free; else use tier from body or map plan_id/plan_name
     status_val = (body.status or "").strip().upper()
     if status_val in ("CANCELED", "CANCELLED", "EXPIRED", "INACTIVE"):
         tier = "free"
         subscription_status = "canceled"
+    elif body.tier and (body.tier.strip().lower() in ("free", "starter", "pro", "early_adopters")):
+        tier = body.tier.strip().lower()
+        subscription_status = "active" if tier != "free" else "canceled"
     else:
         tier = _wix_plan_to_tier(body.plan_id, body.plan_name)
         subscription_status = "active" if tier != "free" else "canceled"
