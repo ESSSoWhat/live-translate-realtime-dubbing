@@ -488,6 +488,7 @@ class ElevenLabsService:
                     voice_id=voice_id,
                     model_id=model_id,
                     voice_settings=vs,
+                    output_format="mp3_44100_128",
                     request_options={"timeout_in_seconds": 30},
                 )
 

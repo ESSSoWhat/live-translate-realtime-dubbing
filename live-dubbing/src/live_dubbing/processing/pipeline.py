@@ -4,6 +4,7 @@ Async processing pipeline for real-time translation.
 
 import asyncio
 import io
+import re
 import time
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -28,16 +29,30 @@ logger = structlog.get_logger(__name__)
 def _tts_error_message(exc: BaseException, short: bool = False) -> str:
     """Turn TTS API exception into a short user-facing message (no headers dump)."""
     s = str(exc)
-    # Many HTTP clients expose .response.status_code
+    # Extract status code from exception or any wrapped cause
     status_code: int | None = None
-    try:
-        resp = getattr(exc, "response", None)
-        if resp is not None:
-            status_code = getattr(resp, "status_code", None)
-    except Exception:
-        pass
+    to_check: list[BaseException] = [exc]
+    if exc.__cause__:
+        to_check.append(exc.__cause__)
+    if exc.__context__:
+        to_check.append(exc.__context__)
+    for e in to_check:
+        try:
+            resp = getattr(e, "response", None)
+            if resp is not None:
+                status_code = getattr(resp, "status_code", None)
+                if status_code is not None:
+                    break
+        except Exception:
+            pass
+        status_code = getattr(e, "status_code", None)
+        if status_code is not None:
+            break
+    # Fallback: parse "401", "status code 401", "402 Unauthorized", etc. from message
     if status_code is None:
-        status_code = getattr(exc, "status_code", None)
+        for match in re.finditer(r"(?:status\s*code\s*|HTTP\s+)(\d{3})|\b(401|402|429|500)\b", s, re.I):
+            status_code = int(match.group(1) or match.group(2))
+            break
     if status_code is not None:
         msg = {
             401: "Invalid API key or not signed in",
