@@ -261,52 +261,47 @@ Only that app's audio will be captured. Other apps play to normal speakers.
 
             pa = pyaudio.PyAudio()
 
-            # Step 1 – identify the default WASAPI output device name
-            default_output_name: str | None = None
+            # Step 1 – identify the default WASAPI output device
+            default_speakers = None
             try:
                 wasapi_info = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
                 default_out_idx = wasapi_info.get("defaultOutputDevice")
                 if default_out_idx is not None:
-                    default_out = pa.get_device_info_by_index(int(default_out_idx))
-                    default_output_name = default_out.get("name", "")
+                    default_speakers = pa.get_device_info_by_index(int(default_out_idx))
                     logger.info(
                         "Default WASAPI output device",
-                        name=default_output_name,
+                        name=default_speakers.get("name"),
                         index=default_out_idx,
                     )
             except Exception as exc:
                 logger.warning("Could not determine default WASAPI output", error=str(exc))
 
-            # Step 2 – collect all loopback devices; try to match by name
+            # Step 2 – use pyaudiowpatch loopback generator for reliable discovery
             first_loopback_id: str | None = None
-            for i in range(pa.get_device_count()):
-                device = pa.get_device_info_by_index(i)
-                name: str = device.get("name", "")
-                if device.get("maxInputChannels", 0) > 0 and "[loopback]" in name.lower():
-                    if first_loopback_id is None:
-                        first_loopback_id = str(i)
-
-                    # Match: the loopback device name is the output device
-                    # name followed by " [Loopback]"
-                    if default_output_name and name.lower().startswith(
-                        default_output_name.lower()
-                    ):
-                        pa.terminate()
-                        self._default_output_device_id = str(i)
-                        logger.info(
-                            "Found matching loopback device",
-                            name=name,
-                            index=i,
-                        )
-                        return self._default_output_device_id
+            default_output_name = default_speakers.get("name", "") if default_speakers else ""
+            for loopback in pa.get_loopback_device_info_generator():
+                idx = loopback.get("index")
+                name: str = loopback.get("name", "")
+                if first_loopback_id is None:
+                    first_loopback_id = str(idx)
+                # Match: loopback name starts with output device (e.g. "Headphones... [Loopback]")
+                if default_output_name and name.lower().startswith(default_output_name.lower()):
+                    pa.terminate()
+                    self._default_output_device_id = str(idx)
+                    logger.info(
+                        "Found matching loopback device",
+                        name=name,
+                        index=idx,
+                    )
+                    return self._default_output_device_id
 
             pa.terminate()
 
-            # Step 3 – no name match; fall back to first loopback device
+            # Step 3 – no name match; use first loopback device
             if first_loopback_id is not None:
                 self._default_output_device_id = first_loopback_id
-                logger.warning(
-                    "No exact loopback match; using first loopback device",
+                logger.info(
+                    "Using first loopback device",
                     index=first_loopback_id,
                 )
                 return self._default_output_device_id
@@ -318,17 +313,45 @@ Only that app's audio will be captured. Other apps play to normal speakers.
 
         return None
 
-    def configure_system_loopback(self) -> RoutingConfig:
+    def get_loopback_device_or_default(self, device_id: str | None) -> str | None:
         """
-        Configure system-wide loopback capture as fallback.
+        Return device_id if it's a valid loopback device, else default.
 
-        This captures ALL system audio, not just one app.
+        Used when user selects a capture channel from the volume mixer device list.
+        """
+        if not device_id or not device_id.strip():
+            return self.get_default_output_device()
+        try:
+            import pyaudiowpatch as pyaudio
+
+            pa = pyaudio.PyAudio()
+            idx = int(device_id)
+            for loopback in pa.get_loopback_device_info_generator():
+                if loopback.get("index") == idx:
+                    pa.terminate()
+                    return device_id
+            pa.terminate()
+        except (ValueError, ImportError, Exception):
+            pass
+        return self.get_default_output_device()
+
+    def configure_system_loopback(
+        self, capture_device_id: str | None = None
+    ) -> RoutingConfig:
+        """
+        Configure system-wide loopback capture.
+
+        Captures audio from the selected output device (volume mixer channel).
+        If capture_device_id is set, uses that loopback; else default.
 
         Returns:
             RoutingConfig for system loopback mode
         """
-        # Get default output device for loopback
-        device_id = self.get_default_output_device()
+        device_id = (
+            self.get_loopback_device_or_default(capture_device_id)
+            if capture_device_id
+            else self.get_default_output_device()
+        )
 
         if device_id is None:
             raise RuntimeError("No default output device found for loopback capture")

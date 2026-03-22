@@ -138,10 +138,14 @@ class BackendProxyService:
         kwargs.setdefault("headers", {}).update(self._auth_headers())
         response = await self._client.request(method, path, **kwargs)
 
-        if response.status_code == 401 and retry_on_401:
-            await self._refresh_access_token()
-            kwargs["headers"].update(self._auth_headers())
-            response = await self._client.request(method, path, **kwargs)
+        # Only attempt refresh when we have a refresh token (JWT flow); API key has none
+        if response.status_code == 401 and retry_on_401 and (self._refresh_token or "").strip():
+            try:
+                await self._refresh_access_token()
+                kwargs["headers"].update(self._auth_headers())
+                response = await self._client.request(method, path, **kwargs)
+            except AuthExpiredException:
+                pass  # Re-raise after we check status below
 
         if response.status_code == 402:
             try:

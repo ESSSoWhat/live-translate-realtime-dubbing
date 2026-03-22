@@ -958,12 +958,15 @@ class ProcessingPipeline:
                     self._stats.current_latency_ms = latency_ms
 
                 except Exception as e:
+                    from live_dubbing.services.backend_service import AuthExpiredException
                     logger.exception("STT failed", error=str(e))
                     err_msg = str(e)[:80] if str(e) else "Unknown error"
                     self._event_bus.emit(
                         EventType.TRANSCRIPTION_UPDATE,
                         {"text": f"[Transcription failed: {err_msg}]"},
                     )
+                    if isinstance(e, AuthExpiredException):
+                        self._event_bus.emit(EventType.AUTH_EXPIRED, {"message": str(e)})
 
             except asyncio.CancelledError:
                 break
@@ -1030,13 +1033,15 @@ class ProcessingPipeline:
                     self._event_bus.emit(EventType.TTS_COMPLETED, {})
 
                 except Exception as e:
+                    from live_dubbing.services.backend_service import AuthExpiredException
                     logger.exception("TTS failed", error=str(e))
                     user_msg = _tts_error_message(e)
-                    short_msg = _tts_error_message(e, short=True)
                     self._event_bus.emit_warning(
                         user_msg,
                         {"error": redact_secrets(str(e))},
                     )
+                    if isinstance(e, AuthExpiredException):
+                        self._event_bus.emit(EventType.AUTH_EXPIRED, {"message": str(e)})
                     self._event_bus.emit(
                         EventType.TRANSLATION_UPDATE,
                         {"text": f"[TTS failed: {short_msg}]"},
@@ -1065,11 +1070,11 @@ class ProcessingPipeline:
                     continue
 
                 # Calculate playback duration and suppress capture during playback
-                # to prevent feedback loop (dubbed audio being re-captured)
+                # to prevent feedback loop (app must never capture its own audio)
                 # float32 at 24kHz = 4 bytes per sample
                 playback_duration_sec = len(audio_bytes) / (4 * 24000)
-                # Add a small margin (0.2s) to account for buffering latency
-                self._output_suppress_until = time.time() + playback_duration_sec + 0.2
+                # Buffer for playback queue + device latency + loopback delay (~0.5s)
+                self._output_suppress_until = time.time() + playback_duration_sec + 0.5
 
                 # Deliver to callback
                 if self._on_output:

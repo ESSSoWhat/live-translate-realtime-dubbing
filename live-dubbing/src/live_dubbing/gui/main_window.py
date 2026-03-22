@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -57,7 +58,6 @@ from live_dubbing.gui.widgets.status_bar import StatusBar
 from live_dubbing.gui.widgets.dubbed_window import DubbedWindow
 from live_dubbing.gui.widgets.usage_meter import UsageMeterWidget
 from live_dubbing.gui.widgets.settings_dialog import SettingsDialog
-from live_dubbing.gui.widgets.vb_cable_wizard import VBCableSetupWizard
 
 logger = structlog.get_logger(__name__)
 
@@ -247,9 +247,21 @@ class MainWindow(QMainWindow):
             "system",
         )
         self._capture_mode_combo.setCurrentIndex(1)  # Default system; updated in _on_app_initialized
-        self._capture_mode_combo.setMinimumWidth(220)
+        self._capture_mode_combo.setMinimumWidth(180)
         self._capture_mode_combo.setMaxVisibleItems(5)
         device_row.addWidget(self._capture_mode_combo)
+
+        device_row.addWidget(QLabel("Channel:"))
+        self._capture_channel_combo = QComboBox()
+        self._capture_channel_combo.setMinimumWidth(180)
+        self._capture_channel_combo.setMaxVisibleItems(12)
+        self._capture_channel_combo.setToolTip(
+            "Process from Windows volume mixer to capture. "
+            "Select an app to capture only that app, or All for system audio."
+        )
+        self._populate_capture_channels()
+        self._capture_channel_combo.activated.connect(self._on_capture_channel_changed)
+        device_row.addWidget(self._capture_channel_combo)
 
         device_row.addSpacing(15)
 
@@ -272,8 +284,8 @@ class MainWindow(QMainWindow):
 
         self._refresh_devices_btn = QPushButton("Refresh")
         self._refresh_devices_btn.setFixedWidth(60)
-        self._refresh_devices_btn.setToolTip("Refresh output device list")
-        self._refresh_devices_btn.clicked.connect(self._populate_output_devices)
+        self._refresh_devices_btn.setToolTip("Refresh audio device lists")
+        self._refresh_devices_btn.clicked.connect(self._refresh_audio_device_lists)
         device_row.addWidget(self._refresh_devices_btn)
 
         # Output volume slider
@@ -818,6 +830,12 @@ class MainWindow(QMainWindow):
         )
         self._unsubscribers.append(unsub)
 
+        unsub = self._event_bus.subscribe(
+            EventType.AUTH_EXPIRED,
+            self._on_auth_expired,
+        )
+        self._unsubscribers.append(unsub)
+
     def _setup_debug_window(self) -> None:
         """Set up the debug window as a dock widget."""
         self._debug_window = DebugWindow(
@@ -860,7 +878,7 @@ class MainWindow(QMainWindow):
         if tools_menu is not None:
             refresh_action = tools_menu.addAction("&Refresh Audio Devices")
             if refresh_action is not None:
-                refresh_action.triggered.connect(self._populate_output_devices)
+                refresh_action.triggered.connect(self._refresh_audio_device_lists)
             tools_menu.addSeparator()
             settings_action = tools_menu.addAction("&Settings…")
             if settings_action is not None:
@@ -1066,6 +1084,71 @@ class MainWindow(QMainWindow):
             logger.exception("Error populating output devices", error=str(e))
             self._output_device_combo.blockSignals(False)
 
+    def _populate_capture_channels(self) -> None:
+        """Fill capture channel combo from Windows volume mixer processes.
+
+        Per-app options require process loopback (Windows 10 build 20348+ or Windows 11).
+        When unavailable, only 'All system audio' is shown.
+        """
+        try:
+            self._capture_channel_combo.blockSignals(True)
+            self._capture_channel_combo.clear()
+            self._capture_channel_combo.addItem("All system audio", None)
+            if self._orchestrator.is_process_loopback_supported:
+                sessions = self._orchestrator.get_audio_sessions()
+                for session in sessions:
+                    label = session.name
+                    if session.is_muted:
+                        label += " (Muted)"
+                    self._capture_channel_combo.addItem(label, session)
+            saved_pid = self._settings.audio.capture_device_id
+            if saved_pid and self._capture_channel_combo.count() > 1:
+                try:
+                    pid = int(saved_pid)
+                    for i in range(self._capture_channel_combo.count()):
+                        s = self._capture_channel_combo.itemData(i)
+                        if hasattr(s, "pid") and s.pid == pid:
+                            self._capture_channel_combo.setCurrentIndex(i)
+                            break
+                except ValueError:
+                    pass
+            plb = self._orchestrator.is_process_loopback_supported
+            self._capture_channel_combo.setToolTip(
+                "Process from Windows volume mixer to capture. "
+                + (
+                    "Select an app to capture only that app, or All for system audio."
+                    if plb
+                    else "Per-app capture requires Windows 11 or Server 2022. "
+                    "Only 'All system audio' is available on this system."
+                )
+            )
+            self._capture_channel_combo.blockSignals(False)
+        except Exception as e:
+            logger.warning("Could not populate capture channels", error=str(e))
+            self._capture_channel_combo.blockSignals(False)
+
+    def _refresh_audio_device_lists(self) -> None:
+        """Refresh both output and capture channel lists."""
+        self._populate_output_devices()
+        self._populate_capture_channels()
+
+    @pyqtSlot(int)
+    def _on_capture_channel_changed(self, index: int) -> None:
+        """Save selected capture channel (volume mixer process)."""
+        if index < 0:
+            return
+        data = self._capture_channel_combo.itemData(index)
+        if data is None:
+            self._settings.audio.capture_device_id = None
+        elif hasattr(data, "pid"):
+            self._settings.audio.capture_device_id = str(data.pid)
+        else:
+            self._settings.audio.capture_device_id = None
+        try:
+            ConfigManager().save(self._settings)
+        except Exception as e:
+            logger.warning("Could not save capture channel", error=str(e))
+
     @pyqtSlot(int)
     def _on_output_device_changed(self, index: int) -> None:
         """Save selected output device by index.
@@ -1130,13 +1213,21 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_start_clicked(self) -> None:
-        """Handle start button click."""
-        session = self._app_selector.get_selected_session()
-        if not session:
+        """Handle start button click. Capture source is derived from Channel (volume mixer)."""
+        channel_data = self._capture_channel_combo.currentData()
+        if channel_data is None:
+            # "All system audio" — system loopback
+            session = AudioSessionInfo(pid=0, name="System")
+            use_fallback = True
+        elif hasattr(channel_data, "pid"):
+            # Specific app from volume mixer
+            session = channel_data
+            use_fallback = False
+        else:
             QMessageBox.warning(
                 self,
-                "No Application Selected",
-                "Please select an application to capture audio from.",
+                "No Channel Selected",
+                "Please select a channel (All system audio or an app).",
             )
             return
 
@@ -1162,95 +1253,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        capture_mode = self._capture_mode_combo.currentData()
-
-        if capture_mode == "process_loopback":
-            # Native per-app capture: start directly, no setup
-            self._start_translation(session, use_fallback=False)
-        elif capture_mode == "vbcable":
-            # VB-Cable mode: check installation, show routing instructions
-            if not self._orchestrator.is_vb_cable_installed:
-                self._show_vb_cable_wizard(session)
-                return
-            self._show_routing_configuration(session)
-        else:
-            # System audio mode: start immediately, no setup needed
-            self._start_translation(session, use_fallback=True)
-
-    def _show_vb_cable_wizard(self, session: AudioSessionInfo) -> None:
-        """Show VB-Cable setup wizard."""
-
-        def detect_vb_cable() -> bool:
-            """Detect VB-Cable for the wizard."""
-            orch = self._orchestrator
-            routing = getattr(orch, "_audio_routing", None)
-            if routing is not None:
-                routing.detect_virtual_devices()
-                return bool(routing.is_vb_cable_installed())
-            return bool(self._orchestrator.is_vb_cable_installed)
-
-        wizard = VBCableSetupWizard(
-            detect_func=detect_vb_cable,
-            app_name=session.name if session else "",
-            parent=self,
-        )
-
-        wizard.setup_complete.connect(
-            lambda vb_cable, fallback: self._on_wizard_complete(
-                session, vb_cable, fallback
-            )
-        )
-
-        wizard.exec()
-
-    def _show_routing_configuration(self, session: AudioSessionInfo) -> None:
-        """Show routing dialog when VB-Cable is already installed."""
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Isolate Selected App Audio")
-        msg.setText(
-            f"Route only '{session.name}' to your virtual cable for isolation:\n\n"
-            "1. Open Sound settings (right-click speaker icon)\n"
-            f"2. App volume → find '{session.name}' → set Output to 'CABLE Input'\n\n"
-            "Only this app's audio will be captured. Other apps play normally."
-        )
-        msg.setInformativeText(
-            "Click OK when done, or Cancel to capture all system audio instead."
-        )
-        open_settings = msg.addButton("Open Sound settings", QMessageBox.ButtonRole.ActionRole)
-        ok_btn = msg.addButton(QMessageBox.StandardButton.Ok)
-        msg.addButton(QMessageBox.StandardButton.Cancel)
-
-        while True:
-            msg.exec()
-            clicked = msg.clickedButton()
-            if clicked == open_settings:
-                try:
-                    import os
-
-                    os.startfile("ms-settings:apps-volume")  # type: ignore[attr-defined]
-                except Exception:
-                    msg.setInformativeText(
-                        "Could not open. Open manually: "
-                        "right-click speaker → Sound settings → App volume."
-                    )
-                continue
-            if clicked == ok_btn:
-                self._start_translation(session, use_fallback=False)
-                return
-            self._start_translation(session, use_fallback=True)
-            return
-
-    def _on_wizard_complete(self, session: AudioSessionInfo, vb_cable_used: bool, fallback_used: bool) -> None:
-        """Handle wizard completion."""
-        if fallback_used:
-            # User chose system loopback fallback
-            self._use_system_fallback = True
-            self._start_translation(session, use_fallback=True)
-        elif vb_cable_used:
-            # VB-Cable configured
-            self._use_system_fallback = False
-            self._start_translation(session, use_fallback=False)
-        # If neither, wizard was cancelled
+        self._start_translation(session, use_fallback=use_fallback)
 
     def _start_translation(self, session: AudioSessionInfo, use_fallback: bool = False) -> None:
         """Start the translation process."""
@@ -1262,6 +1265,7 @@ class MainWindow(QMainWindow):
         self._app_selector.set_enabled(False)
         self._language_panel.set_enabled(False)
         self._capture_mode_combo.setEnabled(False)
+        self._capture_channel_combo.setEnabled(False)
         self._is_running = True
 
         # Show locked-state hint on disabled panels
@@ -1328,6 +1332,7 @@ class MainWindow(QMainWindow):
         self._app_selector.set_enabled(True)
         self._language_panel.set_enabled(True)
         self._capture_mode_combo.setEnabled(True)
+        self._capture_channel_combo.setEnabled(True)
         self._is_running = False
         self._app_selector._update_info_label()
         self._language_panel._on_language_changed()
@@ -1340,6 +1345,7 @@ class MainWindow(QMainWindow):
     def _on_app_initialized(self, event: Event) -> None:
         """Handle app initialized event."""
         self._update_capture_mode_combo()
+        self._populate_capture_channels()
         self._refresh_sessions()
         self._status_bar.set_app_state(AppState.READY)
 
@@ -1362,9 +1368,9 @@ class MainWindow(QMainWindow):
             0, "process_loopback" if plb else "vbcable"
         )
         self._capture_mode_combo.setToolTip(
-            "Selected app only: Captures just the chosen app. Uses process loopback (Win 10 21H2+) "
-            "or VB-Cable when that fails.\n"
-            "All system audio: Captures everything (browser, games, etc.)."
+            "Selected app only: Per-app capture via process loopback (Win 10 21H2+). "
+            "If unsupported, uses all system audio.\n"
+            "All system audio: Captures everything — built-in, no setup required."
         )
         self._capture_mode_combo.setCurrentIndex(1)
         self._capture_mode_combo.blockSignals(False)
@@ -1828,49 +1834,48 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "Warning", message)
 
     def _on_process_loopback_failed(self, event: Event) -> None:
-        """Process loopback failed; offer VB-Cable (Selected app) or fall back to system audio."""
+        """Process loopback failed; switch to in-app system loopback."""
         err = event.data.get("error", "")
-        logger.warning("Process loopback failed", error=err)
+        logger.warning("Process loopback failed, using system audio", error=err)
 
-        state = self._orchestrator.get_state_snapshot()
-        session = state.translation_config.target_app if state.translation_config else None
-
-        if self._orchestrator.is_vb_cable_installed and session:
-            # VB-Cable built into Selected app: offer to route and capture
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Selected App via VB-Cable")
-            msg.setText(
-                f"Route '{session.name}' to VB-Cable to capture only that app:\n\n"
-                "1. Click 'Open Sound settings'\n"
-                f"2. App volume → find '{session.name}' → Output: CABLE Input\n\n"
-                "Then click OK. Or Cancel to capture all system audio."
-            )
-            open_settings = msg.addButton("Open Sound settings", QMessageBox.ButtonRole.ActionRole)
-            ok_btn = msg.addButton(QMessageBox.StandardButton.Ok)
-            msg.addButton(QMessageBox.StandardButton.Cancel)
-
-            while True:
-                msg.exec()
-                clicked = msg.clickedButton()
-                if clicked == open_settings:
-                    try:
-                        import os
-                        os.startfile("ms-settings:apps-volume")  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-                    continue
-                if clicked == ok_btn and self._async_worker:
-                    self._async_worker.run_coroutine(
-                        self._orchestrator.fallback_to_vb_cable(),
-                    )
-                    return
-                break
-
-        # No VB-Cable or user chose Cancel: fall back to system audio
         if self._async_worker:
             self._async_worker.run_coroutine(
                 self._orchestrator.fallback_to_system_loopback(),
             )
+
+    def _on_auth_expired(self, event: Event) -> None:
+        """Session expired; prompt user to sign in again."""
+        if getattr(self, "_auth_expired_showing", False):
+            return
+        self._auth_expired_showing = True
+        try:
+            msg = event.data.get("message", "Session expired — please sign in again.")
+            reply = QMessageBox.warning(
+                self,
+                "Session Expired",
+                f"{msg}\n\nSign in again to continue using translation.",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Ok,
+            )
+            if reply == QMessageBox.StandardButton.Ok:
+                from live_dubbing.gui.widgets.login_dialog import LoginDialog
+                login = LoginDialog(self._settings, parent=self)
+                if login.exec() == QDialog.DialogCode.Accepted:
+                    auth = getattr(login, "auth_response", {})
+                    self._auth_response = auth
+                    self._usage_meter.set_tier(auth.get("tier", "free"))
+                    if auth.get("usage"):
+                        self._usage_meter._on_usage_fetched(auth["usage"])
+                    if self._async_worker:
+                        self._async_worker.run_coroutine(
+                            self._orchestrator.reinit_elevenlabs()
+                        )
+                    self._status_bar.set_app_state(AppState.READY)
+                    logger.info("Re-authenticated after session expiry")
+                else:
+                    logger.info("Re-login cancelled")
+        finally:
+            self._auth_expired_showing = False
 
     def show_error(self, message: str) -> None:
         """Display error message to user."""

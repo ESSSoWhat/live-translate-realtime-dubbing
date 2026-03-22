@@ -77,10 +77,10 @@ class StatusBar(QWidget):
         # Separator
         layout.addStretch()
 
-        # Virtual cable status
-        self._vb_label = QLabel("Virtual cable: --")
-        self._vb_label.setStyleSheet("font-size: 12px; color: #aaa;")
-        self._vb_label.setToolTip("Virtual audio cable for per-app audio routing")
+        # Capture status (in-app software capture)
+        self._vb_label = QLabel("Capture: Built-in")
+        self._vb_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
+        self._vb_label.setToolTip("In-app software capture (system/process loopback)")
         layout.addWidget(self._vb_label)
 
         # API status
@@ -141,13 +141,9 @@ class StatusBar(QWidget):
             self._indicator.set_state("error")
 
     def set_vb_cable_status(self, installed: bool) -> None:
-        """Update virtual cable status."""
-        if installed:
-            self._vb_label.setText("Virtual cable: OK")
-            self._vb_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
-        else:
-            self._vb_label.setText("Virtual cable: --")
-            self._vb_label.setStyleSheet("font-size: 12px; color: #F44336;")
+        """Update capture status (kept for API compat; always built-in now)."""
+        self._vb_label.setText("Capture: Built-in")
+        self._vb_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
 
     def set_api_status(self, configured: bool) -> None:
         """Update API key status."""

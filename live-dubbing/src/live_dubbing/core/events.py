@@ -49,6 +49,7 @@ class EventType(Enum):
     ERROR_OCCURRED = auto()
     WARNING_OCCURRED = auto()
     PROCESS_LOOPBACK_FAILED = auto()
+    AUTH_EXPIRED = auto()
 
     # Stats
     LATENCY_UPDATE = auto()

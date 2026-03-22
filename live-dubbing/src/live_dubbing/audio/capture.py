@@ -156,16 +156,17 @@ class AudioCapture:
 
             self._pa = pyaudio.PyAudio()
 
-            # Get device info
+            # Get device info - prefer explicit loopback index, else find default
             assert self._pa is not None
             if self._device_index is not None:
-                device_info = self._pa.get_device_info_by_index(self._device_index)
+                device_info = self._get_loopback_device_by_index(self._device_index)
+                if device_info is None:
+                    device_info = self._pa.get_device_info_by_index(self._device_index)
             else:
-                # Use default WASAPI loopback device
                 device_info = self._get_default_loopback_device()
 
             if not device_info:
-                error_msg = "No capture device available. Check virtual cable installation."
+                error_msg = "No loopback capture device available. Check default output device."
                 logger.error(error_msg)
                 raise RuntimeError(error_msg)
 
@@ -281,26 +282,45 @@ class AudioCapture:
         finally:
             self._cleanup_stream()
 
+    def _get_loopback_device_by_index(self, index: int) -> dict | None:
+        """Get loopback device by index using pyaudiowpatch generator."""
+        try:
+            if self._pa is None:
+                return None
+            for dev in self._pa.get_loopback_device_info_generator():
+                if dev.get("index") == index:
+                    return dev  # type: ignore[return-value]
+            return None
+        except Exception as e:
+            logger.debug("Loopback generator failed, using index lookup", error=str(e))
+            return None
+
     def _get_default_loopback_device(self) -> dict | None:
-        """Get default WASAPI loopback device."""
+        """Get default WASAPI loopback device using pyaudiowpatch API."""
         try:
             if self._pa is None:
                 return None
 
-            # Find WASAPI loopback device
-            for i in range(self._pa.get_device_count()):
-                device = self._pa.get_device_info_by_index(i)
+            # Use official loopback API - match default output
+            import pyaudiowpatch as pyaudio
 
-                # Look for loopback device
-                if device.get("maxInputChannels", 0) > 0:
-                    name = device.get("name", "").lower()
-                    if "loopback" in name or "stereo mix" in name:
-                        return device  # type: ignore[return-value]
+            wasapi_info = self._pa.get_host_api_info_by_type(pyaudio.paWASAPI)
+            default_out_idx = wasapi_info.get("defaultOutputDevice")
+            default_name = ""
+            if default_out_idx is not None:
+                default_speakers = self._pa.get_device_info_by_index(
+                    int(default_out_idx)
+                )
+                default_name = default_speakers.get("name", "")
 
-            # Fall back to any input device
-            default_input = self._pa.get_default_input_device_info()
-            return default_input  # type: ignore[return-value]
-
+            first_loopback = None
+            for loopback in self._pa.get_loopback_device_info_generator():
+                if first_loopback is None:
+                    first_loopback = loopback
+                name = loopback.get("name", "")
+                if default_name and name.lower().startswith(default_name.lower()):
+                    return loopback  # type: ignore[return-value]
+            return first_loopback  # type: ignore[return-value]
         except Exception as e:
             logger.exception("Failed to get loopback device", error=str(e))
             return None

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from live_dubbing.audio.playback import AudioPlayback
     from live_dubbing.audio.routing import VirtualAudioRouter
     from live_dubbing.processing.pipeline import ProcessingPipeline
+    from live_dubbing.services.backend_service import BackendProxyService
     from live_dubbing.services.elevenlabs_service import ElevenLabsService
     from live_dubbing.services.voice_cloning import ClonedVoice
 
@@ -59,7 +60,7 @@ class Orchestrator:
         self._audio_routing: VirtualAudioRouter | None = None
         self._audio_playback: AudioPlayback | None = None
         self._processing_pipeline: ProcessingPipeline | None = None
-        self._elevenlabs_service: ElevenLabsService | None = None
+        self._elevenlabs_service: ElevenLabsService | BackendProxyService | None = None
 
         # Detected sessions
         self._audio_sessions: list[AudioSessionInfo] = []
@@ -135,18 +136,18 @@ class Orchestrator:
         logger.info("Orchestrator shutdown complete")
 
     async def _check_vb_cable(self) -> None:
-        """Check if VB-Audio Virtual Cable is installed and if process loopback is supported."""
+        """Check process loopback support. App uses in-app capture (no external cable)."""
+        from live_dubbing.audio.in_app_capture import is_process_loopback_supported
         from live_dubbing.audio.routing import VirtualAudioRouter
 
+        self._vb_cable_installed = False  # Not used; in-app capture only
         router = VirtualAudioRouter()
-        router.detect_virtual_devices()
-        self._vb_cable_installed = router.get_vb_cable() is not None
-        self._process_loopback_supported = router.is_process_loopback_supported()
+        router.detect_virtual_devices()  # For get_default_output_device
+        self._process_loopback_supported = is_process_loopback_supported()
 
-        if not self._vb_cable_installed:
-            logger.info("VB-Cable not detected; system audio capture available")
         if self._process_loopback_supported:
             logger.info("Process loopback supported (Windows 10 21H2+)")
+        logger.info("Using in-app software capture (system loopback)")
 
     async def _init_audio_subsystems(self) -> None:
         """Initialize audio capture, routing, and playback."""
@@ -167,24 +168,12 @@ class Orchestrator:
     async def _init_elevenlabs(self) -> None:
         """Initialize ElevenLabs service or BackendProxyService.
 
-        Prefers direct ElevenLabs access when API key is available (faster,
-        no backend dependency). Falls back to BackendProxyService when only
-        auth token is present (production / monetised path).
+        Prefers BackendProxyService when user is signed in (usage tracked).
+        Falls back to direct ElevenLabs when only API key is present.
         """
         from live_dubbing.services.elevenlabs_service import ElevenLabsService
 
-        # ── Direct ElevenLabs access (preferred when API key available) ───
-        api_key = self._settings.get_elevenlabs_api_key()
-        if api_key:
-            openai_key = self._settings.get_openai_api_key()
-            self._elevenlabs_service = ElevenLabsService(
-                api_key=api_key,
-                openai_api_key=openai_key,
-            )
-            logger.info("ElevenLabs service initialised (direct API key)")
-            return
-
-        # ── Monetised path: use backend proxy ────────────────────────────
+        # ── Monetised path: use backend proxy when signed in (usage tracked) ──
         if self._settings.is_token_valid():
             from live_dubbing.services.backend_service import BackendProxyService
 
@@ -197,7 +186,18 @@ class Orchestrator:
                 refresh_token=self._settings.get_refresh_token() or "",
                 on_token_refreshed=_on_token_refreshed,
             )
-            logger.info("Backend proxy service initialised")
+            logger.info("Backend proxy service initialised (usage tracked)")
+            return
+
+        # ── Direct ElevenLabs when no token (no usage tracking) ───────────
+        api_key = self._settings.get_elevenlabs_api_key()
+        if api_key:
+            openai_key = self._settings.get_openai_api_key()
+            self._elevenlabs_service = ElevenLabsService(
+                api_key=api_key,
+                openai_api_key=openai_key,
+            )
+            logger.info("ElevenLabs service initialised (direct API key)")
             return
 
         logger.warning("No ElevenLabs API key or auth token configured")
@@ -229,11 +229,16 @@ class Orchestrator:
 
     async def _refresh_audio_sessions(self) -> None:
         """Refresh list of available audio sessions."""
+        import os
+
         from live_dubbing.audio.session import AudioSessionEnumerator
 
         enumerator = AudioSessionEnumerator()
         # Use combined method to get all processes, not just active audio sessions
-        self._audio_sessions = enumerator.get_sessions_combined()
+        all_sessions = enumerator.get_sessions_combined()
+        self_pid = os.getpid()
+        # Never include our own process — app must not capture its own audio
+        self._audio_sessions = [s for s in all_sessions if s.pid != self_pid]
 
         for session in self._audio_sessions:
             self._event_bus.emit(
@@ -256,6 +261,7 @@ class Orchestrator:
         target_language: str,
         source_language: str = "auto",
         use_system_fallback: bool = False,
+        capture_device_id: str | None = None,
     ) -> None:
         """
         Start the translation workflow.
@@ -269,11 +275,17 @@ class Orchestrator:
         if self._app_state != AppState.READY:
             raise RuntimeError(f"Cannot start translation in state: {self._app_state}")
 
-        # Only require VB-Cable if not using fallback and process loopback not supported
-        if not use_system_fallback and not self._process_loopback_supported and not self._vb_cable_installed:
+        # Never capture our own process
+        import os
+
+        if target_app.pid == os.getpid():
+            raise RuntimeError("Cannot capture this app's own audio. Select a different application.")
+
+        # In-app capture: use system loopback when process loopback not supported
+        if not use_system_fallback and not self._process_loopback_supported:
             raise RuntimeError(
-                "Virtual cable not installed. Install VB-Cable or VAC (free), "
-                "or use 'All system audio' mode."
+                "Per-app capture requires Windows 10 21H2+. "
+                "Use 'All system audio' mode for your system."
             )
 
         if not self._elevenlabs_service:
@@ -297,32 +309,35 @@ class Orchestrator:
         self._set_translation_state(TranslationState.WAITING_FOR_AUDIO)
 
         try:
-            # Configure audio routing based on mode
-            device_id = None
-            capture_pid = None
+            # In-app capture: system loopback or process loopback only
+            from live_dubbing.audio.in_app_capture import (
+                CaptureConfig,
+                get_capture_config,
+            )
+            from live_dubbing.audio.routing import CaptureMode
 
-            if use_system_fallback:
-                from live_dubbing.audio.routing import CaptureMode
+            if self._audio_routing is None:
+                raise RuntimeError("Audio routing not initialized")
 
-                if self._audio_routing is None:
-                    raise RuntimeError("Audio routing not initialized")
-                self._audio_routing.configure_system_loopback()
-                device_id = self._audio_routing.get_capture_device_id()
+            # System loopback: use default device. Process loopback uses target_pid.
+            # Do not pass settings.capture_device_id—it may store a PID from channel selection.
+            config = get_capture_config(
+                use_system_only=use_system_fallback,
+                target_pid=None if use_system_fallback else target_app.pid,
+                capture_device_id=None,
+            )
+            from live_dubbing.audio.in_app_capture import configure_routing
+
+            configure_routing(config, self._audio_routing)
+            device_id = config.device_id
+            capture_pid = config.pid
+
+            if config.mode == "system_loopback":
                 self._audio_routing.set_capture_mode(CaptureMode.SYSTEM_LOOPBACK)
-                logger.info("Using system loopback capture", device_id=device_id)
-            elif self._process_loopback_supported:
-                # Use native process loopback (no VB-Cable)
-                if self._audio_routing is None:
-                    raise RuntimeError("Audio routing not initialized")
-                self._audio_routing.configure_process_loopback(target_app.pid)
-                capture_pid = self._audio_routing.get_target_pid()
-                logger.info("Using process loopback capture", pid=capture_pid)
+                logger.info("Using in-app system loopback capture", device_id=device_id)
             else:
-                # Use VB-Cable routing
-                if self._audio_routing is None:
-                    raise RuntimeError("Audio routing not initialized")
-                await self._audio_routing.route_app_to_virtual(target_app.pid)
-                device_id = self._audio_routing.get_capture_device_id()
+                self._audio_routing.set_capture_mode(CaptureMode.PROCESS_LOOPBACK)
+                logger.info("Using in-app process loopback capture", pid=capture_pid)
 
             # Validate capture is available
             if device_id is None and capture_pid is None:
@@ -332,8 +347,7 @@ class Orchestrator:
                     )
                 else:
                     raise RuntimeError(
-                        "No audio capture device available. "
-                        "Please ensure a virtual cable (VB-Cable, VAC) is installed."
+                        "No audio capture device available. Check your default output device."
                     )
 
             # Start voice cloning process (dynamic mode)
@@ -385,11 +399,7 @@ class Orchestrator:
                 self._audio_playback.set_volume(self._settings.audio.output_volume)
                 await self._audio_playback.start(device_id=out_id or None)
 
-            capture_mode = (
-                "system_loopback"
-                if use_system_fallback
-                else ("process_loopback" if capture_pid else "vb_cable")
-            )
+            capture_mode = config.mode
             self._event_bus.emit(
                 EventType.AUDIO_CAPTURE_STARTED,
                 {"capture_mode": capture_mode},
@@ -524,60 +534,6 @@ class Orchestrator:
         if self._translation_state == TranslationState.CLONING_VOICE:
             self._set_translation_state(TranslationState.TRANSLATING)
 
-    async def fallback_to_vb_cable(self) -> None:
-        """
-        Switch from failed process loopback to VB-Cable capture (Selected app).
-
-        User must have routed the app to CABLE Input. Called after routing dialog OK.
-        """
-        if self._app_state != AppState.RUNNING or not self._translation_config:
-            return
-        if not self._audio_capture or not self._audio_routing or not self._vb_cable_installed:
-            return
-
-        target_app = self._translation_config.target_app
-        target_name = target_app.name
-        logger.info("Process loopback failed, using VB-Cable for selected app", app=target_name)
-
-        # Cancel no-audio check
-        if self._no_audio_check_task and not self._no_audio_check_task.done():
-            self._no_audio_check_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._no_audio_check_task
-        self._no_audio_check_task = None
-
-        await self._audio_capture.stop()
-
-        try:
-            await self._audio_routing.route_app_to_virtual(target_app.pid)
-        except RuntimeError as e:
-            logger.error("VB-Cable fallback failed", error=str(e))
-            self._event_bus.emit_warning(str(e))
-            await self.stop_translation()
-            return
-
-        device_id = self._audio_routing.get_capture_device_id()
-        from live_dubbing.audio.routing import CaptureMode
-
-        self._audio_routing.set_capture_mode(CaptureMode.VB_CABLE)
-
-        await self._audio_capture.start(
-            device_id=device_id,
-            pid=None,
-            on_audio_chunk=self._on_audio_chunk,
-        )
-
-        self._event_bus.emit(
-            EventType.AUDIO_CAPTURE_STARTED,
-            {"capture_mode": "vb_cable", "fallback": True},
-        )
-        self._event_bus.emit_warning(
-            f"Using virtual cable to capture {target_name}. Route it to your cable in Sound settings."
-        )
-
-        self._no_audio_check_task = asyncio.create_task(
-            self._check_no_audio_loop(target_name, "vb_cable"),
-        )
 
     async def fallback_to_system_loopback(self) -> None:
         """
@@ -608,7 +564,8 @@ class Orchestrator:
         from live_dubbing.audio.routing import CaptureMode
 
         try:
-            self._audio_routing.configure_system_loopback()
+            capture_id = self._settings.audio.capture_device_id
+            self._audio_routing.configure_system_loopback(capture_id)
         except RuntimeError as e:
             logger.error("System loopback fallback failed", error=str(e))
             self._event_bus.emit_warning(
