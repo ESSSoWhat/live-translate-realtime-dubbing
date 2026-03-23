@@ -343,6 +343,7 @@ class Orchestrator:
             config = get_capture_config(
                 use_system_only=use_system_fallback,
                 target_pid=None if use_system_fallback else target_app.pid,
+                target_process_name=None if use_system_fallback else target_app.name,
                 capture_device_id=None,
             )
             from live_dubbing.audio.in_app_capture import configure_routing

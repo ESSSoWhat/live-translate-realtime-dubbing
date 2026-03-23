@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
@@ -11,6 +12,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QVBoxLayout,
 )
 
@@ -85,8 +87,14 @@ class SettingsDialog(QDialog):
             try:
                 from live_dubbing.config.settings import ConfigManager
                 ConfigManager().save(self._settings)
-            except Exception:
-                pass
+            except Exception as e:
+                logger = logging.getLogger(__name__)
+                logger.exception("Failed to save settings (prefer_direct_api)")
+                QMessageBox.warning(
+                    self,
+                    "Settings Not Saved",
+                    "Your settings could not be saved. Changes may not persist.",
+                )
         self.accept()
 
     @property

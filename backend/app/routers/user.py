@@ -18,16 +18,18 @@ async def report_usage(
     user: dict = Depends(get_current_user),
 ) -> dict:
     """Record usage from direct API mode (retroactive; no quota check)."""
-    await record_usage(str(user["id"]), body.event_type, body.quantity)
-    logger.info("usage_reported", user_id=user["id"], event_type=body.event_type, quantity=body.quantity)
+    user_id = str(user["id"])
+    await record_usage(user_id, body.event_type, body.quantity)
+    logger.info("usage_reported", user_id=user_id, event_type=body.event_type, quantity=body.quantity)
     return {"ok": True}
 
 
 @router.get("/me", response_model=UserProfile)
 async def get_me(user: dict = Depends(get_current_user)) -> UserProfile:
-    usage_data = await get_usage_snapshot(user["id"])
+    user_id = str(user["id"])
+    usage_data = await get_usage_snapshot(user_id)
     return UserProfile(
-        user_id=user["id"],
+        user_id=user_id,
         email=user["email"],
         tier=user["tier"],
         subscription_status=user.get("subscription_status", "active"),
@@ -37,5 +39,6 @@ async def get_me(user: dict = Depends(get_current_user)) -> UserProfile:
 
 @router.get("/usage", response_model=UsageWithTier)
 async def get_usage(user: dict = Depends(get_current_user)) -> UsageWithTier:
-    usage_data = await get_usage_snapshot(str(user["id"]))
+    user_id = str(user["id"])
+    usage_data = await get_usage_snapshot(user_id)
     return UsageWithTier(tier=user["tier"], **usage_data)

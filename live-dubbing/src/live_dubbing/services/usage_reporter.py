@@ -23,18 +23,27 @@ class UsageReporter:
         self._base_url = base_url.rstrip("/")
         self._token = access_token
         self._client: httpx.AsyncClient | None = None
+        self._client_lock = asyncio.Lock()
 
-    def _client_or_new(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self._base_url,
-                timeout=10.0,
-                headers={
-                    "Authorization": f"Bearer {self._token}",
-                    "User-Agent": "LiveTranslate-Desktop/1.0",
-                },
-            )
-        return self._client
+    async def _client_or_new(self) -> httpx.AsyncClient:
+        async with self._client_lock:
+            if self._client is None:
+                self._client = httpx.AsyncClient(
+                    base_url=self._base_url,
+                    timeout=10.0,
+                    headers={
+                        "Authorization": f"Bearer {self._token}",
+                        "User-Agent": "LiveTranslate-Desktop/1.0",
+                    },
+                )
+            return self._client
+
+    async def aclose(self) -> None:
+        """Close the HTTP client and release resources."""
+        async with self._client_lock:
+            if self._client is not None:
+                await self._client.aclose()
+                self._client = None
 
     def report(self, event_type: str, quantity: int) -> None:
         """Report usage asynchronously; does not block. Ignores errors."""
@@ -45,7 +54,7 @@ class UsageReporter:
     async def _report_async(self, event_type: str, quantity: int) -> None:
         """POST usage to backend; log and discard on failure."""
         try:
-            client = self._client_or_new()
+            client = await self._client_or_new()
             resp = await client.post(
                 "/api/v1/user/usage/report",
                 json={"event_type": event_type, "quantity": quantity},
