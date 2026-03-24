@@ -370,8 +370,8 @@ async def wix_sync(body: WixSyncRequest, request: Request) -> dict:
     if status_val in ("CANCELED", "CANCELLED", "EXPIRED", "INACTIVE"):
         tier = "free"
         subscription_status = "canceled"
-    elif body.tier and (body.tier.strip().lower() in ("free", "starter", "pro", "early_adopters")):
-        tier = body.tier.strip().lower()
+    elif body.tier:
+        tier = body.tier  # Validated by WixSyncRequest
         subscription_status = "active" if tier != "free" else "canceled"
     else:
         tier = _wix_plan_to_tier(body.plan_id, body.plan_name)

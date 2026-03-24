@@ -21,6 +21,7 @@ dependencies:
   firebase_core: ^3.8.1
   google_sign_in: 6.2.2
   url_launcher: ^6.2.5
+  agora_rtc_engine: ^6.5.3
 
 dev_dependencies:
   flutter_test:

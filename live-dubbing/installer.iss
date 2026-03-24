@@ -40,6 +40,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "installvbcable"; Description: "Install VB-Audio Virtual Cable (recommended for play-as-mic)"; GroupDescription: "Optional components:"; Flags: unchecked
 
 [Files]
 ; Main application files from PyInstaller output
@@ -53,4 +54,5 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+Filename: "{app}\VBCABLE_Driver_Pack43\VBCABLE_Setup_x64.exe"; Description: "Install VB-Audio Virtual Cable"; Flags: nowait postinstall skipifsilent; Tasks: installvbcable
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

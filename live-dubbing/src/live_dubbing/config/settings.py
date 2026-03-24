@@ -133,6 +133,7 @@ class AudioConfig(BaseModel):
 
     input_device_id: str | None = None
     output_device_id: str | None = None
+    output_play_as_mic: bool = False  # Route TTS to CABLE Input for Zoom/Discord
     capture_device_id: str | None = None  # Volume mixer channel to capture from
     sample_rate: int = Field(default=16000, ge=8000, le=48000)
     chunk_size_ms: int = Field(default=100, ge=50, le=500)

@@ -79,6 +79,11 @@ a = Analysis(
         *([
             (str(PROJECT_ROOT / ".env"), ".")
         ] if (PROJECT_ROOT / ".env").exists() else []),
+        # VB-Cable driver pack (optional install for play-as-mic)
+        (
+            str(PROJECT_ROOT / "third_party" / "VBCABLE_Driver_Pack43"),
+            "VBCABLE_Driver_Pack43",
+        ),
     ],
     hiddenimports=torch_hiddenimports + torchaudio_hiddenimports + jaraco_hiddenimports + numpy_hiddenimports + [
         # ── Silero VAD ──────────────────────────────────────────────────

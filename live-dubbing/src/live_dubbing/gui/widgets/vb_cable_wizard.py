@@ -5,6 +5,8 @@ VB-Cable Setup Wizard for guided audio routing configuration.
 import contextlib
 import os
 import subprocess
+import sys
+from pathlib import Path
 from collections.abc import Callable
 
 import structlog
@@ -44,18 +46,19 @@ class WelcomePage(WizardPage):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
-        title = QLabel("Audio Routing Setup")
+        title = QLabel("VB-Audio Virtual Cable Setup")
         title.setFont(QFont("", 16, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._layout.addWidget(title)
 
         explanation = QLabel(
             "This app needs to capture audio from a specific application.\n\n"
-            "When Windows per-app capture isn't available, a virtual cable "
-            "(VB-Cable, VAC, etc.) routes the app's audio.\n\n"
+            "When Windows per-app capture isn't available, VB-Audio Virtual Cable "
+            "(VB-Cable) routes the app's audio. Other virtual cables (e.g. VAC) may "
+            "work, but this wizard targets VB-Cable.\n\n"
             "This wizard will help you:\n"
-            "• Check if a virtual cable is installed\n"
-            "• Install one if needed (free)\n"
+            "• Check if VB-Cable is installed\n"
+            "• Install VB-Audio Virtual Cable if needed (free)\n"
             "• Configure your app's audio output\n\n"
             "The setup only takes a few minutes."
         )
@@ -75,7 +78,7 @@ class DetectionPage(WizardPage):
         super().__init__(parent)
         self._detect_func = detect_func
 
-        title = QLabel("Checking for virtual cable...")
+        title = QLabel("Checking for VB-Cable...")
         title.setFont(QFont("", 14, QFont.Weight.Bold))
         self._layout.addWidget(title)
 
@@ -131,7 +134,7 @@ class DetectionPage(WizardPage):
             self._result_icon.setText("✓")
             self._result_icon.setStyleSheet("color: #4CAF50; font-size: 48px;")
             self._result_text.setText(
-                "VB-Audio Virtual Cable is installed!\n\n"
+                "Virtual cable is installed.\n\n"
                 "Click Next to configure audio routing."
             )
             self._status_label.setText("Virtual cable detected.")
@@ -142,7 +145,7 @@ class DetectionPage(WizardPage):
                 "VB-Audio Virtual Cable is not installed.\n\n"
                 "Click Next to download and install it."
             )
-            self._status_label.setText("No virtual cable found.")
+            self._status_label.setText("No VB-Cable found.")
 
         self.detection_complete.emit(found)
 
@@ -160,12 +163,13 @@ class InstallPage(WizardPage):
         instructions = QLabel(
             "VB-Audio Virtual Cable is a free virtual audio device that allows "
             "routing audio between applications.\n\n"
-            "Click the button below to open the download page:"
+            "Click the button below to open the official VB-Audio VB-Cable download page:"
         )
         instructions.setWordWrap(True)
         self._layout.addWidget(instructions)
 
-        download_btn = QPushButton("Open Virtual Cable Download Page")
+        download_btn = QPushButton("Open VB-Cable Download Page")
+        download_btn.setToolTip("Opens the official VB-Audio VB-Cable page (vb-audio.com/Cable/)")
         download_btn.setMinimumHeight(40)
         download_btn.setStyleSheet("""
             QPushButton {
@@ -181,6 +185,27 @@ class InstallPage(WizardPage):
         """)
         download_btn.clicked.connect(self._open_download_page)
         self._layout.addWidget(download_btn)
+
+        bundled_btn = QPushButton("Install from bundled driver")
+        bundled_btn.setMinimumHeight(40)
+        bundled_btn.setToolTip("Run the VB-Cable installer bundled with this app")
+        bundled_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-size: 14px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:disabled {
+                background-color: #666;
+            }
+        """)
+        bundled_btn.clicked.connect(self._run_bundled_installer)
+        self._layout.addWidget(bundled_btn)
 
         steps_group = QGroupBox("Installation Steps")
         steps_layout = QVBoxLayout(steps_group)
@@ -214,9 +239,26 @@ class InstallPage(WizardPage):
         self._recheck_callback = callback
 
     def _open_download_page(self) -> None:
-        """Open virtual cable download page in browser."""
+        """Open the VB-Audio VB-Cable download page in the default browser."""
         import webbrowser
         webbrowser.open("https://vb-audio.com/Cable/")
+
+    def _run_bundled_installer(self) -> None:
+        """Run the bundled VBCABLE_Setup_x64.exe if present."""
+        exe_name = "VBCABLE_Setup_x64.exe"
+        if getattr(sys, "frozen", False):
+            base = Path(sys.executable).parent
+        else:
+            base = Path(__file__).resolve().parents[4] / "third_party"
+        installer_path = base / "VBCABLE_Driver_Pack43" / exe_name
+        if installer_path.exists():
+            try:
+                os.startfile(str(installer_path))
+            except OSError as e:
+                logger.warning("Could not launch bundled installer", path=str(installer_path), error=str(e))
+        else:
+            logger.info("Bundled driver not found, opening download page", path=str(installer_path))
+            self._open_download_page()
 
     def _on_recheck(self) -> None:
         """Handle recheck button click."""
@@ -341,7 +383,7 @@ class FallbackPage(WizardPage):
         self._layout.addWidget(title)
 
         explanation = QLabel(
-            "If you don't want to install a virtual cable, you can use system audio "
+            "If you don't want to install VB-Audio Virtual Cable, you can use system audio "
             "capture instead.\n\n"
             "Limitations of system capture:\n"
             "• Captures ALL system audio, not just one app\n"
@@ -437,7 +479,7 @@ class VBCableSetupWizard(QDialog):
         self._vb_cable_found = False
         self._use_fallback = False
 
-        self.setWindowTitle("Audio Routing Setup")
+        self.setWindowTitle("VB-Audio Virtual Cable — Audio Routing Setup")
         self.setMinimumSize(500, 450)
         self.setModal(True)
 
@@ -580,7 +622,7 @@ class VBCableSetupWizard(QDialog):
             self,
             "Use System Audio?",
             "This will capture ALL system audio, not just your target app.\n\n"
-            "Are you sure you want to continue without a virtual cable?",
+            "Are you sure you want to continue without VB-Cable?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 

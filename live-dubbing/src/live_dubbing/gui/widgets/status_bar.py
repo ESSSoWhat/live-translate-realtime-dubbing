@@ -142,8 +142,12 @@ class StatusBar(QWidget):
 
     def set_vb_cable_status(self, installed: bool) -> None:
         """Update capture status (kept for API compat; always built-in now)."""
-        self._vb_label.setText("Capture: Built-in")
-        self._vb_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
+        if installed:
+            self._vb_label.setText("Capture: Built-in")
+            self._vb_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
+        else:
+            self._vb_label.setText("Virtual cable: Missing")
+            self._vb_label.setStyleSheet("font-size: 12px; color: #F44336;")
 
     def set_api_status(self, configured: bool) -> None:
         """Update API key status."""

@@ -8,6 +8,8 @@ import 'login_screen.dart';
 import 'paywall_screen.dart';
 import 'settings_screen.dart';
 import '../features/mic_translate/mic_translate_service.dart';
+import '../features/translated_call/phone_call_screen.dart';
+import '../features/translated_call/translated_call_screen.dart';
 import '../services/qonversion_service.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -170,6 +172,24 @@ class _HomeScreenState extends State<HomeScreen> {
               FilledButton(
                 onPressed: _toggleTranslate,
                 child: Text(_translating ? 'Stop' : 'Start translation'),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const TranslatedCallScreen()),
+                  );
+                },
+                child: const Text('Start translated call'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const PhoneCallScreen()),
+                  );
+                },
+                child: const Text('Call with translation'),
               ),
               const SizedBox(height: 16),
               TextButton(

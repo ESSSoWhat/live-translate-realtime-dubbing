@@ -55,23 +55,67 @@ flutter {
 }
 
 // Flutter CLI expects APK under build/app/outputs/flutter-apk/ (project root = mobile/).
+// AGP + Flutter may write under layout.buildDirectory (not always projectDir/build).
+// flutter/flutter#174620 — sync after package* so APK files exist.
 def projectRoot = rootProject.projectDir.parentFile
 def dstApkDir = new File(projectRoot, "build/app/outputs/flutter-apk")
 tasks.register("syncFlutterApkToRoot") {
     doLast {
-        def srcApkDir = project.file("${project.projectDir}/build/outputs/flutter-apk")
-        if (!srcApkDir.exists()) return
         dstApkDir.mkdirs()
-        srcApkDir.eachFile { f ->
-            if (f.name.endsWith(".apk")) {
-                java.nio.file.Files.copy(f.toPath(), new File(dstApkDir, f.name).toPath(),
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        def appBuildDir = layout.buildDirectory.get().asFile
+        def copyFile = { java.io.File src, String destName ->
+            java.nio.file.Files.copy(
+                src.toPath(),
+                new File(dstApkDir, destName).toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            )
+        }
+        def copyIfExists = { java.io.File src, String destName ->
+            if (src.exists()) {
+                copyFile(src, destName)
+            }
+        }
+        def outputsRoot = new File(appBuildDir, "outputs")
+        if (outputsRoot.exists()) {
+            outputsRoot.eachFileRecurse { f ->
+                if (f.isFile() && f.name.endsWith(".apk")) {
+                    copyIfExists(f, f.name)
+                }
+            }
+        }
+        def apkDebugDir = new File(appBuildDir, "outputs/apk/debug")
+        def apkReleaseDir = new File(appBuildDir, "outputs/apk/release")
+        // flutter build apk --target-platform android-arm64 still expects app-debug.apk
+        def dstDebug = new File(dstApkDir, "app-debug.apk")
+        if (!dstDebug.exists() && apkDebugDir.exists()) {
+            def candidates = apkDebugDir.listFiles()?.findAll { it.name.endsWith(".apk") && it.name.contains("debug") }
+            def preferred = candidates?.find { it.name.startsWith("app-arm64-v8a-") }
+                    ?: candidates?.find { it.name.startsWith("app-") }
+            if (preferred != null) {
+                copyFile(preferred, "app-debug.apk")
+            }
+        }
+        def dstRelease = new File(dstApkDir, "app-release.apk")
+        if (!dstRelease.exists() && apkReleaseDir.exists()) {
+            def candidates = apkReleaseDir.listFiles()?.findAll { it.name.endsWith(".apk") && it.name.contains("release") }
+            def preferred = candidates?.find { it.name.startsWith("app-arm64-v8a-") }
+                    ?: candidates?.find { it.name.startsWith("app-") }
+            if (preferred != null) {
+                copyFile(preferred, "app-release.apk")
             }
         }
     }
 }
 afterEvaluate {
-    tasks.named("assembleDebug").configure { it.finalizedBy("syncFlutterApkToRoot") }
-    tasks.named("assembleRelease").configure { it.finalizedBy("syncFlutterApkToRoot") }
+    def hook = { String name ->
+        def t = tasks.findByName(name)
+        if (t != null) {
+            t.finalizedBy(syncFlutterApkToRoot)
+        }
+    }
+    hook("packageDebug")
+    hook("packageRelease")
+    hook("assembleDebug")
+    hook("assembleRelease")
 }
 

@@ -59,23 +59,24 @@ def detect_virtual_cables() -> list[VirtualCableDevice]:
         cable_inputs: list[tuple[int, dict, str]] = []
         cable_outputs: list[tuple[int, dict, str]] = []
 
-        for i in range(pa.get_device_count()):
-            dev = pa.get_device_info_by_index(i)
-            name = dev.get("name", "")
-            max_in = dev.get("maxInputChannels", 0)
-            max_out = dev.get("maxOutputChannels", 0)
-            matches, provider = _is_cable_device(name)
-            if not matches:
-                continue
+        try:
+            for i in range(pa.get_device_count()):
+                dev = pa.get_device_info_by_index(i)
+                name = dev.get("name", "")
+                max_in = dev.get("maxInputChannels", 0)
+                max_out = dev.get("maxOutputChannels", 0)
+                matches, provider = _is_cable_device(name)
+                if not matches:
+                    continue
 
-            # Playback device = apps send audio to (CABLE Input, Line 1 out)
-            if (max_out > 0 and max_in == 0) or ("Input" in name and "Output" not in name):
-                cable_inputs.append((i, dev, provider))
-            # Recording device = we capture from (CABLE Output, Line 1 in)
-            elif max_in > 0 or "Output" in name:
-                cable_outputs.append((i, dev, provider))
-
-        pa.terminate()
+                # Playback device = apps send audio to (CABLE Input, Line 1 out)
+                if (max_out > 0 and max_in == 0) or ("Input" in name and "Output" not in name):
+                    cable_inputs.append((i, dev, provider))
+                # Recording device = we capture from (CABLE Output, Line 1 in)
+                elif max_in > 0 or "Output" in name:
+                    cable_outputs.append((i, dev, provider))
+        finally:
+            pa.terminate()
 
         # Pair input (apps send) with output (we capture) of same provider
         used_outputs: set[int] = set()
@@ -83,7 +84,7 @@ def detect_virtual_cables() -> list[VirtualCableDevice]:
             for oidx, odev, oprov in cable_outputs:
                 if oidx in used_outputs:
                     continue
-                if iprov != oprov and (iprov == "generic" or oprov == "generic"):
+                if iprov != oprov and iprov != "generic" and oprov != "generic":
                     continue
                 prov = iprov if iprov != "generic" else oprov
                 iname = idev.get("name", "")

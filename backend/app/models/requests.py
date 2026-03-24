@@ -1,9 +1,14 @@
 """Pydantic request models for all API endpoints."""
 
 import re
+from typing import Literal, cast
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
+
+# Canonical subscription tiers (must match tier_limits table)
+Tier = Literal["free", "starter", "pro", "early_adopters"]
+_TIER_VALUES = frozenset({"free", "starter", "pro", "early_adopters"})
 
 
 # Allowed URL schemes for checkout redirects (no open redirects)
@@ -116,7 +121,18 @@ class WixSyncRequest(BaseModel):
     plan_id: str | None = None
     plan_name: str | None = None
     status: str | None = None  # e.g. ACTIVE, CANCELED
-    tier: str | None = None  # Optional: website can send tier directly when already resolved
+    tier: Tier | None = None  # Optional: website can send tier directly when already resolved
+
+    @field_validator("tier", mode="before")
+    @classmethod
+    def normalize_tier(cls, v: object) -> Tier | None:
+        """Normalize tier: valid values accepted; invalid/empty treated as None (fallback to plan mapping)."""
+        if v is None:
+            return None
+        s = str(v).strip().lower()
+        if not s or s not in _TIER_VALUES:
+            return None
+        return cast(Tier, s)
 
 
 class ApiKeyRequest(BaseModel):

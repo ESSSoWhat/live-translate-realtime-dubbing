@@ -164,10 +164,6 @@ module = "PyQt6.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "live_dubbing.audio.process_loopback"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
 module = "live_dubbing.gui.main_window"
 disable_error_code = ["has-type", "attr-defined", "no-redef"]
 

@@ -28,7 +28,7 @@ async function getMemberPlan() {
     try {
         const list = await orders.memberListOrders();
         const ordersList = list?.orders || [];
-        const active = ordersList.find(o => o.status === 'ACTIVE') || ordersList[0];
+        const active = ordersList.find(o => o.status === 'ACTIVE') ?? null;
         return {
             planId: active?.planId ?? null,
             planName: active?.planName ?? null,

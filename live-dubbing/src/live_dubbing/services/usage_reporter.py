@@ -24,9 +24,12 @@ class UsageReporter:
         self._token = access_token
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
+        self._shutdown = False
 
-    async def _client_or_new(self) -> httpx.AsyncClient:
+    async def _client_or_new(self) -> httpx.AsyncClient | None:
         async with self._client_lock:
+            if self._shutdown:
+                return None
             if self._client is None:
                 self._client = httpx.AsyncClient(
                     base_url=self._base_url,
@@ -41,6 +44,7 @@ class UsageReporter:
     async def aclose(self) -> None:
         """Close the HTTP client and release resources."""
         async with self._client_lock:
+            self._shutdown = True
             if self._client is not None:
                 await self._client.aclose()
                 self._client = None
@@ -55,6 +59,9 @@ class UsageReporter:
         """POST usage to backend; log and discard on failure."""
         try:
             client = await self._client_or_new()
+            if client is None:
+                logger.debug("Usage report skipped", reason="reporter shutting down")
+                return
             resp = await client.post(
                 "/api/v1/user/usage/report",
                 json={"event_type": event_type, "quantity": quantity},

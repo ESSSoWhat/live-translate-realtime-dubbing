@@ -77,6 +77,6 @@ Call `syncMemberTierToBackend()` when the member lands on the account/dashboard 
 ## Flow summary
 
 1. User signs up and subscribes on **Wix** (Members + Pricing Plans).
-2. On account page load (or after purchase), Velo calls **POST /billing/wix/sync** with email + plan info. Backend creates or updates the user and sets `tier` and `subscription_status`.
+2. On account page load (or after purchase), Velo calls **POST /api/v1/billing/wix/sync** with email + plan info. Backend creates or updates the user and sets `tier` and `subscription_status`.
 3. Velo calls **POST /api/v1/auth/api-key** with the member’s email; backend returns an API key. Show it on the members-only account page with instructions: “Copy this key into the desktop or mobile app.”
 4. **Desktop and mobile apps** use that API key (`Authorization: Bearer <api_key>`) for all backend requests. Backend returns tier and usage from `GET /user/usage`; usage is tracked and capped by tier.

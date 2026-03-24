@@ -8,6 +8,7 @@ class ApiConfig {
   static String? _baseUrl;
   static String? _qonversionProjectKey;
   static String? _googleWebClientId;
+  static String? _agoraAppId;
 
   static Future<void> init() async {
     const envUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
@@ -44,7 +45,11 @@ class ApiConfig {
       }
     }
     _googleWebClientId = resolved.isEmpty ? null : resolved;
+    _agoraAppId = const String.fromEnvironment('AGORA_APP_ID', defaultValue: '');
   }
+
+  static String? get agoraAppId =>
+      _agoraAppId != null && _agoraAppId!.isNotEmpty ? _agoraAppId : null;
 
   static String get baseUrl {
     final u = _baseUrl;

@@ -287,14 +287,15 @@ class ProcessingPipeline:
         # Speech buffer for STT
         self._speech_buffer: list[np.ndarray] = []
         self._speech_buffer_duration_sec = 0.0
-        self._min_stt_duration_sec = 0.5  # Minimum speech duration for STT
+        # Min ~1s avoids fragmented transcriptions; STT quality drops on very short clips (<0.8s)
+        self._min_stt_duration_sec = 1.0
         self._max_speech_buffer_sec = 8.0  # Flush to STT after this even without silence
         self._processing_start_time: float = 0.0
         self._last_stt_flush_time: float = 0.0
 
         # Silence tracking — bridge short pauses so we capture full sentences
         self._silence_count = 0  # consecutive silence chunks
-        self._silence_flush_threshold = 5  # flush after ~500ms silence
+        self._silence_flush_threshold = 6  # flush after ~600ms silence; avoids splitting mid-sentence pauses
 
         # Output suppression — prevent feedback loop when dubbed audio plays back
         # through the same device being captured (system loopback mode)

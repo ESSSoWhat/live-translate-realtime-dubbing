@@ -311,6 +311,22 @@ class MainWindow(QMainWindow):
         self._mute_cb.toggled.connect(self._on_mute_toggled)
         device_row.addWidget(self._mute_cb)
 
+        self._play_as_mic_cb = QCheckBox("Play as microphone")
+        self._play_as_mic_cb.setToolTip(
+            "Route TTS to CABLE Input so Zoom/Discord can use it as mic input"
+        )
+        self._play_as_mic_cb.setStyleSheet("QCheckBox { color: #888; font-size: 11px; }")
+        self._play_as_mic_cb.setChecked(self._settings.audio.output_play_as_mic)
+        self._play_as_mic_cb.toggled.connect(self._on_play_as_mic_toggled)
+        device_row.addWidget(self._play_as_mic_cb)
+
+        self._play_as_mic_hint = QLabel(
+            "Set your mic in Zoom/Discord to 'CABLE Output (VB-Audio Virtual Cable)'"
+        )
+        self._play_as_mic_hint.setStyleSheet("color: #888; font-size: 10px;")
+        self._play_as_mic_hint.setVisible(False)
+        device_row.addWidget(self._play_as_mic_hint)
+
         device_row.addStretch()
 
         # Middle section: Controls and status
@@ -1179,6 +1195,29 @@ class MainWindow(QMainWindow):
                 "Error handling output device change", error=str(e)
             )
 
+    @pyqtSlot(bool)
+    def _on_play_as_mic_toggled(self, checked: bool) -> None:
+        """Save play-as-mic setting and update UI."""
+        self._settings.audio.output_play_as_mic = checked
+        try:
+            ConfigManager().save(self._settings)
+        except Exception as e:
+            logger.warning("Could not save play-as-mic setting", error=str(e))
+        self._update_play_as_mic_ui()
+
+    def _update_play_as_mic_ui(self) -> None:
+        """Enable/disable play-as-mic based on VB-Cable; show helper text when on."""
+        has_cable = self._orchestrator.is_vb_cable_installed if self._orchestrator else False
+        checked = self._play_as_mic_cb.isChecked()
+        self._play_as_mic_cb.setEnabled(has_cable)
+        if not has_cable:
+            self._play_as_mic_cb.setToolTip("Install VB-Cable first (see Audio Routing Setup)")
+        else:
+            self._play_as_mic_cb.setToolTip(
+                "Route TTS to CABLE Input so Zoom/Discord can use it as mic input"
+            )
+        self._play_as_mic_hint.setVisible(checked and has_cable)
+
     def _on_volume_changed(self, value: int) -> None:
         """Update output volume from slider and persist."""
         if self._mute_cb.isChecked():
@@ -1357,6 +1396,7 @@ class MainWindow(QMainWindow):
         """Handle app initialized event."""
         self._update_capture_mode_combo()
         self._populate_capture_channels()
+        self._update_play_as_mic_ui()
         self._refresh_sessions()
         self._status_bar.set_app_state(AppState.READY)
 
@@ -1844,6 +1884,7 @@ class MainWindow(QMainWindow):
         logger.warning("Warning", message=message)
         QMessageBox.warning(self, "Warning", message)
 
+    @pyqtSlot(object)
     def _on_process_loopback_failed(self, event: Event) -> None:
         """Process loopback failed; switch to in-app system loopback."""
         err = event.data.get("error", "")

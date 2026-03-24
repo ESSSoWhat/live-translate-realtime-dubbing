@@ -213,6 +213,8 @@ Only that app's audio will be captured. Other apps play to normal speakers.
         """
         self._routing_active = False
         self._target_pid = None
+        self._capture_mode = CaptureMode.NONE
+        self._capture_device_id = None
         logger.info("Routing deactivated", pid=pid)
 
     def get_capture_device_id(self) -> str | None:

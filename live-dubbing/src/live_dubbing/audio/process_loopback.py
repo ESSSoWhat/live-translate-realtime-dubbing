@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from ctypes import wintypes
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import numpy as np
 import structlog
@@ -132,6 +132,13 @@ def _capture_loop(
 ) -> None:
     """Main capture loop for process loopback (runs in thread)."""
     ole32 = None
+    kernel32 = None
+    sample_event = None
+    audio_client = None
+    capture_client = None
+    stop_fn = None
+    ac_vtbl = None
+    cc_vtbl = None
     try:
         ole32 = ctypes.windll.ole32  # type: ignore[attr-defined]
         mmdevapi = ctypes.windll.mmdevapi  # type: ignore[attr-defined]
@@ -154,7 +161,7 @@ def _capture_loop(
                     ctypes.c_void_p,
                     ctypes.POINTER(ctypes.c_long),
                     ctypes.POINTER(ctypes.c_void_p),
-                )(ctypes.cast(vtbl[3], ctypes.c_void_p))  # type: ignore[arg-type]
+                )(ctypes.cast(vtbl[3], ctypes.c_void_p))  # type: ignore[call-overload]
 
                 hr_result = ctypes.c_long()
                 punk = ctypes.c_void_p()
@@ -217,10 +224,10 @@ def _capture_loop(
         )
 
         vtbl = (ctypes.c_void_p * 5)(
-            ctypes.cast(ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(qi), ctypes.c_void_p),  # type: ignore[arg-type]
-            ctypes.cast(ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(addref), ctypes.c_void_p),  # type: ignore[arg-type]
-            ctypes.cast(ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(release), ctypes.c_void_p),  # type: ignore[arg-type]
-            ctypes.cast(act_fn, ctypes.c_void_p),  # type: ignore[arg-type]
+            ctypes.cast(ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(qi), ctypes.c_void_p),  # type: ignore[call-overload]
+            ctypes.cast(ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(addref), ctypes.c_void_p),  # type: ignore[call-overload]
+            ctypes.cast(ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(release), ctypes.c_void_p),  # type: ignore[call-overload]
+            ctypes.cast(act_fn, ctypes.c_void_p),  # type: ignore[call-overload]
         )
         completion_obj = (ctypes.c_void_p * 2)(ctypes.addressof(vtbl), 0)
 
@@ -262,6 +269,12 @@ def _capture_loop(
 
         audio_client = result_holder["audio_client"]
 
+        # Create stop_fn early so it can be used in finally for cleanup
+        ac_vtbl = ctypes.cast(audio_client, ctypes.POINTER(ctypes.c_void_p))
+        stop_fn = ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(
+            ctypes.cast(ac_vtbl[11], ctypes.c_void_p)  # type: ignore[call-overload]
+        )
+
         class WAVEFORMATEX(ctypes.Structure):
             _fields_ = [
                 ("wFormatTag", wintypes.WORD),
@@ -272,9 +285,6 @@ def _capture_loop(
                 ("wBitsPerSample", wintypes.WORD),
                 ("cbSize", wintypes.WORD),
             ]
-
-        # IAudioClient vtbl: 0-2 IUnknown, 3 Init, 4 GetBufferSize, ...
-        ac_vtbl = ctypes.cast(audio_client, ctypes.POINTER(ctypes.c_void_p))
 
         # Use fixed 16-bit PCM 44100 stereo (matches Microsoft sample). AUTOCONVERTPCM
         # lets the system convert from native format. GetMixFormat often fails for process
@@ -305,7 +315,7 @@ def _capture_loop(
             wintypes.DWORD,
             ctypes.POINTER(WAVEFORMATEX),
             ctypes.c_void_p,
-        )(ctypes.cast(ac_vtbl[3], ctypes.c_void_p))  # type: ignore[arg-type]
+        )(ctypes.cast(ac_vtbl[3], ctypes.c_void_p))  # type: ignore[call-overload]
 
         hr = init_fn(
             audio_client,
@@ -321,7 +331,7 @@ def _capture_loop(
 
         get_buffer_size = ctypes.CFUNCTYPE(
             ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(wintypes.UINT)
-        )(ctypes.cast(ac_vtbl[4], ctypes.c_void_p))  # type: ignore[arg-type]
+        )(ctypes.cast(ac_vtbl[4], ctypes.c_void_p))  # type: ignore[call-overload]
         buffer_frames = wintypes.UINT()
         hr = get_buffer_size(audio_client, ctypes.byref(buffer_frames))
         if hr != 0:
@@ -340,7 +350,7 @@ def _capture_loop(
             ctypes.c_void_p,
             ctypes.POINTER(GUID),
             ctypes.POINTER(ctypes.c_void_p),
-        )(ctypes.cast(ac_vtbl[14], ctypes.c_void_p))  # type: ignore[arg-type]
+        )(ctypes.cast(ac_vtbl[14], ctypes.c_void_p))  # type: ignore[call-overload]
         capture_client = ctypes.c_void_p()
         hr = get_service(audio_client, ctypes.byref(iid_capture), ctypes.byref(capture_client))
         if hr != 0:
@@ -351,7 +361,7 @@ def _capture_loop(
             raise RuntimeError("CreateEvent failed")
 
         set_event_handle = ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.HANDLE)(
-            ctypes.cast(ac_vtbl[13], ctypes.c_void_p)  # type: ignore[arg-type]
+            ctypes.cast(ac_vtbl[13], ctypes.c_void_p)  # type: ignore[call-overload]
         )
         hr = set_event_handle(audio_client, sample_event)
         if hr != 0:
@@ -359,7 +369,7 @@ def _capture_loop(
             raise RuntimeError(f"SetEventHandle failed: 0x{hr:08X}")
 
         start_fn = ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(
-            ctypes.cast(ac_vtbl[10], ctypes.c_void_p)  # type: ignore[arg-type]
+            ctypes.cast(ac_vtbl[10], ctypes.c_void_p)  # type: ignore[call-overload]
         )
         hr = start_fn(audio_client)
         if hr != 0:
@@ -378,13 +388,13 @@ def _capture_loop(
             ctypes.POINTER(wintypes.DWORD),
             ctypes.POINTER(UINT64),
             ctypes.POINTER(UINT64),
-        )(ctypes.cast(cc_vtbl[3], ctypes.c_void_p))  # type: ignore[arg-type]
+        )(ctypes.cast(cc_vtbl[3], ctypes.c_void_p))  # type: ignore[call-overload]
         release_buffer_fn = ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.UINT)(
-            ctypes.cast(cc_vtbl[4], ctypes.c_void_p)  # type: ignore[arg-type]
+            ctypes.cast(cc_vtbl[4], ctypes.c_void_p)  # type: ignore[call-overload]
         )
         get_next_packet_size = ctypes.CFUNCTYPE(
             ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(wintypes.UINT)
-        )(ctypes.cast(cc_vtbl[5], ctypes.c_void_p))  # type: ignore[arg-type]
+        )(ctypes.cast(cc_vtbl[5], ctypes.c_void_p))  # type: ignore[call-overload]
 
         device_rate = 44100
         device_channels = 2
@@ -400,12 +410,12 @@ def _capture_loop(
                 from scipy import signal
 
                 num = int(len(audio) * target / orig)
-                return signal.resample(audio, num).astype(np.float32)  # type: ignore[no-any-return]
+                return cast(np.ndarray, signal.resample(audio, num).astype(np.float32))
             except ImportError:
                 ratio = target / orig
                 indices = np.arange(0, len(audio), 1 / ratio)
                 indices = np.clip(indices, 0, len(audio) - 1).astype(np.int32)
-                return audio[indices].astype(np.float32)
+                return cast(np.ndarray, audio[indices].astype(np.float32))
 
         while is_capturing.is_set():
             wait_result = kernel32.WaitForSingleObject(sample_event, 100)
@@ -472,12 +482,6 @@ def _capture_loop(
             total_chunks=plb_chunk_count,
         )
 
-        stop_fn = ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(
-            ctypes.cast(ac_vtbl[11], ctypes.c_void_p)  # type: ignore[arg-type]
-        )
-        stop_fn(audio_client)
-        kernel32.CloseHandle(sample_event)
-
     except Exception as e:
         logger.exception("Process loopback capture error", error=str(e))
         if on_error:
@@ -486,6 +490,33 @@ def _capture_loop(
             except Exception:
                 pass
     finally:
+        # Cleanup resources in reverse order of creation; guard each to handle partial setup
+        if kernel32 and sample_event:
+            try:
+                kernel32.CloseHandle(sample_event)
+            except Exception:
+                pass
+        if stop_fn and audio_client:
+            try:
+                stop_fn(audio_client)
+            except Exception:
+                pass
+        if cc_vtbl and capture_client:
+            try:
+                release_fn = ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(
+                    ctypes.cast(cc_vtbl[2], ctypes.c_void_p)  # type: ignore[call-overload]
+                )
+                release_fn(capture_client)
+            except Exception:
+                pass
+        if ac_vtbl and audio_client:
+            try:
+                release_fn = ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(
+                    ctypes.cast(ac_vtbl[2], ctypes.c_void_p)  # type: ignore[call-overload]
+                )
+                release_fn(audio_client)
+            except Exception:
+                pass
         if ole32:
             ole32.CoUninitialize()
 

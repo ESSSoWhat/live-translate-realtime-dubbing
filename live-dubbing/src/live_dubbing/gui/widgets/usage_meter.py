@@ -169,7 +169,7 @@ class UsageMeterWidget(QFrame):
                 "dubbing_seconds_limit": 1800,
             }
             self.set_tier("free")
-            self._update_display()
+        self._update_display()  # always render (cached or default) so UI never stuck on "Loading usage…"
 
     def _on_usage_fetched(self, data: dict) -> None:
         self._usage = data

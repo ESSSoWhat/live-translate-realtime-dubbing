@@ -32,9 +32,15 @@ class Settings(BaseSettings):  # pylint: disable=too-few-public-methods
     # Wix (optional — sync subscription tier from Wix Pricing Plans; call from Velo)
     wix_sync_secret: str = ""
 
+    # Twilio (optional — translated phone calls)
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_phone_number: str = ""
+
     # App
     backend_env: str = "development"
     backend_cors_origins: str = "*"
+    live_translate_public_url: str = ""  # Base URL for Twilio webhooks (e.g. https://api.example.com)
 
     @property
     def is_production(self) -> bool:

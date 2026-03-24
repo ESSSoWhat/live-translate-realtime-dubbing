@@ -240,6 +240,28 @@ class ApiClient {
     );
   }
 
+  /// POST /voice/translated-call — start a translated phone call (Twilio).
+  Future<Map<String, dynamic>> startTranslatedCall({
+    required String userPhone,
+    required String destPhone,
+    String targetLang = 'es',
+  }) async {
+    final r = await _dio.post(
+      '/voice/translated-call',
+      data: {
+        'user_phone': userPhone,
+        'dest_phone': destPhone,
+        'target_lang': targetLang,
+      },
+    );
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
   /// POST /auth/oauth/apple/id-token — login with Apple ID token.
   Future<Map<String, dynamic>> loginWithAppleIdToken(
     String idToken, {

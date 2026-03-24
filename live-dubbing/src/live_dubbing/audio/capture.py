@@ -1,6 +1,4 @@
-"""
-WASAPI audio capture using pyaudiowpatch.
-"""
+"""Audio capture using pyaudiowpatch."""
 
 import asyncio
 import contextlib
@@ -74,7 +72,7 @@ class AudioCapture:
             device_id: Device ID/index to capture from (None for default/process loopback)
             pid: Process ID for process loopback capture (overrides device_id when set)
             on_audio_chunk: Async callback for each audio chunk
-        on_process_loopback_error: Called when process loopback fails (sync, from thread)
+            on_process_loopback_error: Called when process loopback fails (sync, from thread)
         """
         if self._is_capturing.is_set():
             logger.warning("Capture already running")
@@ -92,28 +90,27 @@ class AudioCapture:
             chunk_ms=self._chunk_size_ms,
         )
 
-        self._is_capturing.set()
-
         if pid is not None:
             from live_dubbing.audio.process_loopback import (
                 is_process_loopback_supported,
                 run_process_loopback_capture,
             )
 
-            if is_process_loopback_supported():
-                run_process_loopback_capture(
-                    pid=pid,
-                    sample_rate=self._sample_rate,
-                    chunk_size_ms=self._chunk_size_ms,
-                    audio_queue=self._audio_queue,
-                    is_capturing=self._is_capturing,
-                    on_error=on_process_loopback_error,
-                )
-            else:
+            if not is_process_loopback_supported():
                 raise RuntimeError(
                     "Process loopback requires Windows 10 21H2+ (build 20348)."
                 )
+            self._is_capturing.set()
+            run_process_loopback_capture(
+                pid=pid,
+                sample_rate=self._sample_rate,
+                chunk_size_ms=self._chunk_size_ms,
+                audio_queue=self._audio_queue,
+                is_capturing=self._is_capturing,
+                on_error=on_process_loopback_error,
+            )
         else:
+            self._is_capturing.set()
             self._capture_thread = threading.Thread(
                 target=self._capture_loop,
                 daemon=True,

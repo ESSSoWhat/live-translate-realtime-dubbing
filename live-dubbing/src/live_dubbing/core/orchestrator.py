@@ -109,44 +109,22 @@ class Orchestrator:
         except Exception as e:
             logger.exception("Failed to initialize orchestrator", error=str(e))
             self._set_app_state(AppState.ERROR)
-            self._event_bus.emit_error(f"Initialization failed: {redact_secrets(str(e))}")
 
-    async def shutdown(self) -> None:
-        """Shutdown all subsystems."""
-        logger.info("Shutting down orchestrator")
-
-        # Stop translation if active (running, cloning, or translating)
-        if self._translation_state != TranslationState.IDLE:
-            await self.stop_translation()
-
-        # Unsubscribe from events
-        for unsub in self._event_unsubscribers:
-            unsub()
-        self._event_unsubscribers.clear()
-
-        # Cleanup subsystems
-        if self._processing_pipeline:
-            await self._processing_pipeline.stop()
-        if self._audio_capture:
-            await self._audio_capture.stop()
-        if self._audio_playback:
-            await self._audio_playback.stop()
-
-        self._event_bus.emit(EventType.APP_SHUTDOWN, {})
-        logger.info("Orchestrator shutdown complete")
 
     async def _check_vb_cable(self) -> None:
-        """Check process loopback support. App uses in-app capture (no external cable)."""
+        """Check process loopback support and VB-Cable for play-as-mic."""
         from live_dubbing.audio.in_app_capture import is_process_loopback_supported
         from live_dubbing.audio.routing import VirtualAudioRouter
 
-        self._vb_cable_installed = False  # Not used; in-app capture only
         router = VirtualAudioRouter()
         router.detect_virtual_devices()  # For get_default_output_device
+        self._vb_cable_installed = router.is_vb_cable_installed()
         self._process_loopback_supported = is_process_loopback_supported()
 
         if self._process_loopback_supported:
             logger.info("Process loopback supported (Windows 10 21H2+)")
+        if self._vb_cable_installed:
+            logger.info("VB-Cable installed (available for play-as-mic)")
         logger.info("Using in-app software capture (system loopback)")
 
     async def _init_audio_subsystems(self) -> None:
@@ -416,6 +394,10 @@ class Orchestrator:
             # Start playback with configured output device
             if self._audio_playback:
                 out_id = self._settings.audio.output_device_id
+                if self._settings.audio.output_play_as_mic and self._audio_routing:
+                    cable = self._audio_routing.get_vb_cable()
+                    if cable and cable.input_id:
+                        out_id = cable.input_id
                 self._audio_playback.set_volume(self._settings.audio.output_volume)
                 await self._audio_playback.start(device_id=out_id or None)
 
@@ -596,6 +578,15 @@ class Orchestrator:
             return
 
         device_id = self._audio_routing.get_capture_device_id()
+        if not device_id:
+            logger.error("No audio capture device available for system loopback fallback")
+            self._event_bus.emit_warning(
+                "Process loopback failed and no system loopback device found. "
+                "Use 'All system audio' mode instead."
+            )
+            await self.stop_translation()
+            return
+
         self._audio_routing.set_capture_mode(CaptureMode.SYSTEM_LOOPBACK)
 
         # Restart capture with device

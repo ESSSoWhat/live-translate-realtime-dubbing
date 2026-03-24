@@ -335,6 +335,25 @@ class BackendProxyService:
         )
         return response.json()["voice_id"]
 
+    async def clone_voice_from_file(
+        self,
+        file_path: str,
+        name: str,
+        description: str | None = None,
+    ) -> str:
+        """Clone a voice from an audio file."""
+        import os
+
+        with open(file_path, "rb") as f:
+            audio_data = f.read()
+        filename = os.path.basename(file_path) or "audio.wav"
+        return await self.clone_voice(
+            audio_data=audio_data,
+            name=name,
+            description=description,
+            filename=filename,
+        )
+
     async def list_voices(self) -> list[dict]:
         """Return all available voices."""
         response = await self._request("GET", "/api/v1/proxy/voices", headers={})
