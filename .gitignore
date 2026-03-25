@@ -53,6 +53,8 @@ Desktop.ini
 # Android
 **/android/.gradle/
 **/local.properties
+# Eclipse / Buildship / IDE (machine-specific java.home, init scripts, etc.)
+android/.settings/
 
 # Large binary files (exceed GitHub 100MB limit)
 JDK/lib/modules
