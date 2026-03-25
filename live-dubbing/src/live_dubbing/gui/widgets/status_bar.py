@@ -3,7 +3,7 @@ Status bar widget showing application state.
 """
 
 
-from PyQt6.QtWidgets import (
+from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module  # pyright: ignore[reportMissingImports]
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -77,10 +77,13 @@ class StatusBar(QWidget):
         # Separator
         layout.addStretch()
 
-        # Capture status (in-app software capture)
-        self._vb_label = QLabel("Capture: Built-in")
-        self._vb_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
-        self._vb_label.setToolTip("In-app software capture (system/process loopback)")
+        # Capture status (virtual cable for play-as-mic; updated from orchestrator)
+        self._vb_label = QLabel("Capture: --")
+        self._vb_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        self._vb_label.setToolTip(
+            "Virtual audio cable (e.g. VB-Cable) for play-as-mic routing. "
+            "In-app loopback capture does not require this."
+        )
         layout.addWidget(self._vb_label)
 
         # API status
@@ -141,12 +144,15 @@ class StatusBar(QWidget):
             self._indicator.set_state("error")
 
     def set_vb_cable_status(self, installed: bool) -> None:
-        """Update capture status (kept for API compat; always built-in now)."""
+        """Update capture availability: virtual cable detected (True) or not (False).
+
+        Name kept for API compatibility with existing callers.
+        """
         if installed:
-            self._vb_label.setText("Capture: Built-in")
+            self._vb_label.setText("Capture: Available")
             self._vb_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
         else:
-            self._vb_label.setText("Virtual cable: Missing")
+            self._vb_label.setText("Capture: Unavailable")
             self._vb_label.setStyleSheet("font-size: 12px; color: #F44336;")
 
     def set_api_status(self, configured: bool) -> None:

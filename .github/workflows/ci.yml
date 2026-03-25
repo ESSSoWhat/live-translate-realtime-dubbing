@@ -83,23 +83,41 @@ jobs:
           cd mobile
           flutter test
 
+      # Flutter expects mobile/build/app/outputs/flutter-apk/app-debug.apk. AGP may only emit
+      # build/app/outputs/apk/debug/*.apk or android/app/build/... — recover if the CLI exits 1.
       - name: Build APK
         run: |
           cd mobile
           set +e
           flutter build apk --debug
           FL=$?
-          set -e
           DST="build/app/outputs/flutter-apk"
           mkdir -p "$DST"
           if [ ! -f "$DST/app-debug.apk" ]; then
-            FOUND=$(find android -path "*/outputs/*" \( -name "app-debug.apk" -o -name "app-arm64-v8a-debug.apk" -o -name "app-*-debug.apk" \) -type f 2>/dev/null | head -1)
+            for cand in \
+              "build/app/outputs/flutter-apk/app-debug.apk" \
+              "build/app/outputs/apk/debug/app-debug.apk" \
+              "build/app/outputs/apk/debug/app-arm64-v8a-debug.apk" \
+              "android/app/build/outputs/flutter-apk/app-debug.apk" \
+              "android/app/build/outputs/apk/debug/app-debug.apk" \
+              "android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk"
+            do
+              if [ -f "$cand" ]; then
+                cp "$cand" "$DST/app-debug.apk"
+                break
+              fi
+            done
+          fi
+          if [ ! -f "$DST/app-debug.apk" ]; then
+            FOUND=""
+            FOUND=$(find . -type f \( -name "app-debug.apk" -o -name "app-arm64-v8a-debug.apk" \) 2>/dev/null | head -1) || true
             if [ -n "$FOUND" ]; then
               cp "$FOUND" "$DST/app-debug.apk"
             fi
           fi
           if [ ! -f "$DST/app-debug.apk" ]; then
-            echo "::error::No debug APK under $DST or android/.../outputs/ (flutter exit $FL)"
+            echo "::error::No debug APK in $DST after recovery (flutter exit $FL)"
+            find . -type f -name "*.apk" 2>/dev/null | head -30 || true
             exit 1
           fi
           exit 0
