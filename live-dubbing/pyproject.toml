@@ -176,7 +176,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.pyright]
-reportMissingImports = "none"
+reportMissingImports = "warning"
 reportMissingModuleSource = false
 
 [tool.pylint.messages_control]

@@ -16,7 +16,7 @@ import {
 } from '@wix/design-system';
 import '@wix/design-system/styles.global.css';
 import * as Icons from '@wix/wix-ui-icons-common';
-import { getApiKey, syncMemberTier } from '../../backend/sync.web';
+import { getApiKey, syncMemberTier } from '../../../../backend/sync.web';
 
 interface ApiKeyData {
   apiKey: string;
