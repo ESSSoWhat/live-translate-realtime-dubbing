@@ -14,7 +14,7 @@ To learn more, check out our documentation: https://wix.to/6LV6Oka.
 import { webMethod, Permissions } from '@wix/web-methods';
 
 export const multiply = webMethod(
-  Permissions.Anyone,
+  Permissions.SiteMember,
   (a: number, b: number) => {
     return a * b;
   },

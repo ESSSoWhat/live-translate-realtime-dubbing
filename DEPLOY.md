@@ -63,6 +63,12 @@ Deploy backend, website (Wix), mobile (Android/iOS), and desktop (Windows). All 
   - In **Velo**: add code to call backend **POST /billing/wix/sync** and **POST /auth/api-key** (see [backend/WIX_SYNC.md](backend/WIX_SYNC.md)). Store backend URL and `WIX_SYNC_SECRET` in Wix Secrets Manager.  
   - Members-only account page: after sync, call API-key endpoint and show the key once so users can copy it into the desktop/mobile app.
 
+- **Wix CLI apps (`wix-app/`)**  
+  - Dashboard / embedded apps built with `@wix/cli` (e.g. `wix-app/live-translate-jsw`, `wix-app/blank-canvas`).  
+  - **Login once:** `npx wix login` from the app folder (or repo root with `npx wix`).  
+  - **Release a new version:** `cd wix-app/<app-name>` → `npm run release` (runs `wix app release`). Use `-t minor|major` and `-c "comment"` if needed (`npx wix app release --help`).  
+  - **Interactive terminal:** The release flow opens prompts after upload/preview; run it in a normal TTY (Windows Terminal, PowerShell, or VS Code/Cursor integrated terminal). Agent or piped non-interactive shells may fail with an Ink/raw-mode error.
+
 - **Optional: Next.js (website/)**  
   - If you keep the repo’s Next.js site for a separate dashboard or marketing, deploy to Vercel/Netlify with root `website/`. For a Wix-only setup, the live site is Wix; Next.js can be used for internal or redirect pages only.
 
