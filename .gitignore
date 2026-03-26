@@ -49,13 +49,26 @@ Desktop.ini
 # Dart / Flutter
 .dart_tool/
 .flutter-plugins-dependencies
+# Local Flutter SDK checkout (use PATH / FVM / official install)
+flutter/
 
 # Android
 **/android/.gradle/
+**/android/app/.cxx/
+**/.cxx/
 **/local.properties
 # Eclipse / Buildship / IDE (machine-specific java.home, init scripts, etc.)
-android/.settings/
+android/.settings/*
+!android/.settings/org.eclipse.buildship.core.prefs
+
+# Local JDK installs / archives (use Android Studio JBR, Temurin 17, or CI)
+JDK/
+
+# Pub cache if created inside the repo (prefer global PUB_CACHE)
+mobile/.pub-cache/
+
+# Root-level Flutter Windows ephemeral output (non-standard layout)
+windows/flutter/ephemeral/
 
 # Large binary files (exceed GitHub 100MB limit)
-JDK/lib/modules
 *.pdb
