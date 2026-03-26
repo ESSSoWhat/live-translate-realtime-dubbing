@@ -1,6 +1,6 @@
 # Android host project (Flutter)
 
-This directory is the **Android Gradle wrapper** for the Flutter app. The Dart/Flutter sources live at the repo root; see the main [README](../README.md).
+This directory is a **root-level Android Gradle wrapper** (`applicationId` **com.livetranslate**). The primary Flutter app lives under [`mobile/`](../mobile/); its Android tree is [`mobile/android/`](../mobile/android/) (**app.livetranslate.live_translate_mobile**). CI builds from `mobile/` — open this project only if you maintain the `com.livetranslate` variant. See the main [README](../README.md).
 
 ## JDK requirement
 

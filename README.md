@@ -16,8 +16,8 @@ Real-time audio translation and voice-cloned dubbing. Capture audio, translate w
 |-------------|-------------|
 | `live-dubbing/` | Windows desktop app (PyQt6, Python). App dubbing + mic translate. |
 | `backend/`      | FastAPI server: auth (Supabase), API proxy (ElevenLabs), billing (Stripe), usage. |
-| `mobile/`       | Flutter app (Android/iOS). Mic translation, auth, paywall. |
-| `android/`      | Flutter Android host Gradle project (JDK 17; see [android/README.md](android/README.md)). |
+| `mobile/`       | Flutter app (Android/iOS). Mic translation, auth, paywall. CI and day-to-day builds use **`mobile/android/`** (`app.livetranslate.live_translate_mobile`). |
+| `android/`      | Separate root-level Android Gradle host (JDK 17; see [android/README.md](android/README.md)). Uses **`com.livetranslate`** — not the same package as `mobile/android/`. |
 | `website/`      | Next.js app (local/dev or optional deploy). **Public site:** [www.livetranslate.net](https://www.livetranslate.net) on **Wix** — marketing, downloads, account. |
 
 ## Quick start
