@@ -1,2 +1,0 @@
-D:/Live Translate/android/app/.cxx/release/5u495o40/armeabi-v7a/CMakeFiles/edit_cache.dir
-D:/Live Translate/android/app/.cxx/release/5u495o40/armeabi-v7a/CMakeFiles/rebuild_cache.dir
