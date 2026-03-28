@@ -5,7 +5,7 @@ This directory is a **root-level Android Gradle wrapper** (`applicationId` **com
 ## JDK requirement
 
 - Use **JDK 17** (matches `compileOptions` / `JavaVersion.VERSION_17` in `app/build.gradle.kts`).
-- **Do not** commit IDE-specific JDK paths (e.g. Eclipse Buildship `java.home` under `.settings/`).
+- **Do not** commit Eclipse/IDE metadata under `.settings/` (Buildship prefs include machine-specific `java.home`, init script paths, etc.). Those directories stay gitignored.
 
 ### Recommended setup
 

@@ -58,8 +58,9 @@ flutter/
 **/.cxx/
 **/local.properties
 # Eclipse / Buildship / IDE (machine-specific java.home, init scripts, etc.)
-android/.settings/*
-!android/.settings/org.eclipse.buildship.core.prefs
+# Do not commit — see android/README.md
+**/android/.settings/
+**/android/app/.settings/
 
 # Local JDK installs / archives (use Android Studio JBR, Temurin 17, or CI)
 JDK/
