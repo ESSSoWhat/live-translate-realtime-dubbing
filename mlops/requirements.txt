@@ -1,0 +1,4 @@
+# Terraform CLI is not published on PyPI. Install it in CI with hashicorp/setup-terraform
+# (see .github/workflows/mlops-ci-cd.yml), not via pip.
+docker>=6.1.0
+kubernetes>=28.1.0
