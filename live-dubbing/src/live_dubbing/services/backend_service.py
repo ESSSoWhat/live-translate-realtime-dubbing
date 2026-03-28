@@ -85,7 +85,7 @@ class BackendProxyService:
         Uses a plain ``httpx.Client`` (no bearer header).
 
         Args:
-            base_url:      Backend root URL (e.g. ``https://api.livetranslate.app``).
+            base_url:      Backend root URL (e.g. ``https://api.livetranslate.net``).
             redirect_uri:  The local callback URL to embed in the OAuth request
                            (e.g. ``http://localhost:8821/``).
 

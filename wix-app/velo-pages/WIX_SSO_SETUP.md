@@ -75,7 +75,7 @@ On the api-key page's markup (in Wix Editor):
 **BACKEND_URL** (in `api-key.web.js`):
 
 - This must be the actual base URL of your FastAPI backend.
-- Example: `https://api.livetranslate.app`.
+- Example: `https://api.livetranslate.net` (same default as `api-key.web.js` and `sync.web.ts`).
 - If APIs are at a different domain (e.g. `https://api.live-translate.com`), change the constant.
 - All frontend calls to sync/auth use this URL.
 

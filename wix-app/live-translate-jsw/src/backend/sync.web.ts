@@ -11,6 +11,7 @@
 import { customTrigger } from '@wix/automations';
 
 // Configuration from environment variables (set via `wix env set`)
+/** Default must match `velo-pages/api-key.web.js` — see `wix-app/BACKEND_URL.md`. */
 const BACKEND_URL = import.meta.env.BACKEND_URL || 'https://api.livetranslate.net';
 const WIX_SYNC_SECRET = import.meta.env.WIX_SYNC_SECRET;
 const AUTOMATION_TRIGGER_ID = '376cab86-5237-40e8-b0fa-cabfbf63ba9f';

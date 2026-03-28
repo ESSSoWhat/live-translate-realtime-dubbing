@@ -17,7 +17,7 @@ class ApiConfig {
       u = envUrl;
     } else {
       // Local FastAPI (`cd backend && uvicorn app.main:app --reload` on port 8000).
-      // Do not default to `api.livetranslate.app` — it has no public DNS as of now.
+      // Production API host: `https://api.livetranslate.net/` (see wix-app/BACKEND_URL.md).
       // Android emulator → host machine via 10.0.2.2; iOS simulator & desktop → 127.0.0.1.
       // Physical phones & production store builds: pass `--dart-define=API_BASE_URL=https://.../`.
       if (Platform.isAndroid) {

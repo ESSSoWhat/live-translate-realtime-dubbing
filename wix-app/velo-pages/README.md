@@ -140,7 +140,7 @@ Check:
 
 1. Ensure `api-key-page.js` is deployed on your Wix api-key page with the `redirect_uri` logic
 2. The api-key page must call `syncMemberToBackend` then `getApiKeyForMember`
-3. `api-key.web.js` `BACKEND_URL` must match your deployed backend (api.livetranslate.app or your URL)
+3. `api-key.web.js` `BACKEND_URL` must match your deployed backend (default `https://api.livetranslate.net` — see `wix-app/BACKEND_URL.md`)
 4. `WIX_SYNC_SECRET` in Wix Secrets Manager must match backend's `WIX_SYNC_SECRET`
 5. **Fallback:** If redirect fails, copy your API key from the website and paste it in the app
 

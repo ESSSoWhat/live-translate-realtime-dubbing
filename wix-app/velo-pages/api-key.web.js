@@ -7,7 +7,7 @@
  * The WIX_SYNC_SECRET is never exposed to the frontend.
  *
  * Config:
- * - BACKEND_URL: Base URL of your FastAPI backend (e.g. https://api.livetranslate.app).
+ * - BACKEND_URL: Base URL of your FastAPI backend (default matches sync.web.ts — see wix-app/BACKEND_URL.md).
  *   If APIs live at a different domain, update this. All frontend sync/auth calls use it.
  * - WIX_SYNC_SECRET: Set in Wix Secrets Manager. Must exactly match backend WIX_SYNC_SECRET.
  *   Mismatch between prod/staging will break sync and API-key provisioning.
@@ -18,7 +18,7 @@ import { getSecret } from 'wix-secrets-backend';
 import { orders } from 'wix-pricing-plans.v2';
 
 // Base URL of backend (POST /api/v1/billing/wix/sync, POST /api/v1/auth/api-key)
-const BACKEND_URL = 'https://api.livetranslate.app';
+const BACKEND_URL = 'https://api.livetranslate.net';
 
 /**
  * Get current member's active subscription plan from Wix Pricing Plans.
