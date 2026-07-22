@@ -19,9 +19,9 @@ Wix Members + Pricing Plans → Velo calls `POST /api/v1/billing/wix/sync` and `
 - FIXED: `wix-app/velo-pages/app-auth-page.js` used undefined `wixLocation.query` → `wixLocationFrontend.query`. This crashed the SSO entry page (root cause candidate for "subscription linking stuck").
 
 ## Backlog to finalize production
-- P0: Confirm real Wix plan names and align `billing.py::_wix_plan_to_tier` (or send `tier` from Velo) so paid users get correct tier.
+- P0: ~~Confirm real Wix plan names and align `billing.py::_wix_plan_to_tier`~~ REFACTORED into editable `_WIX_PLAN_ID_TO_TIER` / `_WIX_PLAN_NAME_TO_TIER` / `_WIX_KEYWORD_TO_TIER` tables at top of billing.py. User must drop in their exact plan IDs/names (prefer plan-ID matching — stable).
 - P0 (config): matching `WIX_SYNC_SECRET` (Wix Secrets ↔ backend), correct `BACKEND_URL` in `api-key.web.js` + `sync.web.ts`, publish `/api-key` (Members) + `/app-auth` (public), run `supabase_schema.sql`.
-- P1: ~~Fix `auth.py::_default_usage` limits to match schema~~ DONE (starter 18000s, pro 54000s, added early_adopters). Add `early_adopters` to `sync.web.ts` MemberInfo type. Decide Stripe path (fill price IDs or hide).
+- P1: ~~Fix `auth.py::_default_usage`~~ DONE. ~~Add `early_adopters` to `sync.web.ts` MemberInfo~~ DONE. ~~Decide Stripe path~~ DONE — Stripe HIDDEN: /plans, /checkout, /portal all 503 when unconfigured; no client calls them; upgrades route to Wix /upgrade.
 - P1 (deploy): mobile release signing + dart-defines; desktop CI `FFMPEG_DIR`; set `BACKEND_ENV=production` + explicit `BACKEND_CORS_ORIGINS`.
 - P2: Migrate FastAPI `on_event` → lifespan; improve usage metering accuracy.
 

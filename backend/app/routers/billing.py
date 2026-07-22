@@ -58,7 +58,13 @@ def _stripe() -> stripe.Stripe:
 
 @router.get("/plans", response_model=list[PlanInfo])
 async def list_plans() -> list[PlanInfo]:
-    """Return all available subscription tiers."""
+    """Return all available subscription tiers (Stripe path only)."""
+    if not _stripe_configured():
+        # Stripe is intentionally disabled; billing/upgrades are handled by Wix.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Stripe billing is disabled. Subscriptions are managed via Wix.",
+        )
     sb = await get_supabase()
     result = await sb.table("tier_limits").select("*").neq("tier", "free").execute()
     plans = []
@@ -310,24 +316,66 @@ def _qonversion_product_to_tier(product_id: str | None) -> str:
     return "free"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Wix Pricing Plan → backend tier mapping.
+#
+# EDIT THIS to match your real Wix plans (Wix Dashboard → Pricing Plans).
+# Matching is checked in order:
+#   1. Exact Wix plan ID (GUID) — most stable, preferred. Add "<plan-id>": "<tier>".
+#   2. Exact plan name (case-insensitive).
+#   3. Keyword-in-name fallback (case-insensitive substring).
+# First match wins. Anything unmatched → "free".
+#
+# Tier caps (see supabase_schema.sql / WIX_SYNC.md):
+#   free 30 min • starter (Hobby) 5 hr • pro 15 hr • early_adopters unlimited
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 1. Stable plan-ID → tier (fill with your Wix plan GUIDs; recommended).
+_WIX_PLAN_ID_TO_TIER: dict[str, str] = {
+    # "d7f3a1b2-....": "pro",
+    # "9c2e5f01-....": "starter",
+    # "1a4b7c88-....": "early_adopters",
+}
+
+# 2. Exact plan name (lowercased) → tier.
+_WIX_PLAN_NAME_TO_TIER: dict[str, str] = {
+    "early adopters life time access": "early_adopters",
+    "early adopters lifetime access": "early_adopters",
+    "monthly language unlocked - pro tier": "pro",
+    "monthly language unlocked - hobby tier": "starter",
+    "free trial": "free",
+}
+
+# 3. Keyword substrings (checked in order) → tier. Broad fallback.
+_WIX_KEYWORD_TO_TIER: tuple[tuple[str, str], ...] = (
+    ("early adopters", "early_adopters"),
+    ("lifetime", "early_adopters"),
+    ("pro tier", "pro"),
+    ("pro", "pro"),
+    ("hobby", "starter"),
+    ("starter", "starter"),
+    ("free trial", "free"),
+)
+
+
 def _wix_plan_to_tier(plan_id: str | None, plan_name: str | None) -> str:
-    """Map Wix plan id/name to backend tier. Limits: free 30min, starter 15hr, pro 25hr, early_adopters unlimited."""
-    for val in (plan_id, plan_name):
-        if not val:
-            continue
-        v = (val or "").lower()
-        if "early adopters" in v or "lifetime" in v and "early" in v:
-            return "early_adopters"
-        if "monthly language unlocked - pro tier" in v or "pro tier" in v:
-            return "pro"
-        if "monthly language unlocked - hobby" in v or "hobby tier" in v:
-            return "starter"
-        if "free trial" in v:
-            return "free"  # 30 min/month
-        if "pro" in v:
-            return "pro"
-        if "starter" in v or "hobby" in v:
-            return "starter"
+    """Map a Wix plan id/name to a backend tier (free/starter/pro/early_adopters)."""
+    # 1. Match on stable plan ID first.
+    if plan_id and plan_id.strip() in _WIX_PLAN_ID_TO_TIER:
+        return _WIX_PLAN_ID_TO_TIER[plan_id.strip()]
+
+    name = (plan_name or "").strip().lower()
+    if not name:
+        return "free"
+
+    # 2. Exact name match.
+    if name in _WIX_PLAN_NAME_TO_TIER:
+        return _WIX_PLAN_NAME_TO_TIER[name]
+
+    # 3. Keyword fallback.
+    for keyword, tier in _WIX_KEYWORD_TO_TIER:
+        if keyword in name:
+            return tier
     return "free"
 
 
