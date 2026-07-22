@@ -21,7 +21,7 @@ Wix Members + Pricing Plans → Velo calls `POST /api/v1/billing/wix/sync` and `
 ## Backlog to finalize production
 - P0: Confirm real Wix plan names and align `billing.py::_wix_plan_to_tier` (or send `tier` from Velo) so paid users get correct tier.
 - P0 (config): matching `WIX_SYNC_SECRET` (Wix Secrets ↔ backend), correct `BACKEND_URL` in `api-key.web.js` + `sync.web.ts`, publish `/api-key` (Members) + `/app-auth` (public), run `supabase_schema.sql`.
-- P1: Fix `auth.py::_default_usage` limits to match schema (starter 18000s, pro 54000s). Add `early_adopters` to `sync.web.ts` MemberInfo type. Decide Stripe path (fill price IDs or hide).
+- P1: ~~Fix `auth.py::_default_usage` limits to match schema~~ DONE (starter 18000s, pro 54000s, added early_adopters). Add `early_adopters` to `sync.web.ts` MemberInfo type. Decide Stripe path (fill price IDs or hide).
 - P1 (deploy): mobile release signing + dart-defines; desktop CI `FFMPEG_DIR`; set `BACKEND_ENV=production` + explicit `BACKEND_CORS_ORIGINS`.
 - P2: Migrate FastAPI `on_event` → lifespan; improve usage metering accuracy.
 

@@ -36,7 +36,15 @@ def _default_usage(tier: str = "free") -> dict:
         period_end = date(today.year + 1, 1, 1) - timedelta(days=1)
     else:
         period_end = date(today.year, today.month + 1, 1) - timedelta(days=1)
-    limits = {"free": (1800, 50000, 1800, 50000, 1), "starter": (7200, 200000, 7200, 200000, 3), "pro": (36000, 1000000, 36000, 1000000, 10)}
+    # Must match tier_limits in supabase_schema.sql / WIX_SYNC.md:
+    # free 30min, starter (Hobby) 5hr, pro 15hr, early_adopters unlimited.
+    _UNLIMITED = 2147483647
+    limits = {
+        "free": (1800, 50000, 1800, 50000, 1),
+        "starter": (18000, 500000, 18000, 500000, 5),
+        "pro": (54000, 2000000, 54000, 2000000, 20),
+        "early_adopters": (_UNLIMITED, _UNLIMITED, _UNLIMITED, _UNLIMITED, 99),
+    }
     dub, tts, stt, trans, clones = limits.get(tier, limits["free"])
     return {
         "dubbing_seconds_used": 0, "dubbing_seconds_limit": dub,
