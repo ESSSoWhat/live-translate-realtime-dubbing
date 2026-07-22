@@ -40,7 +40,7 @@ export interface ApiKeyResult {
 
 export interface MemberInfo {
   email: string;
-  tier?: 'free' | 'starter' | 'pro';
+  tier?: 'free' | 'starter' | 'pro' | 'early_adopters';
 }
 
 /**
