@@ -379,6 +379,16 @@ def _wix_plan_to_tier(plan_id: str | None, plan_name: str | None) -> str:
     return "free"
 
 
+def active_wix_tier_mapping() -> dict:
+    """Return a summary of the active Wix plan->tier mapping (for startup logging)."""
+    return {
+        "plan_ids": dict(_WIX_PLAN_ID_TO_TIER),
+        "plan_names": dict(_WIX_PLAN_NAME_TO_TIER),
+        "keywords": [f"{k}->{t}" for k, t in _WIX_KEYWORD_TO_TIER],
+    }
+
+
+
 def _wix_sync_configured() -> bool:
     """Return True if Wix sync secret is set."""
     return bool((get_settings().wix_sync_secret or "").strip())

@@ -110,7 +110,15 @@ def create_app() -> FastAPI:
 
     @application.on_event("startup")
     async def on_startup() -> None:
+        from app.routers.billing import active_wix_tier_mapping
+
         logger.info("Live Translate API starting", env=cfg.backend_env)
+        logger.info(
+            "Wix plan->tier mapping active",
+            wix_sync_configured=bool((cfg.wix_sync_secret or "").strip()),
+            stripe_configured=bool((cfg.stripe_secret_key or "").strip()),
+            **active_wix_tier_mapping(),
+        )
 
     return application
 
