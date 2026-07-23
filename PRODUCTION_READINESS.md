@@ -76,7 +76,7 @@ The sync path is: Wix Velo → `POST /api/v1/billing/wix/sync` (+ `POST /api/v1/
 | Backend (FastAPI) | Boots, tests pass, endpoints behave | Set env vars; run schema; confirm Wix plan mapping |
 | Wix site / Velo | Code present; SSO entry bug fixed | Publish pages w/ correct slugs; matching `WIX_SYNC_SECRET`; correct `BACKEND_URL` |
 | Mobile (Flutter) | Config env-driven | Release signing secrets; dart-defines; store listings |
-| Desktop (Windows) | Build spec present | CI `FFMPEG_DIR`; optional Inno Setup signing |
+| Desktop (Windows) | Build spec present; CI now builds installer | Push a `v*` tag to trigger the Windows release job |
 | Website pages (static) | `account/download/login/upgrade.html` present | Confirm they align with Wix production (Wix is the live site) |
 
 ---

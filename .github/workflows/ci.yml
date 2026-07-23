@@ -197,11 +197,21 @@ jobs:
         run: |
           Compress-Archive -Path "live-dubbing\dist\LiveTranslate\*" -DestinationPath "LiveTranslate-${{ github.ref_name }}.zip"
 
+      - name: Build installer (Inno Setup)
+        run: |
+          choco install innosetup -y
+          cd live-dubbing
+          Copy-Item .env.example .env -Force
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$ver" installer.iss
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: LiveTranslate-${{ github.ref_name }}.zip
+          files: |
+            LiveTranslate-${{ github.ref_name }}.zip
+            live-dubbing/dist/LiveTranslate-*-Setup.exe
 
   desktop-tests:
     name: Desktop tests (Windows)
