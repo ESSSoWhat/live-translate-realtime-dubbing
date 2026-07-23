@@ -33,5 +33,14 @@ Wix Members + Pricing Plans → Velo calls `POST /api/v1/billing/wix/sync` and `
 - Added `backend/server.py` shim so the Emergent supervisor (`uvicorn server:app`) can run this repo (prod still uses `app.main:app`). Sandbox `backend/.env` has WIX_SYNC_SECRET=test-secret-123, Supabase intentionally blank.
 
 ## Credentials
-No secrets committed (no backend `.env`; `.env.example` present). All keys must be set in deploy env / Wix Secrets Manager.
-NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix secret is named `LT_SYNC_SECRET` (Velo reads `getSecret('LT_SYNC_SECRET')`); its value must equal the backend env `WIX_SYNC_SECRET`. Fixed in api-key.web.js, sync.web.ts + setup docs after user hit "Some fields have invalid or missing information."
+No secrets committed (no backend `.env`; `.env.example` present). `.env` is gitignored. All keys must be set in deploy env / Wix Secrets Manager.
+NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix secret is named `LT_SYNC_SECRET` (Velo reads `getSecret('LT_SYNC_SECRET')`); its value must equal the backend env `WIX_SYNC_SECRET`.
+
+## Supabase (project ref djjmuvzwjapkeydqdgbu, region ap-southeast-1) — VERIFIED LIVE
+- User adopted Supabase's NEW API key format (`sb_secret_`/`sb_publishable_`). supabase-py 2.10.0 rejected it (JWT-regex check). UPGRADED supabase==2.31.0 + pydantic==2.13.4 in requirements.txt (installable, 5 tests pass, ruff clean, imports OK).
+- Proved end-to-end against LIVE prod Supabase: POST /billing/wix/sync (plan_id 146fe70b→pro) → 200 user_created tier=pro; POST /auth/api-key → 200 api_key+tier. Test users cleaned up.
+- Backend env mapping: SUPABASE_SERVICE_ROLE_KEY = the `sb_secret_...` value (works with 2.31.0). SUPABASE_URL=https://djjmuvzwjapkeydqdgbu.supabase.co. Schema already applied (tier_limits seeded, matches code).
+- STILL NEEDED for usage tracking: SUPABASE_DB_URL (asyncpg) — needs DB password; ap-southeast-1 pooler host. SUPABASE_JWT_SECRET only needed for Supabase email/password + OAuth login endpoints (new projects use asymmetric JWKS — those endpoints import-verified but NOT live-tested; Wix flow uses API keys, no JWT needed).
+- S3 storage keys the user provided are NOT used by this backend (no object storage feature).
+- ACTION: user must ROTATE the sb_secret_ key (pasted in chat) and remove leftover test users (test@example.com, test1@example.com, audit_run_test@example.com); son-luu@hotmail.com looks like a real member — left intact.
+- Removed brittle testing-agent file tests/test_wix_billing_integration.py (asserted sandbox-only 503s, wrote to live DB, would break CI).
