@@ -1,16 +1,34 @@
-"""FastAPI dependencies — JWT or API key auth, current user."""
+"""FastAPI dependencies — JWT (Supabase JWKS/HS256) or API key auth, current user."""
 
 from __future__ import annotations
 
 import logging
 
+import jwt  # PyJWT
 from fastapi import Header, HTTPException, status
-from jose import JWTError, jwt  # type: ignore[import-untyped]
+from jwt import PyJWKClient
 
 from app.config import get_settings
 from app.services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
+
+# Cached PyJWKClient (fetches + caches Supabase's asymmetric signing keys, handles rotation).
+_jwks_client: PyJWKClient | None = None
+
+
+def _get_jwks_client() -> PyJWKClient:
+    """Return a cached PyJWKClient for the project's JWKS endpoint."""
+    global _jwks_client  # pylint: disable=global-statement
+    if _jwks_client is None:
+        base = get_settings().supabase_url.rstrip("/")
+        _jwks_client = PyJWKClient(
+            f"{base}/auth/v1/.well-known/jwks.json",
+            cache_keys=True,
+            cache_jwk_set=True,
+            lifespan=3600,
+        )
+    return _jwks_client
 
 
 def _looks_like_jwt(token: str) -> bool:
@@ -18,9 +36,63 @@ def _looks_like_jwt(token: str) -> bool:
     return token.count(".") == 2 and len(token) > 20
 
 
+def _verify_supabase_jwt(token: str) -> str:
+    """Verify a Supabase access token (asymmetric via JWKS, or legacy HS256) and return the 'sub'.
+
+    Raises HTTPException(401) on any validation failure.
+    """
+    cfg = get_settings()
+    base = cfg.supabase_url.rstrip("/")
+    issuer = f"{base}/auth/v1"
+    audience = "authenticated"
+
+    try:
+        alg = (jwt.get_unverified_header(token) or {}).get("alg")
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token header") from exc
+
+    try:
+        if alg in ("RS256", "ES256"):
+            signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
+            payload = jwt.decode(
+                token, signing_key.key, algorithms=[alg], audience=audience, issuer=issuer
+            )
+        elif alg == "HS256":
+            secret = (cfg.supabase_jwt_secret or "").strip()
+            if not secret:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="HS256 token but SUPABASE_JWT_SECRET is not configured",
+                )
+            payload = jwt.decode(
+                token, secret, algorithms=["HS256"], audience=audience, issuer=issuer
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Unsupported token algorithm: {alg}"
+            )
+    except HTTPException:
+        raise
+    except jwt.PyJWKClientError as exc:
+        logger.warning("JWKS fetch failed", exc_info=exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Unable to fetch signing key"
+        ) from exc
+    except jwt.ExpiredSignatureError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired") from exc
+    except jwt.InvalidTokenError as exc:
+        logger.warning("JWT validation failed", exc_info=exc)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token") from exc
+
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing sub claim")
+    return sub
+
+
 async def get_current_user(authorization: str | None = Header(default=None)) -> dict:  # noqa: B008
     """
-    Validate Bearer token: either Supabase JWT or backend API key.
+    Validate Bearer token: either a backend API key or a Supabase JWT.
     Returns the user row (id, email, tier, subscription_status, ...).
     Raises HTTP 401 if token is missing or invalid.
     """
@@ -40,25 +112,8 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
             return result.data
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
-    # JWT path (Supabase / legacy)
-    cfg = get_settings()
-    try:
-        payload = jwt.decode(
-            token,
-            cfg.supabase_jwt_secret,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-    except JWTError as exc:
-        logger.warning("JWT validation failed", exc_info=exc)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        ) from exc
-
-    supabase_uid: str | None = payload.get("sub")
-    if not supabase_uid:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing sub claim")
+    # JWT path (Supabase): verify signature via JWKS (RS256/ES256) or legacy HS256 secret
+    supabase_uid = _verify_supabase_jwt(token)
 
     result = await sb.table("users").select("*").eq("supabase_uid", supabase_uid).maybe_single().execute()
     if not result or not result.data:

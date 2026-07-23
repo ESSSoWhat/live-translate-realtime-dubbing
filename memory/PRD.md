@@ -25,6 +25,12 @@ Wix Members + Pricing Plans → Velo calls `POST /api/v1/billing/wix/sync` and `
 - P1 (deploy): mobile release signing + dart-defines; desktop CI `FFMPEG_DIR`; set `BACKEND_ENV=production` + explicit `BACKEND_CORS_ORIGINS`.
 - P2: Migrate FastAPI `on_event` → lifespan; improve usage metering accuracy.
 
+## Auth JWT verification (JWKS) — DONE & live-verified
+- Supabase project uses NEW asymmetric JWT signing (ES256). Old code only verified legacy HS256 → web/OAuth logins would fail.
+- Rewrote `app/dependencies.py::get_current_user` to use PyJWT `PyJWKClient` (cached JWKS, key rotation): verifies RS256/ES256 via JWKS, HS256 legacy fallback if `SUPABASE_JWT_SECRET` set, validates iss=`<url>/auth/v1` + aud=`authenticated`. API-key (Wix) path unchanged. Added `pyjwt[crypto]>=2.8.0` to requirements.txt.
+- LIVE-VERIFIED against project: minted real ES256 token via admin.create_user+sign_in → `_verify_supabase_jwt` returns correct `sub`; tampered token rejected. Test auth users cleaned up.
+- NOTE: supabase-py 2.31 `sb.auth.admin.delete_user()` returns "User not allowed" with the new `sb_secret_` key (client sends a body GoTrue rejects); raw `DELETE /auth/v1/admin/users/{id}` works. Only affects register()'s best-effort rollback (already try/except-wrapped, non-blocking). Real auth users in project: son-luu@hotmail.com, son@livetranslate.net, thesonluu@gmail.com, sonsowhat@livetranslate.net.
+
 ## Verified via testing_agent (iteration_1, 16/17 then 17/17 after fixes)
 - Wix sync: 401 on missing/wrong secret; reaches DB (503 Supabase-not-configured in sandbox) with correct secret via `X-Wix-Sync-Secret` OR `Authorization: Bearer`; 422 on invalid email. This confirms the user's "silent linking failure" = secret mismatch (401).
 - Stripe hidden: `/billing/plans` and `/checkout` return 503 (never 500).
