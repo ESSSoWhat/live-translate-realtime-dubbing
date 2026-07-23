@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Header, HTTPException, status
 from jose import JWTError, jwt  # type: ignore[import-untyped]
 
 from app.config import get_settings
@@ -18,13 +18,13 @@ def _looks_like_jwt(token: str) -> bool:
     return token.count(".") == 2 and len(token) > 20
 
 
-async def get_current_user(authorization: str = Header(...)) -> dict:  # noqa: B008
+async def get_current_user(authorization: str | None = Header(default=None)) -> dict:  # noqa: B008
     """
     Validate Bearer token: either Supabase JWT or backend API key.
     Returns the user row (id, email, tier, subscription_status, ...).
     Raises HTTP 401 if token is missing or invalid.
     """
-    if not authorization.startswith("Bearer "):
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
 
     token = authorization[len("Bearer "):].strip()

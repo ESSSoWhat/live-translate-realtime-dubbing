@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import io
-import os
 
 import httpx
 import structlog
@@ -18,7 +17,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from app.config import get_settings
 from app.dependencies import get_current_user
-from app.models.requests import CloneVoiceRequest, SynthesizeRequest, TranslateRequest
+from app.models.requests import SynthesizeRequest, TranslateRequest
 from app.models.responses import (
     CloneVoiceResponse,
     TranscriptionResponse,

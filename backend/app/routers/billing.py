@@ -458,7 +458,7 @@ async def wix_sync(body: WixSyncRequest, request: Request) -> dict:
             }).execute()
         except Exception as e:
             logger.error("Wix sync: insert failed", email=body.email, error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            raise HTTPException(status_code=500, detail="Database error") from e
         if ins.data and len(ins.data) > 0:
             row = ins.data[0] if isinstance(ins.data, list) else ins.data
             user_id = row["id"]
