@@ -330,11 +330,12 @@ def _qonversion_product_to_tier(product_id: str | None) -> str:
 #   free 30 min • starter (Hobby) 5 hr • pro 15 hr • early_adopters unlimited
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 1. Stable plan-ID → tier (fill with your Wix plan GUIDs; recommended).
+# 1. Stable plan-ID → tier (Wix plan GUIDs; recommended, names can change).
 _WIX_PLAN_ID_TO_TIER: dict[str, str] = {
-    # "d7f3a1b2-....": "pro",
-    # "9c2e5f01-....": "starter",
-    # "1a4b7c88-....": "early_adopters",
+    "146fe70b-7ba2-4ec4-b9cc-72c77c645aac": "pro",
+    "fe160051-2f9a-4a28-929a-053ece47dcc7": "starter",
+    "954bf0a7-cb41-4726-ace1-c61c7a75425c": "early_adopters",
+    "5f9d4418-240c-4dcf-8748-c006011eff2f": "free",
 }
 
 # 2. Exact plan name (lowercased) → tier.
