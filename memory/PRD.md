@@ -27,3 +27,4 @@ Wix Members + Pricing Plans → Velo calls `POST /api/v1/billing/wix/sync` and `
 
 ## Credentials
 No secrets committed (no backend `.env`; `.env.example` present). All keys must be set in deploy env / Wix Secrets Manager.
+NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix secret is named `LT_SYNC_SECRET` (Velo reads `getSecret('LT_SYNC_SECRET')`); its value must equal the backend env `WIX_SYNC_SECRET`. Fixed in api-key.web.js, sync.web.ts + setup docs after user hit "Some fields have invalid or missing information."

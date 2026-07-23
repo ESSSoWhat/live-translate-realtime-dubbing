@@ -20,9 +20,9 @@ The main thing blocking "finalize production" is **configuration + wiring of the
 The sync path is: Wix Velo → `POST /api/v1/billing/wix/sync` (+ `POST /api/v1/auth/api-key`), authenticated with `WIX_SYNC_SECRET`. Three settings must line up exactly or it fails **silently** (the web module returns `{received:false}` and the page just shows a generic error):
 
 1. **`WIX_SYNC_SECRET` must match** in two places:
-   - Wix Dashboard → Secrets Manager → `WIX_SYNC_SECRET`
+   - Wix Dashboard → Secrets Manager → **`LT_SYNC_SECRET`** (the Wix secret name must NOT start with `wix`, or Wix rejects it with "Some fields have invalid or missing information"; Velo reads it via `getSecret('LT_SYNC_SECRET')`)
    - Backend environment (`.env` / Railway variables) → `WIX_SYNC_SECRET`
-   A mismatch → backend returns `401` → `getApiKeyForMember` returns `{success:false}`. Verified in sandbox: with no secret set the endpoint returns `503`; with a wrong secret it returns `401`.
+   The **values** must match (names differ). A mismatch → backend returns `401` → `getApiKeyForMember` returns `{success:false}`.
 
 2. **`BACKEND_URL` must be your real backend host.** It is hardcoded to `https://api.livetranslate.net` in:
    - `wix-app/velo-pages/api-key.web.js` (line 21)

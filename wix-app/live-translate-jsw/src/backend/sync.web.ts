@@ -4,8 +4,9 @@
  * Web module for syncing Wix member data to Live Translate backend.
  * Call these functions from frontend pages after member login.
  *
- * Required: Set the WIX_SYNC_SECRET environment variable via Wix CLI:
- *   wix env set WIX_SYNC_SECRET <your-secret-value>
+ * Required: Set the LT_SYNC_SECRET environment variable via Wix CLI:
+ *   wix env set LT_SYNC_SECRET <your-secret-value>
+ * (Name must NOT start with "wix" — Wix rejects such secret/env names.)
  */
 
 import { customTrigger } from '@wix/automations';
@@ -13,16 +14,16 @@ import { customTrigger } from '@wix/automations';
 // Configuration from environment variables (set via `wix env set`)
 /** Default must match `velo-pages/api-key.web.js` — see `wix-app/BACKEND_URL.md`. */
 const BACKEND_URL = import.meta.env.BACKEND_URL || 'https://api.livetranslate.net';
-const WIX_SYNC_SECRET = import.meta.env.WIX_SYNC_SECRET;
+const LT_SYNC_SECRET = import.meta.env.LT_SYNC_SECRET;
 const AUTOMATION_TRIGGER_ID = '376cab86-5237-40e8-b0fa-cabfbf63ba9f';
 
 function getSecret(): string {
-  if (!WIX_SYNC_SECRET) {
+  if (!LT_SYNC_SECRET) {
     throw new Error(
-      'WIX_SYNC_SECRET not configured. Set it via: wix env set WIX_SYNC_SECRET <value>'
+      'LT_SYNC_SECRET not configured. Set it via: wix env set LT_SYNC_SECRET <value>'
     );
   }
-  return WIX_SYNC_SECRET;
+  return LT_SYNC_SECRET;
 }
 
 export interface SyncResult {

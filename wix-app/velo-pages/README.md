@@ -33,8 +33,11 @@ This folder contains the Velo code for the API key page that enables SSO with th
 
 1. Go to **Wix Dashboard** → **Secrets Manager**
 2. Click **+ Store a Secret**
-3. Name: `WIX_SYNC_SECRET`
-4. Value: Same as your backend's `WIX_SYNC_SECRET` env variable
+3. Name: `LT_SYNC_SECRET`
+   > ⚠️ Do **not** name it `WIX_SYNC_SECRET`. Wix rejects any secret name that begins with
+   > `wix` (case-insensitive) with the error *"Some fields have invalid or missing information."*
+   > The name only needs to match what `api-key.web.js` reads via `getSecret('LT_SYNC_SECRET')`.
+4. Value: Same value as your backend's `WIX_SYNC_SECRET` env variable (the **value** must match; the name may differ)
 5. Click **Save**
 
 ### Step 4: Create the Page

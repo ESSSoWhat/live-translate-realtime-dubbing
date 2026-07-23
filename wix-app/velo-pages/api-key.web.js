@@ -9,7 +9,8 @@
  * Config:
  * - BACKEND_URL: Base URL of your FastAPI backend (default matches sync.web.ts — see wix-app/BACKEND_URL.md).
  *   If APIs live at a different domain, update this. All frontend sync/auth calls use it.
- * - WIX_SYNC_SECRET: Set in Wix Secrets Manager. Must exactly match backend WIX_SYNC_SECRET.
+ * - LT_SYNC_SECRET: Set in Wix Secrets Manager (name must NOT start with "wix", which
+ *   Wix rejects). Its VALUE must exactly match the backend's WIX_SYNC_SECRET env var.
  *   Mismatch between prod/staging will break sync and API-key provisioning.
  */
 
@@ -51,7 +52,7 @@ export const syncMemberToBackend = webMethod(
     Permissions.SiteMember,
     async (email) => {
         try {
-            const secret = await getSecret('WIX_SYNC_SECRET');
+            const secret = await getSecret('LT_SYNC_SECRET');
             if (!secret) return { received: false };
             const { planId, planName, status } = await getMemberPlan();
             const res = await fetch(`${BACKEND_URL}/api/v1/billing/wix/sync`, {
@@ -86,7 +87,7 @@ export const getApiKeyForMember = webMethod(
     async (email) => {
         try {
             // Get secret from Wix Secrets Manager
-            const secret = await getSecret('WIX_SYNC_SECRET');
+            const secret = await getSecret('LT_SYNC_SECRET');
 
             if (!secret) {
                 console.error('WIX_SYNC_SECRET not found in Secrets Manager');

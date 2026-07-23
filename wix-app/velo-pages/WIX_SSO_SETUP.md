@@ -79,11 +79,13 @@ On the api-key page's markup (in Wix Editor):
 - If APIs are at a different domain (e.g. `https://api.live-translate.com`), change the constant.
 - All frontend calls to sync/auth use this URL.
 
-**WIX_SYNC_SECRET**:
+**Sync secret** (Wix name: `LT_SYNC_SECRET`, backend env: `WIX_SYNC_SECRET`):
 
-1. In Wix: open Secrets Manager and set `WIX_SYNC_SECRET` to a secure, random string.
-2. In your backend environment, set the same value: `WIX_SYNC_SECRET=the-same-secret-value`.
-3. Ensure prod/staging match their respective Wix configs — a mismatch breaks sync and API-key provisioning.
+1. In Wix: open Secrets Manager and store a secret named `LT_SYNC_SECRET` with a secure, random value.
+   > ⚠️ Wix rejects names starting with `wix` (case-insensitive) — so it must NOT be `WIX_SYNC_SECRET`.
+   > `api-key.web.js` reads it via `getSecret('LT_SYNC_SECRET')`.
+2. In your backend environment, set `WIX_SYNC_SECRET=<the-same-value>` (name differs, **value must match**).
+3. Ensure prod/staging match their respective configs — a mismatch breaks sync and API-key provisioning.
 
 ---
 
@@ -94,6 +96,6 @@ On the api-key page's markup (in Wix Editor):
 - [ ] `api-key.web.js` is in backend folder; `BACKEND_URL` is correct
 - [ ] Public page `/app-auth` created with `app-auth-page.js`
 - [ ] Link element `completeSignInLink` added to api-key page (initially hidden)
-- [ ] `WIX_SYNC_SECRET` set in Wix Secrets Manager and backend
+- [ ] `LT_SYNC_SECRET` set in Wix Secrets Manager; backend `WIX_SYNC_SECRET` set to the same value
 - [ ] `LIVE_TRANSLATE_WIX_APP_AUTH_PATH=/app-auth` (or default) in desktop app env
 - [ ] Site published after all changes
