@@ -18,7 +18,7 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files, coll
 block_cipher = None
 
 # FFmpeg path: set FFMPEG_DIR (e.g. to CI runner path) or defaults for local Windows build
-_ffmpeg_dir = Path(os.environ.get("FFMPEG_DIR", r"S:\Coding project\ffmpeg\bin"))
+_ffmpeg_dir = Path(os.environ.get("FFMPEG_DIR", r"S:\Codingproject\ffmpeg\bin"))
 _ffmpeg_exe = _ffmpeg_dir / "ffmpeg.exe"
 _ffmpeg_probe = _ffmpeg_dir / "ffprobe.exe"
 
