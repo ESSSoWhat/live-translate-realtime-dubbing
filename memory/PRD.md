@@ -29,6 +29,7 @@ Wix Members + Pricing Plans → Velo calls `POST /api/v1/billing/wix/sync` and `
 - Supabase project uses NEW asymmetric JWT signing (ES256). Old code only verified legacy HS256 → web/OAuth logins would fail.
 - Rewrote `app/dependencies.py::get_current_user` to use PyJWT `PyJWKClient` (cached JWKS, key rotation): verifies RS256/ES256 via JWKS, HS256 legacy fallback if `SUPABASE_JWT_SECRET` set, validates iss=`<url>/auth/v1` + aud=`authenticated`. API-key (Wix) path unchanged. Added `pyjwt[crypto]>=2.8.0` to requirements.txt.
 - LIVE-VERIFIED against project: minted real ES256 token via admin.create_user+sign_in → `_verify_supabase_jwt` returns correct `sub`; tampered token rejected. Test auth users cleaned up.
+- Regression tests added: `tests/test_jwt_verification.py` (8 tests — RS256 valid/tamper/wrong-issuer/expired via mocked JWKS + local RSA keypair, HS256 valid/no-secret, unsupported alg, JWT-shape). Full suite now 13 tests, ruff clean.
 - NOTE: supabase-py 2.31 `sb.auth.admin.delete_user()` returns "User not allowed" with the new `sb_secret_` key (client sends a body GoTrue rejects); raw `DELETE /auth/v1/admin/users/{id}` works. Only affects register()'s best-effort rollback (already try/except-wrapped, non-blocking). Real auth users in project: son-luu@hotmail.com, son@livetranslate.net, thesonluu@gmail.com, sonsowhat@livetranslate.net.
 
 ## Verified via testing_agent (iteration_1, 16/17 then 17/17 after fixes)

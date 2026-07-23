@@ -1,6 +1,5 @@
 """Auth endpoint tests with mocked Supabase and usage."""
 
-import pytest
 from fastapi.testclient import TestClient
 
 
