@@ -1,5 +1,7 @@
 """FastAPI application factory."""
 
+from contextlib import asynccontextmanager
+
 import structlog  # type: ignore[import-not-found]
 from fastapi import FastAPI, HTTPException  # pyright: ignore[reportMissingImports]
 from fastapi.exception_handlers import (
@@ -26,11 +28,25 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application instance."""
     cfg = get_settings()
 
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        from app.routers.billing import active_wix_tier_mapping
+
+        logger.info("Live Translate API starting", env=cfg.backend_env)
+        logger.info(
+            "Wix plan->tier mapping active",
+            wix_sync_configured=bool((cfg.wix_sync_secret or "").strip()),
+            stripe_configured=bool((cfg.stripe_secret_key or "").strip()),
+            **active_wix_tier_mapping(),
+        )
+        yield
+
     application = FastAPI(
         title="Live Translate API",
         version="1.0.0",
         docs_url=None if cfg.is_production else "/docs",
         redoc_url=None,
+        lifespan=lifespan,
     )
 
     # Rate limiting
@@ -107,18 +123,6 @@ def create_app() -> FastAPI:
     @application.get("/health")
     async def health() -> dict:
         return {"status": "ok"}
-
-    @application.on_event("startup")
-    async def on_startup() -> None:
-        from app.routers.billing import active_wix_tier_mapping
-
-        logger.info("Live Translate API starting", env=cfg.backend_env)
-        logger.info(
-            "Wix plan->tier mapping active",
-            wix_sync_configured=bool((cfg.wix_sync_secret or "").strip()),
-            stripe_configured=bool((cfg.stripe_secret_key or "").strip()),
-            **active_wix_tier_mapping(),
-        )
 
     return application
 
