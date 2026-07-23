@@ -166,6 +166,8 @@ jobs:
     runs-on: windows-latest
     env:
       PIP_NO_CACHE_DIR: "1"
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
     steps:
       - uses: actions/checkout@v6
 
@@ -204,6 +206,17 @@ jobs:
           Copy-Item .env.example .env -Force
           $ver = "${{ github.ref_name }}".TrimStart('v')
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$ver" installer.iss
+
+      - name: Code-sign installer (optional; skipped when no cert secret)
+        if: ${{ env.WINDOWS_CERT_BASE64 != '' }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+          $signtool = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1).FullName
+          Get-ChildItem "live-dubbing\dist\LiveTranslate-*-Setup.exe" | ForEach-Object {
+            & $signtool sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $_.FullName
+          }
+          Remove-Item $pfx -Force
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
