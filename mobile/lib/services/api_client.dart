@@ -191,6 +191,61 @@ class ApiClient {
     );
   }
 
+  /// GET /user/usage — returns tier + used/limit per feature for the current period.
+  Future<Map<String, dynamic>> getUsage() async {
+    final r = await _dio.get<Map<String, dynamic>>('/user/usage');
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// GET /paypal/config — public PayPal config ({configured, env, currency, ...}).
+  Future<Map<String, dynamic>> getPayPalConfig() async {
+    final r = await _dio.get<Map<String, dynamic>>('/paypal/config');
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    return {'configured': false};
+  }
+
+  /// POST /paypal/subscriptions — start a recurring subscription (starter|pro).
+  /// Returns { subscription_id, status, approve_url } — open approve_url in a browser.
+  Future<Map<String, dynamic>> createPayPalSubscription({
+    required String email,
+    required String tier,
+  }) async {
+    final r = await _dio.post(
+      '/paypal/subscriptions',
+      data: {'email': email, 'tier': tier},
+    );
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// POST /paypal/orders — start a one-time order (e.g. early_adopters).
+  /// Returns { order_id, status, links } — open the 'approve' link in a browser.
+  Future<Map<String, dynamic>> createPayPalOrder({
+    required String email,
+    String tier = 'early_adopters',
+  }) async {
+    final r = await _dio.post(
+      '/paypal/orders',
+      data: {'email': email, 'tier': tier},
+    );
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
   /// POST /auth/oauth/google/id-token — login with Google ID token (Android/iOS).
   Future<Map<String, dynamic>> loginWithGoogleIdToken(
     String idToken, {

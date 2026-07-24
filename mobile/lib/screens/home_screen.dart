@@ -11,6 +11,7 @@ import '../features/mic_translate/mic_translate_service.dart';
 import '../features/translated_call/phone_call_screen.dart';
 import '../features/translated_call/translated_call_screen.dart';
 import '../services/qonversion_service.dart';
+import '../widgets/usage_card.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -146,7 +147,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 16),
+              const UsageCard(),
+              const SizedBox(height: 16),
               Expanded(
                 child: Center(
                   child: Column(

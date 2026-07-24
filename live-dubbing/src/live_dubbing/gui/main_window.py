@@ -58,6 +58,7 @@ from live_dubbing.gui.widgets.status_bar import StatusBar
 from live_dubbing.gui.widgets.dubbed_window import DubbedWindow
 from live_dubbing.gui.widgets.usage_meter import UsageMeterWidget
 from live_dubbing.gui.widgets.settings_dialog import SettingsDialog
+from live_dubbing.gui.widgets.paypal_dialog import PayPalCheckoutDialog
 
 logger = structlog.get_logger(__name__)
 
@@ -881,6 +882,9 @@ class MainWindow(QMainWindow):
             portal_action = account_menu.addAction("Manage Subscription…")
             if portal_action is not None:
                 portal_action.triggered.connect(self._open_account_portal)
+            paypal_action = account_menu.addAction("Upgrade with PayPal…")
+            if paypal_action is not None:
+                paypal_action.triggered.connect(self._open_paypal_checkout)
             account_web_action = account_menu.addAction("Manage account on web")
             if account_web_action is not None:
                 account_web_action.triggered.connect(self._open_account_on_web)  # type: ignore[attr-defined]
@@ -1251,6 +1255,18 @@ class MainWindow(QMainWindow):
         dialog.exec()
         if dialog.was_saved and self._async_worker:
             self._async_worker.run_coroutine(self._orchestrator.reinit_elevenlabs())
+
+    def _open_paypal_checkout(self) -> None:
+        """Open the PayPal upgrade dialog, prefilling the signed-in email if known."""
+        email = ""
+        try:
+            email = str(self._auth_response.get("email") or "")
+        except Exception:
+            email = ""
+        dialog = PayPalCheckoutDialog(self._settings, email=email, parent=self)
+        dialog.exec()
+        # Refresh usage shortly after so a new tier shows up.
+        QTimer.singleShot(3000, self._usage_meter.refresh)
 
     @pyqtSlot()
     def _on_start_clicked(self) -> None:
