@@ -1,5 +1,6 @@
 """Application configuration loaded from environment variables."""
 
+from pydantic import AliasChoices, Field  # pylint: disable=import-error
 from pydantic_settings import BaseSettings, SettingsConfigDict  # pylint: disable=import-error
 
 
@@ -30,7 +31,12 @@ class Settings(BaseSettings):  # pylint: disable=too-few-public-methods
     qonversion_webhook_secret: str = ""
 
     # Wix (optional — sync subscription tier from Wix Pricing Plans; call from Velo)
-    wix_sync_secret: str = ""
+    # Sync/admin secret (shared by Wix Velo + PayPal admin). Env: LT_SYNC_SECRET
+    # (accepts legacy WIX_SYNC_SECRET for backward compatibility).
+    lt_sync_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("LT_SYNC_SECRET", "WIX_SYNC_SECRET"),
+    )
 
     # PayPal (optional — additional payment path; one-time + subscriptions)
     paypal_env: str = "live"  # "live" or "sandbox"

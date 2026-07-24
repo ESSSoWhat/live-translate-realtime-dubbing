@@ -32,8 +32,8 @@ def _require_configured() -> None:
 
 
 def _require_admin(x_admin_secret: str | None) -> None:
-    """Admin actions (plan creation) reuse the WIX_SYNC_SECRET value as the admin key."""
-    secret = (get_settings().wix_sync_secret or "").strip()
+    """Admin actions (plan creation) reuse the LT_SYNC_SECRET value as the admin key."""
+    secret = (get_settings().lt_sync_secret or "").strip()
     if not secret or x_admin_secret != secret:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin secret")
 

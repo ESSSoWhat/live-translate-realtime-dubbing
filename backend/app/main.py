@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
         logger.info("Live Translate API starting", env=cfg.backend_env)
         logger.info(
             "Wix plan->tier mapping active",
-            wix_sync_configured=bool((cfg.wix_sync_secret or "").strip()),
+            wix_sync_configured=bool((cfg.lt_sync_secret or "").strip()),
             stripe_configured=bool((cfg.stripe_secret_key or "").strip()),
             **active_wix_tier_mapping(),
         )

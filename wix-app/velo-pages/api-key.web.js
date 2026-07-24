@@ -90,7 +90,7 @@ export const getApiKeyForMember = webMethod(
             const secret = await getSecret('LT_SYNC_SECRET');
 
             if (!secret) {
-                console.error('WIX_SYNC_SECRET not found in Secrets Manager');
+                console.error('LT_SYNC_SECRET not found in Secrets Manager');
                 return { success: false, error: 'Configuration error' };
             }
 

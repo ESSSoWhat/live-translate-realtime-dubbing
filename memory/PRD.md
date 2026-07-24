@@ -69,3 +69,8 @@ NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix s
 - Endpoints (/api/v1/paypal): config, orders, orders/{id}/capture, subscriptions, webhook, admin/setup-plans (admin=WIX_SYNC_SECRET value).
 - testing_agent iteration_2: caught CRITICAL latent bug (stdlib logging + structlog kwargs -> would 500 in prod AFTER charging). FIXED: both files now use structlog. Also reordered admin guard before config (401 for bad secret). 28/28 tests pass.
 - TODO for user: set PayPal env vars on Railway; POST /paypal/admin/setup-plans (X-Admin-Secret=WIX_SYNC_SECRET) to create AUD plans -> put returned IDs in PAYPAL_STARTER_PLAN_ID/PAYPAL_PRO_PLAN_ID; create webhook -> PAYPAL_WEBHOOK_ID; wire Wix/mobile PayPal buttons to these endpoints. One-time price _ONE_TIME_PRICES early_adopters=149.00 AUD (edit to real price).
+
+## Sync secret renamed WIX_SYNC_SECRET -> LT_SYNC_SECRET (2026-07)
+- Backend config field is now lt_sync_secret with validation_alias=AliasChoices("LT_SYNC_SECRET","WIX_SYNC_SECRET") — canonical LT_SYNC_SECRET, legacy WIX_SYNC_SECRET still accepted.
+- Updated refs in config.py, billing.py, auth.py, paypal.py, main.py; docs (PRODUCTION_READINESS.md, WIX_SSO_SETUP.md, BACKEND_URL.md, velo README) + .env.example.
+- Both Wix Secrets Manager AND backend env now use the SAME name: LT_SYNC_SECRET. 28/28 tests pass, alias verified.

@@ -17,11 +17,11 @@ The main thing blocking "finalize production" is **configuration + wiring of the
 **Fix applied:** now uses `wixLocationFrontend.query`.
 
 ### 1b. Why subscription linking usually "gets stuck" — config, not code
-The sync path is: Wix Velo → `POST /api/v1/billing/wix/sync` (+ `POST /api/v1/auth/api-key`), authenticated with `WIX_SYNC_SECRET`. Three settings must line up exactly or it fails **silently** (the web module returns `{received:false}` and the page just shows a generic error):
+The sync path is: Wix Velo → `POST /api/v1/billing/wix/sync` (+ `POST /api/v1/auth/api-key`), authenticated with `LT_SYNC_SECRET`. Three settings must line up exactly or it fails **silently** (the web module returns `{received:false}` and the page just shows a generic error):
 
-1. **`WIX_SYNC_SECRET` must match** in two places:
+1. **`LT_SYNC_SECRET` must match** in two places:
    - Wix Dashboard → Secrets Manager → **`LT_SYNC_SECRET`** (the Wix secret name must NOT start with `wix`, or Wix rejects it with "Some fields have invalid or missing information"; Velo reads it via `getSecret('LT_SYNC_SECRET')`)
-   - Backend environment (`.env` / Railway variables) → `WIX_SYNC_SECRET`
+   - Backend environment (`.env` / Railway variables) → `LT_SYNC_SECRET`
    The **values** must match (names differ). A mismatch → backend returns `401` → `getApiKeyForMember` returns `{success:false}`.
 
 2. **`BACKEND_URL` must be your real backend host.** It is hardcoded to `https://api.livetranslate.net` in:
@@ -33,10 +33,10 @@ The sync path is: Wix Velo → `POST /api/v1/billing/wix/sync` (+ `POST /api/v1/
 
 ### 1c. Do-this checklist to finish subscription linking
 - [ ] Deploy backend to a public HTTPS host; confirm `GET /health` returns `{"status":"ok"}`.
-- [ ] Set backend env: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `SUPABASE_DB_URL`, `ELEVENLABS_API_KEY`, and a strong random `WIX_SYNC_SECRET`.
+- [ ] Set backend env: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `SUPABASE_DB_URL`, `ELEVENLABS_API_KEY`, and a strong random `LT_SYNC_SECRET`.
 - [ ] Run `backend/supabase_schema.sql` in Supabase (creates `tier_limits`, `users`, `usage_records`, `user_voices` + seeds tiers).
 - [ ] Point `api.livetranslate.net` DNS at the backend **or** update `BACKEND_URL` in `api-key.web.js` and `sync.web.ts`, then republish Wix.
-- [ ] Store the identical `WIX_SYNC_SECRET` in Wix Secrets Manager.
+- [ ] Store the identical `LT_SYNC_SECRET` in Wix Secrets Manager.
 - [ ] In Wix: create/publish `/api-key` (Members Only) with `api-key-page.js`, `/app-auth` (public) with `app-auth-page.js`, add `api-key.web.js` to the backend folder, add `login-page.js` + `homepage-sso.js`.
 - [ ] Map your real Wix Pricing Plan names to tiers — see item 2 below.
 - [ ] Smoke test: as a test member, load `/api-key` → API key shows; from the desktop app "Sign in with Wix" → app receives key.
@@ -61,7 +61,7 @@ The sync path is: Wix Velo → `POST /api/v1/billing/wix/sync` (+ `POST /api/v1/
 ## 3. Deployment / CI readiness
 
 - **CI exists** (`.github/workflows/ci.yml`, `release-android-reusable.yml`, `mlops-ci-cd.yml`) — backend pytest, website lint/build, Flutter analyze/test/build, and tagged desktop/Android release jobs. Good baseline.
-- **Backend deploy** is Railway/Docker-ready (`Dockerfile`, `railway.json`, `nixpacks.toml`, `Procfile`). Verify all required env vars are set in the platform (Supabase x4, ElevenLabs, `WIX_SYNC_SECRET`).
+- **Backend deploy** is Railway/Docker-ready (`Dockerfile`, `railway.json`, `nixpacks.toml`, `Procfile`). Verify all required env vars are set in the platform (Supabase x4, ElevenLabs, `LT_SYNC_SECRET`).
 - **CORS**: `main.py` already refuses `*` in production (good). Set `BACKEND_CORS_ORIGINS` to your real origins (`https://www.livetranslate.net`) and `BACKEND_ENV=production`.
 - **Deprecation**: backend uses `@app.on_event("startup")` (deprecated in FastAPI). Non-blocking; migrate to lifespan handlers eventually.
 - **Mobile**: needs signed release secrets in CI (`ANDROID_KEYSTORE_BASE64`, passwords, alias) and iOS cert/profile before store builds. Pass `--dart-define=API_BASE_URL=https://api.livetranslate.net/` for release. Qonversion + Google web client IDs must be set via dart-defines.
@@ -74,7 +74,7 @@ The sync path is: Wix Velo → `POST /api/v1/billing/wix/sync` (+ `POST /api/v1/
 | Component | State | Blocking items before prod |
 |-----------|-------|----------------------------|
 | Backend (FastAPI) | Boots, tests pass, endpoints behave | Set env vars; run schema; confirm Wix plan mapping |
-| Wix site / Velo | Code present; SSO entry bug fixed | Publish pages w/ correct slugs; matching `WIX_SYNC_SECRET`; correct `BACKEND_URL` |
+| Wix site / Velo | Code present; SSO entry bug fixed | Publish pages w/ correct slugs; matching `LT_SYNC_SECRET`; correct `BACKEND_URL` |
 | Mobile (Flutter) | Config env-driven | Release signing secrets; dart-defines; store listings |
 | Desktop (Windows) | Build spec present; CI now builds installer | Push a `v*` tag to trigger the Windows release job |
 | Website pages (static) | `account/download/login/upgrade.html` present | Confirm they align with Wix production (Wix is the live site) |
@@ -83,7 +83,7 @@ The sync path is: Wix Velo → `POST /api/v1/billing/wix/sync` (+ `POST /api/v1/
 
 ## 5. Verified in this audit
 - Backend imports and serves: `GET /health` → 200, `GET /` → 200.
-- `POST /api/v1/billing/wix/sync` → `503` when `WIX_SYNC_SECRET` unset (correct guard).
+- `POST /api/v1/billing/wix/sync` → `503` when `LT_SYNC_SECRET` unset (correct guard).
 - `GET /api/v1/billing/plans` → `503` when Supabase unset (correct guard).
 - `pytest backend/tests` → 5 passed.
 - Fixed `app-auth-page.js` undefined `wixLocation` reference.

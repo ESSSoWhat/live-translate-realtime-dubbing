@@ -37,7 +37,7 @@ This folder contains the Velo code for the API key page that enables SSO with th
    > ⚠️ Do **not** name it `WIX_SYNC_SECRET`. Wix rejects any secret name that begins with
    > `wix` (case-insensitive) with the error *"Some fields have invalid or missing information."*
    > The name only needs to match what `api-key.web.js` reads via `getSecret('LT_SYNC_SECRET')`.
-4. Value: Same value as your backend's `WIX_SYNC_SECRET` env variable (the **value** must match; the name may differ)
+4. Value: Same value as your backend's `LT_SYNC_SECRET` env variable (same name on both sides; the **value** must match)
 5. Click **Save**
 
 ### Step 4: Create the Page

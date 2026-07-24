@@ -59,11 +59,11 @@ def _default_usage(tier: str = "free") -> dict:
 def _verify_wix_secret(request: Request) -> None:
     """Verify Wix request via X-Wix-Sync-Secret or Bearer. Raises HTTPException on failure."""
     cfg = get_settings()
-    secret = (cfg.wix_sync_secret or "").strip()
+    secret = (cfg.lt_sync_secret or "").strip()
     if not secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Wix API key not configured. Set WIX_SYNC_SECRET.",
+            detail="Wix API key not configured. Set LT_SYNC_SECRET.",
         )
     auth = request.headers.get("Authorization") or request.headers.get("X-Wix-Sync-Secret")
     if not auth:
