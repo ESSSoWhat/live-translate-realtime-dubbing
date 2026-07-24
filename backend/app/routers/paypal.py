@@ -6,8 +6,7 @@ provisioned in Supabase via the shared `provision_or_update_user` helper.
 
 from __future__ import annotations
 
-import logging
-
+import structlog  # pylint: disable=import-error
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
@@ -16,7 +15,7 @@ from app.config import get_settings
 from app.routers.billing import provision_or_update_user
 from app.services import paypal_client as pp
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/paypal", tags=["paypal"])
 
 # Server-side one-time prices (AUD). Client cannot set the amount. Edit as needed.
@@ -167,8 +166,8 @@ async def paypal_webhook(request: Request) -> dict:
 @router.post("/admin/setup-plans")
 async def setup_plans(x_admin_secret: str | None = Header(default=None)) -> dict:
     """Create the PayPal product + starter/pro billing plans; returns plan IDs to set in env."""
-    _require_configured()
     _require_admin(x_admin_secret)
+    _require_configured()
     cfg = get_settings()
     prices = {"starter": "9.99", "pro": "24.99"}
     try:

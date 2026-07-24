@@ -62,3 +62,10 @@ NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix s
 - Fixed monorepo build: Railway Root Directory must = backend (Railpack failed at repo root due to package.json+pyproject conflict).
 - All clients repointed to Railway URL: Wix api-key.web.js + sync.web.ts (was dead api.livetranslate.net), mobile doc comment; desktop settings.py:204 already correct.
 - BLOCKER: WIX_SYNC_SECRET NOT set on Railway (wix/sync returns 503 not 401). Must set it (== LT_SYNC_SECRET in Wix) + SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_URL, ELEVENLABS_API_KEY, BACKEND_ENV=production, BACKEND_CORS_ORIGINS.
+
+## PayPal integration (added 2026-07, coexists with Wix)
+- Backend: app/routers/paypal.py + app/services/paypal_client.py (current PayPal REST via httpx; SDK deprecated). One-time Orders + recurring Subscriptions + verified webhook; on success calls shared billing.provision_or_update_user() to set Supabase tier + API key. Currency AUD. Env: LIVE.
+- Config: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_WEBHOOK_ID, PAYPAL_ENV, PAYPAL_CURRENCY, PAYPAL_STARTER_PLAN_ID, PAYPAL_PRO_PLAN_ID (all env, unset in sandbox).
+- Endpoints (/api/v1/paypal): config, orders, orders/{id}/capture, subscriptions, webhook, admin/setup-plans (admin=WIX_SYNC_SECRET value).
+- testing_agent iteration_2: caught CRITICAL latent bug (stdlib logging + structlog kwargs -> would 500 in prod AFTER charging). FIXED: both files now use structlog. Also reordered admin guard before config (401 for bad secret). 28/28 tests pass.
+- TODO for user: set PayPal env vars on Railway; POST /paypal/admin/setup-plans (X-Admin-Secret=WIX_SYNC_SECRET) to create AUD plans -> put returned IDs in PAYPAL_STARTER_PLAN_ID/PAYPAL_PRO_PLAN_ID; create webhook -> PAYPAL_WEBHOOK_ID; wire Wix/mobile PayPal buttons to these endpoints. One-time price _ONE_TIME_PRICES early_adopters=149.00 AUD (edit to real price).

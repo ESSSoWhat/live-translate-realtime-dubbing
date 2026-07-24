@@ -92,17 +92,17 @@ class TestPaypalAdminSetupPlans:
         )
         assert r.status_code == 503
 
-    def test_setup_plans_without_admin_returns_503_when_unconfigured(self, client: TestClient) -> None:
-        # Config guard runs before admin check — 503, not 401.
+    def test_setup_plans_without_admin_returns_401(self, client: TestClient) -> None:
+        # Admin guard runs before config check (defense-in-depth): 401 for no secret.
         r = client.post(f"{PREFIX}/paypal/admin/setup-plans")
-        assert r.status_code == 503
+        assert r.status_code == 401
 
-    def test_setup_plans_wrong_admin_returns_503_when_unconfigured(self, client: TestClient) -> None:
+    def test_setup_plans_wrong_admin_returns_401(self, client: TestClient) -> None:
         r = client.post(
             f"{PREFIX}/paypal/admin/setup-plans",
             headers={"X-Admin-Secret": "wrong"},
         )
-        assert r.status_code == 503
+        assert r.status_code == 401
 
 
 # ─── PayPal: POST /paypal/webhook ────────────────────────────────────────────

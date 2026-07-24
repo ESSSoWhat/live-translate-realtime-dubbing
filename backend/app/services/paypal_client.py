@@ -7,14 +7,14 @@ webhook signature verification. All config comes from environment variables.
 from __future__ import annotations
 
 import base64
-import logging
 import time
 
 import httpx
+import structlog
 
 from app.config import get_settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _LIVE = "https://api-m.paypal.com"
 _SANDBOX = "https://api-m.sandbox.paypal.com"
