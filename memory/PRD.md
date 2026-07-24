@@ -56,3 +56,9 @@ NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix s
 - FIXED: Dockerfile hardcoded `--port 8000` -> now `CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 2`. Cloud Run injects $PORT=8080; hardcoded port = failed deploy. Verified start command binds $PORT (/health 200 on 8080 and default).
 - Set on Cloud Run: BACKEND_ENV=production, BACKEND_CORS_ORIGINS, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (new sb_secret_), WIX_SYNC_SECRET, SUPABASE_DB_URL, ELEVENLABS_API_KEY.
 - After deploy, set the Cloud Run URL as the SINGLE backend URL for ALL clients: desktop settings.py:204, Wix BACKEND_URL (api-key.web.js + sync.web.ts), mobile API_BASE_URL. Desktop currently points to a dead Railway URL; Wix to api.livetranslate.net (no DNS record).
+
+## Backend LIVE on Railway (2026-07)
+- URL: https://livetranslatedubtool-production.up.railway.app — /health 200, / 200, billing/plans 503 (Stripe hidden OK).
+- Fixed monorepo build: Railway Root Directory must = backend (Railpack failed at repo root due to package.json+pyproject conflict).
+- All clients repointed to Railway URL: Wix api-key.web.js + sync.web.ts (was dead api.livetranslate.net), mobile doc comment; desktop settings.py:204 already correct.
+- BLOCKER: WIX_SYNC_SECRET NOT set on Railway (wix/sync returns 503 not 401). Must set it (== LT_SYNC_SECRET in Wix) + SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_URL, ELEVENLABS_API_KEY, BACKEND_ENV=production, BACKEND_CORS_ORIGINS.

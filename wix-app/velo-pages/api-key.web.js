@@ -19,7 +19,7 @@ import { getSecret } from 'wix-secrets-backend';
 import { orders } from 'wix-pricing-plans.v2';
 
 // Base URL of backend (POST /api/v1/billing/wix/sync, POST /api/v1/auth/api-key)
-const BACKEND_URL = 'https://api.livetranslate.net';
+const BACKEND_URL = 'https://livetranslatedubtool-production.up.railway.app';
 
 /**
  * Get current member's active subscription plan from Wix Pricing Plans.
