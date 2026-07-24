@@ -16,7 +16,7 @@ from slowapi.errors import RateLimitExceeded  # type: ignore[import-not-found]  
 from slowapi.util import get_remote_address  # type: ignore[import-not-found]  # pylint: disable=import-error
 
 from app.config import get_settings
-from app.routers import auth, billing, proxy, user, voice
+from app.routers import auth, billing, paypal, proxy, user, voice
 from app.services.supabase_client import SupabaseNotConfiguredError
 
 logger = structlog.get_logger(__name__)
@@ -114,6 +114,7 @@ def create_app() -> FastAPI:
     application.include_router(user.router, prefix=prefix)
     application.include_router(proxy.router, prefix=prefix)
     application.include_router(billing.router, prefix=prefix)
+    application.include_router(paypal.router, prefix=prefix)
     application.include_router(voice.router, prefix=prefix)
 
     @application.get("/")

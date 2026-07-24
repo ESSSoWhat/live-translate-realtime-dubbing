@@ -389,6 +389,40 @@ def active_wix_tier_mapping() -> dict:
     }
 
 
+async def provision_or_update_user(email: str, tier: str, subscription_status: str) -> dict:
+    """Create or update a user's tier + API key by email (shared by Wix & PayPal paths).
+
+    Never downgrades an existing paid tier (uses _max_tier), and always ensures an API key.
+    Returns {"tier": <effective>, "user_created": bool}.
+    """
+    sb = await get_supabase()
+    existing = await sb.table("users").select("id", "tier", "api_key").eq("email", email).limit(1).execute()
+    existing_data = existing.data or []
+
+    if not existing_data:
+        api_key = secrets.token_urlsafe(32)
+        ins = await sb.table("users").insert({
+            "email": email,
+            "tier": tier,
+            "subscription_status": subscription_status,
+            "api_key": api_key,
+        }).execute()
+        if not ins.data:
+            raise HTTPException(status_code=500, detail="Failed to create user")
+        logger.info("Provisioned user with API key", email=email, tier=tier)
+        return {"tier": tier, "user_created": True}
+
+    user_id = existing_data[0]["id"]
+    current_tier = (existing_data[0].get("tier") or "free").strip().lower()
+    new_tier = _max_tier(current_tier, tier) if subscription_status == "active" else tier
+    update = {"tier": new_tier, "subscription_status": subscription_status}
+    if not existing_data[0].get("api_key"):
+        update["api_key"] = secrets.token_urlsafe(32)
+    await sb.table("users").update(update).eq("id", user_id).execute()
+    logger.info("Updated user tier", email=email, tier=new_tier, status=subscription_status)
+    return {"tier": new_tier, "user_created": False}
+
+
 
 def _wix_sync_configured() -> bool:
     """Return True if Wix sync secret is set."""

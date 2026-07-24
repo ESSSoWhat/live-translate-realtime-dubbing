@@ -32,6 +32,15 @@ class Settings(BaseSettings):  # pylint: disable=too-few-public-methods
     # Wix (optional — sync subscription tier from Wix Pricing Plans; call from Velo)
     wix_sync_secret: str = ""
 
+    # PayPal (optional — additional payment path; one-time + subscriptions)
+    paypal_env: str = "live"  # "live" or "sandbox"
+    paypal_client_id: str = ""
+    paypal_client_secret: str = ""
+    paypal_webhook_id: str = ""  # from PayPal dashboard webhook; enables signature verification
+    paypal_currency: str = "AUD"
+    paypal_starter_plan_id: str = ""  # filled after auto-create (admin endpoint)
+    paypal_pro_plan_id: str = ""
+
     # Twilio (optional — translated phone calls)
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

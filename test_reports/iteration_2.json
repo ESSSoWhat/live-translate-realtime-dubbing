@@ -1,0 +1,58 @@
+{
+  "summary": "Backend-only testing of the new PayPal payment routes plus regression on the billing.py refactor (provision_or_update_user extraction) and Wix sync. Created /app/backend/tests/test_paypal_endpoints.py with 15 tests + reran test_health. 16/16 passed. All PayPal endpoints correctly return 503 'PayPal is not configured' when creds are unset, and Pydantic email validation returns 422 before the guard. The billing.py refactor did NOT break Wix sync: wrong/missing secret still returns 401, correct secret reaches the DB layer and returns 503 (Supabase-not-configured). GET /health returns 200; GET /api/v1/billing/plans still returns 503 (Stripe hidden).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/v1/paypal/orders/{id}/capture, /paypal/webhook, /paypal/admin/setup-plans",
+        "issue": "paypal.py uses stdlib `logging.getLogger(__name__)` but calls `logger.info('msg', email=..., tier=..., event=..., product_id=..., plans=...)` (structlog kwargs style). Stdlib logger raises `TypeError: Logger._log() got an unexpected keyword argument 'email'` on those calls. This bug is MASKED in this sandbox because every endpoint short-circuits at the 503 guard before reaching the logging lines. In production (creds set), a successful capture/webhook/plan-setup will crash with 500 AFTER the PayPal API call has already succeeded — meaning PayPal will have charged the customer / created the subscription, but Supabase provisioning + response will fail. Fix: replace `import logging; logger = logging.getLogger(__name__)` with `import structlog; logger = structlog.get_logger(__name__)` (as billing.py does). Verified reproducible with: `python -c \"import logging; logging.basicConfig(level=logging.INFO); logging.getLogger('t').info('m', email='a')\"` -> TypeError.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/v1/paypal/config",
+        "issue": "Exposes `starter_plan_id` and `pro_plan_id` (currently empty). Fine while empty, but confirm these are safe to expose publicly (they are publishable PayPal identifiers, so OK) — noted for completeness."
+      },
+      {
+        "endpoint": "POST /api/v1/paypal/admin/setup-plans",
+        "issue": "Order of guards: `_require_configured()` runs before `_require_admin(...)`. Not incorrect (matches review-request expectation), but be aware that when creds ARE configured, a missing/wrong X-Admin-Secret correctly returns 401 as expected. Sandbox cannot verify the 401 path because creds are unset."
+      },
+      {
+        "endpoint": "POST /api/v1/paypal/webhook",
+        "issue": "When configured, the endpoint calls `verify_webhook_signature` which requires PAYPAL_WEBHOOK_ID; without it the function returns False and the request is rejected with 400. Not tested here (creds unset)."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_paypal_endpoints.py",
+    "/app/test_reports/pytest/paypal_results.xml"
+  ],
+  "action_items": [
+    "HIGH PRIORITY: In /app/backend/app/routers/paypal.py, replace `import logging` + `logger = logging.getLogger(__name__)` with `import structlog` + `logger = structlog.get_logger(__name__)` so the existing `logger.info('...', email=..., tier=..., ...)` kwargs calls work. Otherwise the capture/webhook/setup-plans endpoints will crash with 500 in production immediately after a successful PayPal API call.",
+    "Recommend adding a `_require_admin` gate BEFORE `_require_configured` on /paypal/admin/setup-plans so unauthenticated probes get 401 rather than leaking whether creds are configured (defense-in-depth; low priority)."
+  ],
+  "critical_code_review_comments": [
+    "paypal.py logger bug (see backend_issues.critical) — highest priority.",
+    "paypal.py imports `provision_or_update_user` from `app.routers.billing`. Router-to-router imports are OK here but the shared helper would be better placed in a dedicated `app/services/billing_provisioner.py` for separation of concerns.",
+    "paypal_client.py caches `_token` in module-level globals — fine for single-process, but not safe across workers/reloads. Acceptable for now; noted.",
+    "paypal_client.py `verify_webhook_signature` returns False (not raises) when PAYPAL_WEBHOOK_ID is missing — good; webhook endpoint then returns 400. Consider logging severity=warning (already done).",
+    "Config.paypal_env default is 'live'; comment on config.py:36 says 'live or sandbox'. Consider validating with Literal['live','sandbox'] to prevent silent typos routing traffic to LIVE.",
+    "billing.py `provision_or_update_user` (line ~392) correctly uses `_max_tier` to never downgrade a paid tier and ensures an api_key exists — clean refactor. No regression detected.",
+    "conftest.py sets SUPABASE_URL='https://test.supabase.co' via os.environ.setdefault which makes TestClient hit fake DNS (500). For endpoints that must return 503 from the Supabase layer, tests must hit the live sandbox backend (localhost:8001) whose .env has SUPABASE_URL empty. Documented in test file; regression test uses `requests` to :8001 for that one case."
+  ],
+  "updated_files": ["/app/backend/tests/test_paypal_endpoints.py (new)"],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "n/a"},
+  "test_credentials": "WIX_SYNC_SECRET=test-secret-123 from backend/.env. PayPal + Supabase intentionally unconfigured.",
+  "seed_data_creation": "None.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "PayPal endpoints all return 503 in sandbox (creds unset) — that is the PASS condition. The critical latent bug is in paypal.py logging: stdlib logger with structlog kwargs will 500 on any success path (post-capture, webhook activate, plan creation). Because the 503 guard short-circuits, tests cannot exercise the crash directly in this sandbox — verified via a standalone Python repro. After main agent fixes the logger import, no retest is strictly needed for the sandbox suite (503 behavior unchanged), but the fix should be validated against a PayPal sandbox environment. Test file: /app/backend/tests/test_paypal_endpoints.py (uses TestClient for 503/422 guards + `requests` to localhost:8001 for the Wix sync live-backend regression). Prior iteration_1 minor issue (get_current_user 422 vs 401) is unchanged/unrelated.",
+  "rca of the issue": {
+    "finding": "paypal.py mixes stdlib logging import with structlog-style keyword argument calls.",
+    "root_cause": "Line 9 imports `logging` and line 19 does `logger = logging.getLogger(__name__)`. Multiple call sites (115, 158, 161, 199) then pass business context as kwargs (email=, tier=, event=, plans=). Stdlib Logger.info raises TypeError for unknown kwargs (only `extra`, `exc_info`, `stack_info`, `stacklevel` are permitted).",
+    "reproduction": "python -c \"import logging; logging.basicConfig(level=logging.INFO); logging.getLogger('t').info('msg', email='a@b')\" -> TypeError: Logger._log() got an unexpected keyword argument 'email'.",
+    "sandbox_masking": "Every endpoint calls `_require_configured()` first; PayPal creds are unset so 503 short-circuits before the logger call — hence 15/15 PayPal tests pass. In production the crash occurs AFTER PayPal charges the user.",
+    "mitigation": "Change paypal.py header to: `import structlog` and `logger = structlog.get_logger(__name__)` (matches billing.py pattern). No other code changes needed; call sites already use structlog syntax."
+  }
+}
