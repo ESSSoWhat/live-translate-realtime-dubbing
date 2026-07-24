@@ -15,5 +15,6 @@ RUN groupadd --gid 1000 appgroup && useradd --uid 1000 --gid appgroup --shell /b
 
 USER appuser
 
-# Run with uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Run with uvicorn — Cloud Run/Heroku/Railway inject $PORT; default 8080 (Cloud Run default).
+# Shell form + exec so $PORT expands and uvicorn receives signals as PID 1 (graceful shutdown).
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 2

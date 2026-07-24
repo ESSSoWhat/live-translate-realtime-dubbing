@@ -51,3 +51,8 @@ NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix s
 - S3 storage keys the user provided are NOT used by this backend (no object storage feature).
 - ACTION: user must ROTATE the sb_secret_ key (pasted in chat) and remove leftover test users (test@example.com, test1@example.com, audit_run_test@example.com); son-luu@hotmail.com looks like a real member — left intact.
 - Removed brittle testing-agent file tests/test_wix_billing_integration.py (asserted sandbox-only 503s, wrote to live DB, would break CI).
+
+## Cloud Run deployment (project livetranslate-488616, australia-southeast2)
+- FIXED: Dockerfile hardcoded `--port 8000` -> now `CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 2`. Cloud Run injects $PORT=8080; hardcoded port = failed deploy. Verified start command binds $PORT (/health 200 on 8080 and default).
+- Set on Cloud Run: BACKEND_ENV=production, BACKEND_CORS_ORIGINS, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (new sb_secret_), WIX_SYNC_SECRET, SUPABASE_DB_URL, ELEVENLABS_API_KEY.
+- After deploy, set the Cloud Run URL as the SINGLE backend URL for ALL clients: desktop settings.py:204, Wix BACKEND_URL (api-key.web.js + sync.web.ts), mobile API_BASE_URL. Desktop currently points to a dead Railway URL; Wix to api.livetranslate.net (no DNS record).
