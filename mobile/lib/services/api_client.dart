@@ -268,6 +268,18 @@ class ApiClient {
     );
   }
 
+  /// POST /paypal/subscription/revise — switch an existing subscription to another plan.
+  /// Returns { approve_url } when PayPal needs buyer approval (price increase).
+  Future<Map<String, dynamic>> reviseSubscription({required String tier}) async {
+    final r = await _dio.post('/paypal/subscription/revise', data: {'tier': tier});
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
   /// POST /analytics/nudge — record an upgrade-nudge A/B impression/click (best-effort).
   Future<void> recordNudge({
     required String variant,

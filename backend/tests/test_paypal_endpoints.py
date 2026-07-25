@@ -160,6 +160,27 @@ class TestPaypalWebhookProvisioning:
         assert r.status_code == 200
         prov.assert_awaited_once_with("buyer@example.com", "pro", "active", subscription_id="I-SUBSCR-1")
 
+    def test_subscription_updated_uses_plan_id_tier(self, client: TestClient) -> None:
+        # Plan change (revise): new tier is resolved from resource.plan_id, not custom_id.
+        with (
+            patch("app.services.paypal_client.paypal_configured", return_value=True),
+            patch("app.services.paypal_client.verify_webhook_signature", new=AsyncMock(return_value=True)),
+            patch("app.routers.paypal._claim_webhook_event", new=AsyncMock(return_value=True)),
+            patch("app.routers.paypal._release_webhook_event", new=AsyncMock()),
+            patch("app.routers.paypal._tier_for_plan_id", return_value="pro"),
+            patch("app.routers.paypal.provision_or_update_user", new=AsyncMock()) as prov,
+        ):
+            r = client.post(
+                f"{PREFIX}/paypal/webhook",
+                json={
+                    "id": "WH-UPD-1",
+                    "event_type": "BILLING.SUBSCRIPTION.UPDATED",
+                    "resource": {"id": "I-SUB-9", "plan_id": "P-PRO", "custom_id": "buyer@example.com|starter"},
+                },
+            )
+        assert r.status_code == 200
+        prov.assert_awaited_once_with("buyer@example.com", "pro", "active", subscription_id="I-SUB-9")
+
     def test_subscription_cancelled_downgrades_to_free(self, client: TestClient) -> None:
         r, prov = self._post(client, "BILLING.SUBSCRIPTION.CANCELLED", {"custom_id": "buyer@example.com|pro"})
         assert r.status_code == 200

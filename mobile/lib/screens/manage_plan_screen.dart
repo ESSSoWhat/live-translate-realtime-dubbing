@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
 import 'paywall_screen.dart';
@@ -77,6 +78,36 @@ class _ManagePlanScreenState extends State<ManagePlanScreen> {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
   }
 
+  Future<void> _switchToPro() async {
+    setState(() => _cancelling = true);
+    try {
+      final res = await _api.reviseSubscription(tier: 'pro');
+      final approveUrl = res['approve_url'] as String?;
+      if (!mounted) return;
+      if (approveUrl != null && approveUrl.isNotEmpty) {
+        await launchUrl(Uri.parse(approveUrl), mode: LaunchMode.externalApplication);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Approve the plan change in your browser to finish upgrading.')),
+          );
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Upgrade requested — your plan will update shortly.')),
+        );
+        await _load();
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not switch plans. Please try again.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _cancelling = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tier = (_sub?['tier'] as String?) ?? 'free';
@@ -126,11 +157,20 @@ class _ManagePlanScreenState extends State<ManagePlanScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: _openPaywall,
-                      icon: const Icon(Icons.upgrade),
-                      label: Text(tier == 'free' ? 'Choose a plan' : 'Change or upgrade plan'),
-                    ),
+                    if (tier == 'starter' && _hasActiveSubscription) ...[
+                      FilledButton.icon(
+                        onPressed: _cancelling ? null : _switchToPro,
+                        icon: const Icon(Icons.upgrade),
+                        label: const Text('Upgrade to Pro'),
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton(onPressed: _openPaywall, child: const Text('See all plans')),
+                    ] else
+                      FilledButton.icon(
+                        onPressed: _openPaywall,
+                        icon: const Icon(Icons.upgrade),
+                        label: Text(tier == 'free' ? 'Choose a plan' : 'Change or upgrade plan'),
+                      ),
                     if (_hasActiveSubscription) ...[
                       const SizedBox(height: 12),
                       OutlinedButton.icon(

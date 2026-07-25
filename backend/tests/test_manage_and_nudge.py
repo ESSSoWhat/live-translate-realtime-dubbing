@@ -80,6 +80,53 @@ class TestCancelSubscription:
         assert client.post(f"{PREFIX}/paypal/subscription/cancel").status_code == 401
 
 
+# ─── Manage Plan: POST /paypal/subscription/revise (switch plan) ─────────────
+class TestReviseSubscription:
+    def test_revise_returns_approve_url(self, client: TestClient) -> None:
+        user = {"id": "u1", "email": "a@b.com", "tier": "starter", "subscription_status": "active",
+                "subscription_id": "I-123"}
+        client.app.dependency_overrides[get_current_user] = lambda: user
+        revise_result = {"status": "ACTIVE", "links": [{"rel": "approve", "href": "https://paypal/approve/x"}]}
+        try:
+            with (
+                patch("app.services.paypal_client.paypal_configured", return_value=True),
+                patch("app.routers.paypal._plan_id_for_tier", return_value="P-PRO"),
+                patch("app.routers.paypal.pp.api", new=AsyncMock(return_value=revise_result)) as api,
+            ):
+                r = client.post(f"{PREFIX}/paypal/subscription/revise", json={"tier": "pro"})
+        finally:
+            client.app.dependency_overrides.clear()
+        assert r.status_code == 200
+        body = r.json()
+        assert body["approve_url"] == "https://paypal/approve/x"
+        assert body["tier"] == "pro"
+        assert "/revise" in api.await_args.args[1]
+
+    def test_revise_without_subscription_returns_404(self, client: TestClient) -> None:
+        user = {"id": "u1", "email": "a@b.com", "tier": "free", "subscription_status": "active",
+                "subscription_id": None}
+        client.app.dependency_overrides[get_current_user] = lambda: user
+        try:
+            with patch("app.services.paypal_client.paypal_configured", return_value=True):
+                r = client.post(f"{PREFIX}/paypal/subscription/revise", json={"tier": "pro"})
+        finally:
+            client.app.dependency_overrides.clear()
+        assert r.status_code == 404
+
+    def test_revise_invalid_tier_returns_400(self, client: TestClient) -> None:
+        user = {"id": "u1", "email": "a@b.com", "tier": "starter", "subscription_id": "I-123"}
+        client.app.dependency_overrides[get_current_user] = lambda: user
+        try:
+            with patch("app.services.paypal_client.paypal_configured", return_value=True):
+                r = client.post(f"{PREFIX}/paypal/subscription/revise", json={"tier": "early_adopters"})
+        finally:
+            client.app.dependency_overrides.clear()
+        assert r.status_code == 400
+
+    def test_revise_requires_auth(self, client: TestClient) -> None:
+        assert client.post(f"{PREFIX}/paypal/subscription/revise", json={"tier": "pro"}).status_code == 401
+
+
 # ─── Nudge A/B: POST /analytics/nudge ────────────────────────────────────────
 class TestNudgeEvents:
     def test_record_valid_event(self, client: TestClient) -> None:

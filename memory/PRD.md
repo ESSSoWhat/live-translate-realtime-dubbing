@@ -77,6 +77,13 @@ NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix s
 - Endpoints verified end-to-end (TestClient + auth override, local PG): GET /api/v1/user/usage and GET /api/v1/user/me return correct tier + used/limit + period_reset_date (200).
 - BUG FOUND & FIXED (concurrency over-consumption): old `check_and_record_quota` read used-count via `LEFT JOIN usage_records` with `FOR UPDATE OF u` (locked only the users row). Under READ COMMITTED the joined usage row isn't re-read after the lock releases, so N concurrent same-user requests all read used=0 and over-consumed (test recorded 2000s on a 1800s cap). Rewrote to increment-then-check atomically via `INSERT ... ON CONFLICT DO UPDATE ... RETURNING <col>`, comparing the returned new total to the tier limit and raising QuotaExceededError inside the txn to roll back. Row lock on the usage_records row (+ unique index on first insert) now serializes concurrent increments. `exc.used/limit/requested` semantics unchanged (used = total before the rejected request) so proxy.py 402 handler unaffected. 28 existing tests + 10 new all pass, ruff clean.
 
+## Switch Plan In-App — PayPal subscription revise (2026-07-25, part 4)
+- Backend: `POST /api/v1/paypal/subscription/revise` (authed) switches an existing subscription to a new plan (Starter→Pro) via PayPal `/v1/billing/subscriptions/{id}/revise`; returns `approve_url` when PayPal needs buyer approval (price increase). Added `_tier_for_plan_id` + handle `BILLING.SUBSCRIPTION.UPDATED` in the webhook (resolves new tier from resource.plan_id, provisions it). Idempotency + release still apply.
+- Flutter: `ManagePlanScreen` now shows "Upgrade to Pro" for active Starter subscribers → calls revise, launches approve_url via url_launcher; "See all plans" still routes to paywall. api_client got `reviseSubscription`.
+- Tests: +6 (revise: approve_url/404/400/auth; UPDATED webhook plan→tier). Backend suite now **49 tests passing, ruff clean**.
+- Note: downgrade via revise keeps the higher tier while active (provision uses _max_tier) — intentional for now; scope was Starter→Pro upgrade.
+- STILL BLOCKED ON USER: service-role key/SUPABASE_DB_URL (real tier-write verify) and nudge stats need live traffic.
+
 ## Manage-Plan (cancel) + Nudge A/B test (2026-07-25, part 3)
 **Feature 4 — Cancel/Manage plan (backend tested, clients wired):**
 - `provision_or_update_user(email, tier, status, subscription_id=None)` now persists the PayPal subscription id; webhook stores `resource.id` on BILLING.SUBSCRIPTION.ACTIVATED (users.subscription_id already existed in schema).

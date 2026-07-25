@@ -25,11 +25,24 @@ _ONE_TIME_PRICES = {"early_adopters": "149.00"}
 _SUBSCRIPTION_TIERS = {"starter", "pro"}
 
 _ACTIVATE_EVENTS = ("PAYMENT.CAPTURE.COMPLETED", "BILLING.SUBSCRIPTION.ACTIVATED")
+_UPDATE_EVENTS = ("BILLING.SUBSCRIPTION.UPDATED",)
 _DEACTIVATE_EVENTS = (
     "BILLING.SUBSCRIPTION.CANCELLED",
     "BILLING.SUBSCRIPTION.EXPIRED",
     "BILLING.SUBSCRIPTION.SUSPENDED",
 )
+
+
+def _tier_for_plan_id(plan_id: str | None) -> str | None:
+    """Resolve a configured PayPal plan id back to its tier (for plan-change webhooks)."""
+    if not plan_id:
+        return None
+    cfg = get_settings()
+    if plan_id == (cfg.paypal_starter_plan_id or "").strip():
+        return "starter"
+    if plan_id == (cfg.paypal_pro_plan_id or "").strip():
+        return "pro"
+    return None
 
 
 async def _claim_webhook_event(event_id: str, event_type: str) -> bool:
@@ -97,6 +110,10 @@ class OrderRequest(BaseModel):
 class SubscriptionRequest(BaseModel):
     email: EmailStr
     tier: str  # starter | pro
+
+
+class ReviseRequest(BaseModel):
+    tier: str  # target subscription tier: starter | pro
 
 
 @router.get("/config")
@@ -220,6 +237,47 @@ async def cancel_my_subscription(user: CurrentUser = Depends(get_current_user)) 
     return CancelResponse(canceled=True, subscription_id=sub_id)
 
 
+@router.post("/subscription/revise")
+async def revise_my_subscription(
+    body: ReviseRequest,
+    user: CurrentUser = Depends(get_current_user),  # noqa: B008
+) -> dict:
+    """Switch an existing subscription to a different plan (e.g. Starter → Pro) without
+    cancelling. A price increase requires buyer approval, so we return the PayPal
+    approval URL when present; the tier is provisioned by the SUBSCRIPTION.UPDATED webhook.
+    """
+    _require_configured()
+    if body.tier not in _SUBSCRIPTION_TIERS:
+        raise HTTPException(status_code=400, detail=f"Tier '{body.tier}' is not a subscription tier")
+    sub_id = (user.get("subscription_id") or "").strip()
+    if not sub_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active subscription to change. Start a new subscription instead.",
+        )
+    plan_id = _plan_id_for_tier(body.tier)
+    try:
+        result = await pp.api(
+            "POST",
+            f"/v1/billing/subscriptions/{sub_id}/revise",
+            json={"plan_id": plan_id},
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="PayPal plan change failed") from exc
+    approve = next(
+        (lnk.get("href") for lnk in (result.get("links") or []) if lnk.get("rel") in ("approve", "payer-action")),
+        None,
+    )
+    logger.info("PayPal subscription revise requested", email=user.get("email"), tier=body.tier, subscription_id=sub_id)
+    return {
+        "subscription_id": sub_id,
+        "plan_id": plan_id,
+        "tier": body.tier,
+        "approve_url": approve,
+        "status": result.get("status"),
+    }
+
+
 @router.post("/webhook", status_code=status.HTTP_200_OK)
 async def paypal_webhook(request: Request) -> dict:
     """Verify PayPal webhook signature and sync tier changes into Supabase."""
@@ -238,7 +296,7 @@ async def paypal_webhook(request: Request) -> dict:
         custom_id = pu.get("custom_id") or ""
     email, _, tier = custom_id.partition("|")
 
-    if not (email and tier and event in (_ACTIVATE_EVENTS + _DEACTIVATE_EVENTS)):
+    if not (email and tier and event in (_ACTIVATE_EVENTS + _UPDATE_EVENTS + _DEACTIVATE_EVENTS)):
         logger.warning("PayPal webhook ignored", event_type=event, event_id=event_id)
         return {"received": True}
 
@@ -252,6 +310,11 @@ async def paypal_webhook(request: Request) -> dict:
             sub_id = resource.get("id") if event == "BILLING.SUBSCRIPTION.ACTIVATED" else None
             await provision_or_update_user(email, tier, "active", subscription_id=sub_id)
             logger.info("PayPal webhook: activated", event_type=event, email=email, tier=tier)
+        elif event in _UPDATE_EVENTS:
+            # Plan change (revise): the new tier comes from the plan_id, not custom_id.
+            new_tier = _tier_for_plan_id(resource.get("plan_id")) or tier
+            await provision_or_update_user(email, new_tier, "active", subscription_id=resource.get("id"))
+            logger.info("PayPal webhook: plan updated", event_type=event, email=email, tier=new_tier)
         else:
             await provision_or_update_user(email, "free", "canceled")
             logger.info("PayPal webhook: canceled", event_type=event, email=email)
