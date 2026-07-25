@@ -108,6 +108,35 @@ async function loadUsage() {
         const pct = Math.min(100, Math.round(((u.dubbing_seconds_used || 0) / Math.max(u.dubbing_seconds_limit || 1, 1)) * 100));
         $w('#usageDubbingBar').style.width = `${pct}%`;
     } catch (e) { /* ignore */ }
+
+    // 80% "upgrade" nudge — peak usage across metered features (skip unlimited tier).
+    showUpgradeNudge(u);
+}
+
+function ratio(used, limit) {
+    if (!limit || limit >= 2147483647) return 0;
+    return Math.min(1, (used || 0) / limit);
+}
+
+function showUpgradeNudge(u) {
+    const peaks = [
+        { key: 'minutes', r: ratio(u.dubbing_seconds_used, u.dubbing_seconds_limit) },
+        { key: 'text-to-speech', r: ratio(u.tts_chars_used, u.tts_chars_limit) },
+        { key: 'translation', r: ratio(u.translation_chars_used, u.translation_chars_limit) },
+    ];
+    const peak = peaks.reduce((a, b) => (a.r >= b.r ? a : b));
+    try {
+        if (peak.r >= 0.8) {
+            const pct = Math.round(peak.r * 100);
+            const msg = peak.r >= 1
+                ? `You've used all your ${peak.key} this month — upgrade to keep going.`
+                : `You've used ${pct}% of your ${peak.key} this month — upgrade for more.`;
+            $w('#upgradeNudge').text = msg;
+            $w('#upgradeNudge').show();
+        } else {
+            $w('#upgradeNudge').hide();
+        }
+    } catch (e) { /* #upgradeNudge element optional */ }
 }
 
 $w.onReady(async function () {

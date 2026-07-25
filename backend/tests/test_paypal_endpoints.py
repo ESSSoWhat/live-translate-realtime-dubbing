@@ -122,13 +122,18 @@ class TestPaypalWebhook:
 # TypeError ("multiple values for argument 'event'") AFTER provisioning, 500-ing the
 # webhook so PayPal retried indefinitely. These exercise the configured success path.
 class TestPaypalWebhookProvisioning:
-    def _post(self, client: TestClient, event: str, resource: dict, verified: bool = True):
+    def _post(self, client: TestClient, event: str, resource: dict, verified: bool = True, claimed: bool = True):
         with (
             patch("app.services.paypal_client.paypal_configured", return_value=True),
             patch("app.services.paypal_client.verify_webhook_signature", new=AsyncMock(return_value=verified)),
+            patch("app.routers.paypal._claim_webhook_event", new=AsyncMock(return_value=claimed)),
+            patch("app.routers.paypal._release_webhook_event", new=AsyncMock()),
             patch("app.routers.paypal.provision_or_update_user", new=AsyncMock()) as prov,
         ):
-            r = client.post(f"{PREFIX}/paypal/webhook", json={"event_type": event, "resource": resource})
+            r = client.post(
+                f"{PREFIX}/paypal/webhook",
+                json={"id": "WH-EVT-1", "event_type": event, "resource": resource},
+            )
         return r, prov
 
     def test_subscription_activated_provisions_tier(self, client: TestClient) -> None:
@@ -158,6 +163,18 @@ class TestPaypalWebhookProvisioning:
             verified=False,
         )
         assert r.status_code == 400
+        prov.assert_not_awaited()
+
+    def test_duplicate_event_is_ignored(self, client: TestClient) -> None:
+        # claimed=False simulates a retry of an already-processed event id.
+        r, prov = self._post(
+            client,
+            "BILLING.SUBSCRIPTION.ACTIVATED",
+            {"custom_id": "buyer@example.com|pro"},
+            claimed=False,
+        )
+        assert r.status_code == 200
+        assert r.json().get("duplicate") is True
         prov.assert_not_awaited()
 
 

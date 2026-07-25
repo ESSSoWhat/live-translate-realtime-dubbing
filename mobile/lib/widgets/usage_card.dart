@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../screens/paywall_screen.dart';
 
 /// Live usage dashboard — shows tier and quota bars (used / limit) per feature
 /// by polling GET /api/v1/user/usage. Compact card suitable for the home screen.
+/// Shows an "80% used — upgrade" nudge when any metered feature is nearly exhausted.
 class UsageCard extends StatefulWidget {
   const UsageCard({super.key});
 
@@ -16,6 +18,8 @@ class _UsageCardState extends State<UsageCard> {
   Map<String, dynamic>? _usage;
   bool _loading = true;
   String? _error;
+
+  static const int _kUnlimited = 2147483647;
 
   @override
   void initState() {
@@ -34,6 +38,68 @@ class _UsageCardState extends State<UsageCard> {
   }
 
   int _int(String key) => (_usage?[key] as num?)?.toInt() ?? 0;
+
+  double _ratio(String usedKey, String limitKey) {
+    final limit = _int(limitKey);
+    if (limit <= 0 || limit >= _kUnlimited) return 0;
+    return (_int(usedKey) / limit).clamp(0.0, 1.0);
+  }
+
+  /// The most-consumed metered feature: (label, ratio). Ignores unlimited tiers.
+  MapEntry<String, double> _peakUsage() {
+    final ratios = <String, double>{
+      'minutes': _ratio('dubbing_seconds_used', 'dubbing_seconds_limit'),
+      'text-to-speech': _ratio('tts_chars_used', 'tts_chars_limit'),
+      'translation': _ratio('translation_chars_used', 'translation_chars_limit'),
+    };
+    return ratios.entries.reduce((a, b) => a.value >= b.value ? a : b);
+  }
+
+  void _goToPaywall() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PaywallScreen()),
+    );
+  }
+
+  Widget _nudgeBanner(MapEntry<String, double> peak) {
+    final pct = (peak.value * 100).round();
+    final maxed = peak.value >= 1.0;
+    final scheme = Theme.of(context).colorScheme;
+    final bg = maxed ? scheme.errorContainer : scheme.tertiaryContainer;
+    final fg = maxed ? scheme.onErrorContainer : scheme.onTertiaryContainer;
+    final msg = maxed
+        ? "You've used all your ${peak.key} this month."
+        : "You've used $pct% of your ${peak.key} this month.";
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(maxed ? Icons.lock_outline : Icons.bolt, size: 20, color: fg),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(msg,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: fg, fontWeight: FontWeight.w600,
+                    )),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: _goToPaywall,
+            style: FilledButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+            ),
+            child: const Text('Upgrade'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _bar(String label, int used, int limit, {bool isTime = false}) {
     final pct = limit > 0 ? (used / limit).clamp(0.0, 1.0) : 0.0;
@@ -127,6 +193,7 @@ class _UsageCardState extends State<UsageCard> {
                 ],
               )
             else ...[
+              if (_peakUsage().value >= 0.8) _nudgeBanner(_peakUsage()),
               _bar('Dubbing', _int('dubbing_seconds_used'), _int('dubbing_seconds_limit'), isTime: true),
               _bar('Text-to-speech', _int('tts_chars_used'), _int('tts_chars_limit')),
               _bar('Translation', _int('translation_chars_used'), _int('translation_chars_limit')),

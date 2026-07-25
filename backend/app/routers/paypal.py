@@ -14,6 +14,7 @@ from pydantic import BaseModel, EmailStr
 from app.config import get_settings
 from app.routers.billing import provision_or_update_user
 from app.services import paypal_client as pp
+from app.services.supabase_client import get_supabase
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/paypal", tags=["paypal"])
@@ -21,6 +22,43 @@ router = APIRouter(prefix="/paypal", tags=["paypal"])
 # Server-side one-time prices (AUD). Client cannot set the amount. Edit as needed.
 _ONE_TIME_PRICES = {"early_adopters": "149.00"}
 _SUBSCRIPTION_TIERS = {"starter", "pro"}
+
+_ACTIVATE_EVENTS = ("PAYMENT.CAPTURE.COMPLETED", "BILLING.SUBSCRIPTION.ACTIVATED")
+_DEACTIVATE_EVENTS = (
+    "BILLING.SUBSCRIPTION.CANCELLED",
+    "BILLING.SUBSCRIPTION.EXPIRED",
+    "BILLING.SUBSCRIPTION.SUSPENDED",
+)
+
+
+async def _claim_webhook_event(event_id: str, event_type: str) -> bool:
+    """Atomically claim a PayPal webhook event id for processing.
+
+    Returns True the first time an event id is seen (process it) and False if it was
+    already recorded (idempotent skip). Backed by the `webhook_events` table's unique
+    `event_id` constraint via INSERT ... ON CONFLICT DO NOTHING, so PayPal's automatic
+    retries can never double-provision or flip a tier twice.
+    """
+    sb = await get_supabase()
+    res = await (
+        sb.table("webhook_events")
+        .upsert(
+            {"event_id": event_id, "event_type": event_type, "source": "paypal"},
+            on_conflict="event_id",
+            ignore_duplicates=True,
+        )
+        .execute()
+    )
+    return bool(res.data)
+
+
+async def _release_webhook_event(event_id: str) -> None:
+    """Undo a claim so PayPal's retry can reprocess after a transient provisioning failure."""
+    try:
+        sb = await get_supabase()
+        await sb.table("webhook_events").delete().eq("event_id", event_id).execute()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to release webhook event", event_id=event_id, error=str(exc))
 
 
 def _require_configured() -> None:
@@ -143,6 +181,7 @@ async def paypal_webhook(request: Request) -> dict:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Webhook verification failed")
 
     event = body.get("event_type", "")
+    event_id = str(body.get("id") or "")
     resource = body.get("resource", {}) or {}
     custom_id = resource.get("custom_id") or ""
     # one-time captures carry custom_id under purchase_units
@@ -151,15 +190,27 @@ async def paypal_webhook(request: Request) -> dict:
         custom_id = pu.get("custom_id") or ""
     email, _, tier = custom_id.partition("|")
 
-    if email and tier:
-        if event in ("PAYMENT.CAPTURE.COMPLETED", "BILLING.SUBSCRIPTION.ACTIVATED"):
+    if not (email and tier and event in (_ACTIVATE_EVENTS + _DEACTIVATE_EVENTS)):
+        logger.warning("PayPal webhook ignored", event_type=event, event_id=event_id)
+        return {"received": True}
+
+    # Idempotency: claim the event id so PayPal retries can't provision twice.
+    if event_id and not await _claim_webhook_event(event_id, event):
+        logger.info("PayPal webhook: duplicate ignored", event_type=event, event_id=event_id)
+        return {"received": True, "duplicate": True}
+
+    try:
+        if event in _ACTIVATE_EVENTS:
             await provision_or_update_user(email, tier, "active")
             logger.info("PayPal webhook: activated", event_type=event, email=email, tier=tier)
-        elif event in ("BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.EXPIRED", "BILLING.SUBSCRIPTION.SUSPENDED"):
+        else:
             await provision_or_update_user(email, "free", "canceled")
             logger.info("PayPal webhook: canceled", event_type=event, email=email)
-    else:
-        logger.warning("PayPal webhook missing custom_id", event_type=event)
+    except Exception:
+        # Roll back the claim so PayPal's retry can reprocess this event.
+        if event_id:
+            await _release_webhook_event(event_id)
+        raise
     return {"received": True}
 
 

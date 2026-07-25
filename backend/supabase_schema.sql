@@ -84,6 +84,17 @@ CREATE TABLE IF NOT EXISTS user_voices (
 );
 CREATE INDEX IF NOT EXISTS idx_user_voices_user_id ON user_voices(user_id);
 
+-- ── Webhook idempotency (dedupe PayPal/Qonversion retries) ──────────────────
+-- Unique event_id ensures a webhook event is provisioned at most once even if the
+-- provider retries. Backend claims via INSERT ... ON CONFLICT DO NOTHING.
+CREATE TABLE IF NOT EXISTS webhook_events (
+    event_id     TEXT NOT NULL PRIMARY KEY,
+    source       TEXT NOT NULL DEFAULT 'paypal',
+    event_type   TEXT,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_processed_at ON webhook_events(processed_at DESC);
+
 DROP TRIGGER IF EXISTS update_usage_records_updated_at ON usage_records;
 CREATE TRIGGER update_usage_records_updated_at
     BEFORE UPDATE ON usage_records
@@ -96,6 +107,7 @@ ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE usage_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_voices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tier_limits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
 
 -- Service role can do everything (RLS is bypassed for service role)
 DROP POLICY IF EXISTS users_select_own ON users;
