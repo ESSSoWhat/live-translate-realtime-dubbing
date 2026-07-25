@@ -119,6 +119,27 @@ export const capturePayPalOrder = webMethod(
 );
 
 /**
+ * Record an upgrade-nudge A/B event (best-effort; never throws to the caller).
+ * @returns {{ ok: boolean }}
+ */
+export const recordNudge = webMethod(
+    Permissions.Anyone,
+    async (variant, action, feature) => {
+        try {
+            const res = await fetch(`${BACKEND_URL}/api/v1/analytics/nudge`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ variant, action, feature, surface: 'wix' }),
+            });
+            return { ok: res.ok };
+        } catch (e) {
+            console.error('recordNudge failed:', e);
+            return { ok: false };
+        }
+    }
+);
+
+/**
  * Fetch the member's current usage snapshot (tier + used/limit per feature).
  * Resolves the member's API key server-side (LT_SYNC_SECRET), then reads /user/me.
  * @returns {{ success: boolean, tier?: string, usage?: object, error?: string }}

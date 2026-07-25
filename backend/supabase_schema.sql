@@ -95,6 +95,17 @@ CREATE TABLE IF NOT EXISTS webhook_events (
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_events_processed_at ON webhook_events(processed_at DESC);
 
+-- ── Upgrade-nudge A/B analytics ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS nudge_events (
+    id          BIGSERIAL PRIMARY KEY,
+    variant     TEXT NOT NULL,           -- 'a' | 'b'
+    action      TEXT NOT NULL,           -- 'shown' | 'clicked'
+    feature     TEXT,                    -- minutes | text-to-speech | translation
+    surface     TEXT,                    -- mobile | wix | desktop
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_nudge_events_variant ON nudge_events(variant, action);
+
 DROP TRIGGER IF EXISTS update_usage_records_updated_at ON usage_records;
 CREATE TRIGGER update_usage_records_updated_at
     BEFORE UPDATE ON usage_records
@@ -108,6 +119,7 @@ ALTER TABLE usage_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_voices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tier_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE nudge_events ENABLE ROW LEVEL SECURITY;
 
 -- Service role can do everything (RLS is bypassed for service role)
 DROP POLICY IF EXISTS users_select_own ON users;

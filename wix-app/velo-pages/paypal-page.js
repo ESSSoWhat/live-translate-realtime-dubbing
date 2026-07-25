@@ -27,7 +27,21 @@ import {
     capturePayPalOrder,
     getPayPalConfig,
     getUsageForMember,
+    recordNudge,
 } from 'backend/paypal.web';
+
+// Upgrade-nudge A/B state (variant chosen from the member's email so it's stable).
+let nudgeVariant = 'a';
+let nudgeFeature = null;
+let nudgeShownReported = false;
+
+function variantForEmail(email) {
+    let h = 0;
+    for (let i = 0; i < email.length; i++) {
+        h = (h * 31 + email.charCodeAt(i)) & 0x7fffffff;
+    }
+    return (h % 2 === 0) ? 'a' : 'b';
+}
 
 function setStatus(msg) {
     try { $w('#paypalStatus').text = msg; $w('#paypalStatus').show(); } catch (e) { /* element may not exist */ }
@@ -47,6 +61,7 @@ async function getEmail() {
 async function startSubscription(tier) {
     const email = await getEmail();
     if (!email) { setStatus('Please log in first.'); return; }
+    if (nudgeShownReported) recordNudge(nudgeVariant, 'clicked', nudgeFeature);
     setEnabled(false);
     setStatus('Redirecting to PayPal…');
     const res = await createPayPalSubscription(email, tier);
@@ -61,6 +76,7 @@ async function startSubscription(tier) {
 async function startOneTime(tier) {
     const email = await getEmail();
     if (!email) { setStatus('Please log in first.'); return; }
+    if (nudgeShownReported) recordNudge(nudgeVariant, 'clicked', nudgeFeature);
     setEnabled(false);
     setStatus('Redirecting to PayPal…');
     const res = await createPayPalOrder(email, tier);
@@ -92,6 +108,7 @@ async function handleReturnFromPayPal() {
 async function loadUsage() {
     const email = await getEmail();
     if (!email) return;
+    nudgeVariant = variantForEmail(email);
     const res = await getUsageForMember(email);
     if (!res.success || !res.usage) return;
     const u = res.usage;
@@ -127,12 +144,26 @@ function showUpgradeNudge(u) {
     const peak = peaks.reduce((a, b) => (a.r >= b.r ? a : b));
     try {
         if (peak.r >= 0.8) {
+            nudgeFeature = peak.key;
             const pct = Math.round(peak.r * 100);
-            const msg = peak.r >= 1
-                ? `You've used all your ${peak.key} this month — upgrade to keep going.`
-                : `You've used ${pct}% of your ${peak.key} this month — upgrade for more.`;
+            const maxed = peak.r >= 1;
+            // A/B: variant 'a' = "upgrade for more", 'b' = "you're about to run out".
+            let msg;
+            if (nudgeVariant === 'b') {
+                msg = maxed
+                    ? `You've run out of ${peak.key} this month — upgrade now.`
+                    : `You're about to run out of ${peak.key} — upgrade now.`;
+            } else {
+                msg = maxed
+                    ? `You've used all your ${peak.key} this month — upgrade for more.`
+                    : `You've used ${pct}% of your ${peak.key} this month — upgrade for more.`;
+            }
             $w('#upgradeNudge').text = msg;
             $w('#upgradeNudge').show();
+            if (!nudgeShownReported) {
+                nudgeShownReported = true;
+                recordNudge(nudgeVariant, 'shown', peak.key);
+            }
         } else {
             $w('#upgradeNudge').hide();
         }

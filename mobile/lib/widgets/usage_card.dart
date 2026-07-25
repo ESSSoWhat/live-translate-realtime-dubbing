@@ -18,6 +18,8 @@ class _UsageCardState extends State<UsageCard> {
   Map<String, dynamic>? _usage;
   bool _loading = true;
   String? _error;
+  String _variant = 'a';
+  bool _shownReported = false;
 
   static const int _kUnlimited = 2147483647;
 
@@ -27,13 +29,40 @@ class _UsageCardState extends State<UsageCard> {
     _load();
   }
 
+  // Stable A/B assignment: hash the user's email so a user always sees the same copy.
+  String _variantFor(String seed) {
+    var h = 0;
+    for (final c in seed.codeUnits) {
+      h = (h * 31 + c) & 0x7fffffff;
+    }
+    return h.isEven ? 'a' : 'b';
+  }
+
   Future<void> _load() async {
     if (mounted) setState(() { _loading = true; _error = null; });
     try {
-      final u = await _api.getUsage();
-      if (mounted) setState(() { _usage = u; _loading = false; });
+      final results = await Future.wait([_api.getUsage(), _api.getMe()]);
+      final usage = results[0];
+      final me = results[1];
+      final email = (me['email'] as String?) ?? '';
+      if (mounted) {
+        setState(() {
+          _usage = usage;
+          _variant = email.isNotEmpty ? _variantFor(email) : 'a';
+          _loading = false;
+        });
+        _maybeReportShown();
+      }
     } catch (_) {
       if (mounted) setState(() { _loading = false; _error = 'Could not load usage'; });
+    }
+  }
+
+  void _maybeReportShown() {
+    final peak = _peakUsage();
+    if (!_shownReported && peak.value >= 0.8) {
+      _shownReported = true;
+      _api.recordNudge(variant: _variant, action: 'shown', feature: peak.key);
     }
   }
 
@@ -55,10 +84,23 @@ class _UsageCardState extends State<UsageCard> {
     return ratios.entries.reduce((a, b) => a.value >= b.value ? a : b);
   }
 
-  void _goToPaywall() {
+  void _goToPaywall({String? feature}) {
+    _api.recordNudge(variant: _variant, action: 'clicked', feature: feature);
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const PaywallScreen()),
     );
+  }
+
+  // Two A/B copies: 'a' = "upgrade for more", 'b' = "you're about to run out".
+  String _nudgeText(String feature, int pct, bool maxed) {
+    if (_variant == 'b') {
+      return maxed
+          ? "You've run out of $feature this month — upgrade now."
+          : "You're about to run out of $feature — upgrade now.";
+    }
+    return maxed
+        ? "You've used all your $feature this month — upgrade for more."
+        : "You've used $pct% of your $feature this month — upgrade for more.";
   }
 
   Widget _nudgeBanner(MapEntry<String, double> peak) {
@@ -67,9 +109,7 @@ class _UsageCardState extends State<UsageCard> {
     final scheme = Theme.of(context).colorScheme;
     final bg = maxed ? scheme.errorContainer : scheme.tertiaryContainer;
     final fg = maxed ? scheme.onErrorContainer : scheme.onTertiaryContainer;
-    final msg = maxed
-        ? "You've used all your ${peak.key} this month."
-        : "You've used $pct% of your ${peak.key} this month.";
+    final msg = _nudgeText(peak.key, pct, maxed);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -89,7 +129,7 @@ class _UsageCardState extends State<UsageCard> {
           ),
           const SizedBox(width: 8),
           FilledButton(
-            onPressed: _goToPaywall,
+            onPressed: () => _goToPaywall(feature: peak.key),
             style: FilledButton.styleFrom(
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 14),

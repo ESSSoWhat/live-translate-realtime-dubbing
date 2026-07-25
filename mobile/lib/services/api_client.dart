@@ -246,6 +246,47 @@ class ApiClient {
     );
   }
 
+  /// GET /paypal/subscription — current user's plan + live PayPal status.
+  Future<Map<String, dynamic>> getSubscription() async {
+    final r = await _dio.get<Map<String, dynamic>>('/paypal/subscription');
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// POST /paypal/subscription/cancel — cancel the current user's PayPal subscription.
+  Future<Map<String, dynamic>> cancelSubscription() async {
+    final r = await _dio.post('/paypal/subscription/cancel');
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// POST /analytics/nudge — record an upgrade-nudge A/B impression/click (best-effort).
+  Future<void> recordNudge({
+    required String variant,
+    required String action,
+    String? feature,
+    String surface = 'mobile',
+  }) async {
+    try {
+      await _dio.post('/analytics/nudge', data: {
+        'variant': variant,
+        'action': action,
+        'feature': feature,
+        'surface': surface,
+      });
+    } catch (_) {
+      // analytics is best-effort; never block the UX
+    }
+  }
+
   /// POST /auth/oauth/google/id-token — login with Google ID token (Android/iOS).
   Future<Map<String, dynamic>> loginWithGoogleIdToken(
     String idToken, {

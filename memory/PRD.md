@@ -77,6 +77,21 @@ NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix s
 - Endpoints verified end-to-end (TestClient + auth override, local PG): GET /api/v1/user/usage and GET /api/v1/user/me return correct tier + used/limit + period_reset_date (200).
 - BUG FOUND & FIXED (concurrency over-consumption): old `check_and_record_quota` read used-count via `LEFT JOIN usage_records` with `FOR UPDATE OF u` (locked only the users row). Under READ COMMITTED the joined usage row isn't re-read after the lock releases, so N concurrent same-user requests all read used=0 and over-consumed (test recorded 2000s on a 1800s cap). Rewrote to increment-then-check atomically via `INSERT ... ON CONFLICT DO UPDATE ... RETURNING <col>`, comparing the returned new total to the tier limit and raising QuotaExceededError inside the txn to roll back. Row lock on the usage_records row (+ unique index on first insert) now serializes concurrent increments. `exc.used/limit/requested` semantics unchanged (used = total before the rejected request) so proxy.py 402 handler unaffected. 28 existing tests + 10 new all pass, ruff clean.
 
+## Manage-Plan (cancel) + Nudge A/B test (2026-07-25, part 3)
+**Feature 4 — Cancel/Manage plan (backend tested, clients wired):**
+- `provision_or_update_user(email, tier, status, subscription_id=None)` now persists the PayPal subscription id; webhook stores `resource.id` on BILLING.SUBSCRIPTION.ACTIVATED (users.subscription_id already existed in schema).
+- New authed endpoints in paypal.py: `GET /api/v1/paypal/subscription` (tier + live PayPal status/next_billing) and `POST /api/v1/paypal/subscription/cancel` (calls PayPal cancel, sets subscription_status='canceled', keeps tier until PayPal ends cycle / webhook downgrades). 404 if no subscription_id.
+- Flutter: `ManagePlanScreen` (lib/screens/manage_plan_screen.dart) shows plan + Cancel (with confirm) + Change/Upgrade → paywall; linked from settings_screen. api_client got getSubscription/cancelSubscription.
+
+**Feature 3 — Upgrade-nudge A/B test (backend tested, clients wired):**
+- New `analytics.py` router: `POST /api/v1/analytics/nudge` (records {variant a|b, action shown|clicked, feature, surface}) and admin `GET /api/v1/analytics/nudge/stats` (conversion per variant, admin secret = LT_SYNC_SECRET). New `nudge_events` table in supabase_schema.sql.
+- Two copies: variant 'a' = "upgrade for more", variant 'b' = "you're about to run out". Variant assigned deterministically by hashing the user's email (stable per user; no new deps).
+- Flutter usage_card + Wix paypal-page: pick variant from email, render matching copy, fire 'shown' on display and 'clicked' on upgrade/paypal-button tap. Desktop keeps single-copy nudge (smaller free-user surface).
+
+Backend suite now **44 tests passing, ruff clean**. NEW schema needs applying on Supabase: `webhook_events`, `nudge_events` tables (run supabase_schema.sql). Clients verified via node/py static checks only — need on-device confirmation.
+
+STILL BLOCKED ON USER: (1) service-role key / SUPABASE_DB_URL to verify the real tier write; (2) interactive PayPal approval of the sandbox subscription.
+
 ## Sandbox PayPal E2E verified + webhook idempotency + 80% usage nudge (2026-07-25, part 2)
 **Sandbox PayPal API — REAL objects created (working creds: Client ID `BAA6_cVm8Twng…`, secret `EG3W3wwf…`; the `A…`/NVP values user pasted were wrong type):**
 - Token OK, product `PROD-6GB36944R5303312P`, plans ACTIVE: starter `P-21T5856284475072KNJSMQ2Q`, pro `P-0S757496WR660225NNJSMQ2Q`; subscription `I-23A8AXCV00SF` (APPROVAL_PENDING) + one-time order `1VE518422M079354S` (CREATED), both with approve_urls. Proves the exact backend code the client buttons call works against real PayPal sandbox.

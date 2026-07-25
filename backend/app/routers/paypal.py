@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import structlog  # pylint: disable=import-error
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 
 from app.config import get_settings
+from app.dependencies import CurrentUser, get_current_user
 from app.routers.billing import provision_or_update_user
 from app.services import paypal_client as pp
 from app.services.supabase_client import get_supabase
@@ -172,6 +173,53 @@ async def create_subscription(body: SubscriptionRequest) -> dict:
     return {"subscription_id": sub.get("id"), "status": sub.get("status"), "approve_url": approve}
 
 
+class CancelResponse(BaseModel):
+    canceled: bool
+    subscription_id: str
+
+
+@router.get("/subscription")
+async def get_my_subscription(user: CurrentUser = Depends(get_current_user)) -> dict:  # noqa: B008
+    """Return the signed-in user's plan + live PayPal subscription status (for Manage Plan)."""
+    sub_id = (user.get("subscription_id") or "").strip()
+    out = {
+        "tier": user.get("tier", "free"),
+        "subscription_status": user.get("subscription_status", "active"),
+        "subscription_id": sub_id or None,
+        "paypal_status": None,
+        "next_billing_time": None,
+    }
+    if sub_id and pp.paypal_configured():
+        try:
+            live = await pp.api("GET", f"/v1/billing/subscriptions/{sub_id}")
+            out["paypal_status"] = live.get("status")
+            out["next_billing_time"] = (live.get("billing_info") or {}).get("next_billing_time")
+        except httpx.HTTPError:
+            logger.warning("Failed to fetch PayPal subscription", subscription_id=sub_id)
+    return out
+
+
+@router.post("/subscription/cancel", response_model=CancelResponse)
+async def cancel_my_subscription(user: CurrentUser = Depends(get_current_user)) -> CancelResponse:  # noqa: B008
+    """Cancel the signed-in user's PayPal subscription; keeps tier until PayPal ends the cycle."""
+    _require_configured()
+    sub_id = (user.get("subscription_id") or "").strip()
+    if not sub_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active PayPal subscription to cancel")
+    try:
+        await pp.api(
+            "POST",
+            f"/v1/billing/subscriptions/{sub_id}/cancel",
+            json={"reason": "Customer requested cancellation"},
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="PayPal cancellation failed") from exc
+    sb = await get_supabase()
+    await sb.table("users").update({"subscription_status": "canceled"}).eq("id", user["id"]).execute()
+    logger.info("PayPal subscription canceled by user", email=user.get("email"), subscription_id=sub_id)
+    return CancelResponse(canceled=True, subscription_id=sub_id)
+
+
 @router.post("/webhook", status_code=status.HTTP_200_OK)
 async def paypal_webhook(request: Request) -> dict:
     """Verify PayPal webhook signature and sync tier changes into Supabase."""
@@ -201,7 +249,8 @@ async def paypal_webhook(request: Request) -> dict:
 
     try:
         if event in _ACTIVATE_EVENTS:
-            await provision_or_update_user(email, tier, "active")
+            sub_id = resource.get("id") if event == "BILLING.SUBSCRIPTION.ACTIVATED" else None
+            await provision_or_update_user(email, tier, "active", subscription_id=sub_id)
             logger.info("PayPal webhook: activated", event_type=event, email=email, tier=tier)
         else:
             await provision_or_update_user(email, "free", "canceled")

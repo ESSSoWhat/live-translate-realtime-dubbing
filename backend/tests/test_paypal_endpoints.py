@@ -139,7 +139,7 @@ class TestPaypalWebhookProvisioning:
     def test_subscription_activated_provisions_tier(self, client: TestClient) -> None:
         r, prov = self._post(client, "BILLING.SUBSCRIPTION.ACTIVATED", {"custom_id": "buyer@example.com|pro"})
         assert r.status_code == 200
-        prov.assert_awaited_once_with("buyer@example.com", "pro", "active")
+        prov.assert_awaited_once_with("buyer@example.com", "pro", "active", subscription_id=None)
 
     def test_one_time_capture_provisions_tier(self, client: TestClient) -> None:
         r, prov = self._post(
@@ -148,7 +148,17 @@ class TestPaypalWebhookProvisioning:
             {"purchase_units": [{"custom_id": "b2@example.com|early_adopters"}]},
         )
         assert r.status_code == 200
-        prov.assert_awaited_once_with("b2@example.com", "early_adopters", "active")
+        prov.assert_awaited_once_with("b2@example.com", "early_adopters", "active", subscription_id=None)
+
+    def test_subscription_activated_stores_subscription_id(self, client: TestClient) -> None:
+        r, prov = self._post(
+            client,
+            "BILLING.SUBSCRIPTION.ACTIVATED",
+            {"id": "I-SUBSCR-1", "custom_id": "buyer@example.com|pro"},
+        )
+        # The subscription's own id is in resource.id; ensure it is persisted.
+        assert r.status_code == 200
+        prov.assert_awaited_once_with("buyer@example.com", "pro", "active", subscription_id="I-SUBSCR-1")
 
     def test_subscription_cancelled_downgrades_to_free(self, client: TestClient) -> None:
         r, prov = self._post(client, "BILLING.SUBSCRIPTION.CANCELLED", {"custom_id": "buyer@example.com|pro"})
