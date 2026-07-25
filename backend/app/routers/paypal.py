@@ -154,12 +154,12 @@ async def paypal_webhook(request: Request) -> dict:
     if email and tier:
         if event in ("PAYMENT.CAPTURE.COMPLETED", "BILLING.SUBSCRIPTION.ACTIVATED"):
             await provision_or_update_user(email, tier, "active")
-            logger.info("PayPal webhook: activated", event=event, email=email, tier=tier)
+            logger.info("PayPal webhook: activated", event_type=event, email=email, tier=tier)
         elif event in ("BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.EXPIRED", "BILLING.SUBSCRIPTION.SUSPENDED"):
             await provision_or_update_user(email, "free", "canceled")
-            logger.info("PayPal webhook: canceled", event=event, email=email)
+            logger.info("PayPal webhook: canceled", event_type=event, email=email)
     else:
-        logger.warning("PayPal webhook missing custom_id", event=event)
+        logger.warning("PayPal webhook missing custom_id", event_type=event)
     return {"received": True}
 
 

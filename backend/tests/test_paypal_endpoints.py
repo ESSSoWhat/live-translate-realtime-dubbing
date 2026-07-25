@@ -10,6 +10,8 @@ return 401 on wrong secret and 503 on correct secret (Supabase unset).
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 import requests
 from fastapi.testclient import TestClient
@@ -113,6 +115,50 @@ class TestPaypalWebhook:
             json={"event_type": "PAYMENT.CAPTURE.COMPLETED", "resource": {}},
         )
         assert r.status_code == 503
+
+
+# ─── PayPal: webhook provisioning (success paths) ────────────────────────────
+# Regression for the structlog reserved-key bug: logger.info(..., event=...) raised
+# TypeError ("multiple values for argument 'event'") AFTER provisioning, 500-ing the
+# webhook so PayPal retried indefinitely. These exercise the configured success path.
+class TestPaypalWebhookProvisioning:
+    def _post(self, client: TestClient, event: str, resource: dict, verified: bool = True):
+        with (
+            patch("app.services.paypal_client.paypal_configured", return_value=True),
+            patch("app.services.paypal_client.verify_webhook_signature", new=AsyncMock(return_value=verified)),
+            patch("app.routers.paypal.provision_or_update_user", new=AsyncMock()) as prov,
+        ):
+            r = client.post(f"{PREFIX}/paypal/webhook", json={"event_type": event, "resource": resource})
+        return r, prov
+
+    def test_subscription_activated_provisions_tier(self, client: TestClient) -> None:
+        r, prov = self._post(client, "BILLING.SUBSCRIPTION.ACTIVATED", {"custom_id": "buyer@example.com|pro"})
+        assert r.status_code == 200
+        prov.assert_awaited_once_with("buyer@example.com", "pro", "active")
+
+    def test_one_time_capture_provisions_tier(self, client: TestClient) -> None:
+        r, prov = self._post(
+            client,
+            "PAYMENT.CAPTURE.COMPLETED",
+            {"purchase_units": [{"custom_id": "b2@example.com|early_adopters"}]},
+        )
+        assert r.status_code == 200
+        prov.assert_awaited_once_with("b2@example.com", "early_adopters", "active")
+
+    def test_subscription_cancelled_downgrades_to_free(self, client: TestClient) -> None:
+        r, prov = self._post(client, "BILLING.SUBSCRIPTION.CANCELLED", {"custom_id": "buyer@example.com|pro"})
+        assert r.status_code == 200
+        prov.assert_awaited_once_with("buyer@example.com", "free", "canceled")
+
+    def test_bad_signature_returns_400_no_provision(self, client: TestClient) -> None:
+        r, prov = self._post(
+            client,
+            "BILLING.SUBSCRIPTION.ACTIVATED",
+            {"custom_id": "x@y.com|pro"},
+            verified=False,
+        )
+        assert r.status_code == 400
+        prov.assert_not_awaited()
 
 
 # ─── Regression: Wix billing sync (billing.py refactor) ──────────────────────

@@ -571,7 +571,7 @@ async def qonversion_webhook(request: Request) -> dict:
             "tier": tier,
             "subscription_status": "active",
         }).eq("id", user_id).execute()
-        logger.info("Qonversion: tier updated", user_id=user_id, tier=tier, event=event_name)
+        logger.info("Qonversion: tier updated", user_id=user_id, tier=tier, event_name=event_name)
     # Events that revoke premium
     elif event_name in (
         "subscription_canceled",
@@ -583,7 +583,7 @@ async def qonversion_webhook(request: Request) -> dict:
             "tier": "free",
             "subscription_status": "canceled",
         }).eq("id", user_id).execute()
-        logger.info("Qonversion: tier set to free", user_id=user_id, event=event_name)
+        logger.info("Qonversion: tier set to free", user_id=user_id, event_name=event_name)
     else:
         logger.debug("Qonversion webhook unhandled event", event_name=event_name, user_id=user_id)
 
