@@ -10,7 +10,7 @@ return 401 on wrong secret and 503 on correct secret (Supabase unset).
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import requests
@@ -207,6 +207,22 @@ class TestPaypalWebhookProvisioning:
         assert r.status_code == 200
         assert r.json().get("duplicate") is True
         prov.assert_not_awaited()
+
+
+# ─── Webhook idempotency store resilience ────────────────────────────────────
+class TestClaimWebhookDegrades:
+    def test_claim_returns_true_when_store_unavailable(self) -> None:
+        """If webhook_events is missing/unreachable, claim must process (return True),
+        never block a real tier flip."""
+        import asyncio
+
+        from app.routers import paypal as pp_router
+
+        sb = MagicMock()
+        sb.table.return_value.upsert.return_value.execute = AsyncMock(side_effect=Exception("relation does not exist"))
+        with patch("app.routers.paypal.get_supabase", new=AsyncMock(return_value=sb)):
+            result = asyncio.run(pp_router._claim_webhook_event("EVT-X", "BILLING.SUBSCRIPTION.ACTIVATED"))
+        assert result is True
 
 
 # ─── Regression: Wix billing sync (billing.py refactor) ──────────────────────

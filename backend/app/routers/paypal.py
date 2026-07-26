@@ -6,8 +6,8 @@ provisioned in Supabase via the shared `provision_or_update_user` helper.
 
 from __future__ import annotations
 
-import structlog  # pylint: disable=import-error
 import httpx
+import structlog  # pylint: disable=import-error
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 
@@ -52,18 +52,26 @@ async def _claim_webhook_event(event_id: str, event_type: str) -> bool:
     already recorded (idempotent skip). Backed by the `webhook_events` table's unique
     `event_id` constraint via INSERT ... ON CONFLICT DO NOTHING, so PayPal's automatic
     retries can never double-provision or flip a tier twice.
+
+    Degrades gracefully: if the idempotency store is unavailable (e.g. the
+    `webhook_events` table has not been created yet), we log and process the event
+    anyway so provisioning is never blocked.
     """
-    sb = await get_supabase()
-    res = await (
-        sb.table("webhook_events")
-        .upsert(
-            {"event_id": event_id, "event_type": event_type, "source": "paypal"},
-            on_conflict="event_id",
-            ignore_duplicates=True,
+    try:
+        sb = await get_supabase()
+        res = await (
+            sb.table("webhook_events")
+            .upsert(
+                {"event_id": event_id, "event_type": event_type, "source": "paypal"},
+                on_conflict="event_id",
+                ignore_duplicates=True,
+            )
+            .execute()
         )
-        .execute()
-    )
-    return bool(res.data)
+        return bool(res.data)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Webhook idempotency store unavailable; processing without dedupe", error=str(exc))
+        return True
 
 
 async def _release_webhook_event(event_id: str) -> None:

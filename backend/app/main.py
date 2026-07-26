@@ -11,9 +11,16 @@ from fastapi.exception_handlers import (
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler  # type: ignore[import-not-found]  # pylint: disable=import-error
-from slowapi.errors import RateLimitExceeded  # type: ignore[import-not-found]  # pylint: disable=import-error
-from slowapi.util import get_remote_address  # type: ignore[import-not-found]  # pylint: disable=import-error
+from slowapi import (  # type: ignore[import-not-found]  # pylint: disable=import-error
+    Limiter,
+    _rate_limit_exceeded_handler,
+)
+from slowapi.errors import (
+    RateLimitExceeded,  # type: ignore[import-not-found]  # pylint: disable=import-error
+)
+from slowapi.util import (
+    get_remote_address,  # type: ignore[import-not-found]  # pylint: disable=import-error
+)
 
 from app.config import get_settings
 from app.routers import analytics, auth, billing, paypal, proxy, user, voice

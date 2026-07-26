@@ -5,10 +5,20 @@ from __future__ import annotations
 import base64
 import json
 import secrets
-import structlog  # pylint: disable=import-error
+
 import stripe  # pylint: disable=import-error
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status  # pylint: disable=import-error
-from postgrest.exceptions import APIError as PostgrestAPIError  # pylint: disable=import-error
+import structlog  # pylint: disable=import-error
+from fastapi import (  # pylint: disable=import-error
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    status,
+)
+from postgrest.exceptions import (
+    APIError as PostgrestAPIError,  # pylint: disable=import-error
+)
 
 from app.config import get_settings
 from app.dependencies import get_current_user
@@ -164,7 +174,7 @@ async def customer_portal(
 
 
 @router.post("/webhook", status_code=status.HTTP_200_OK)
-async def stripe_webhook(request: Request, stripe_signature: str = Header(alias="stripe-signature")) -> dict:  # noqa: B008
+async def stripe_webhook(request: Request, stripe_signature: str = Header(alias="stripe-signature")) -> dict:
     """Handle Stripe webhook events to update subscription status."""
     cfg = get_settings()
     payload = await request.body()

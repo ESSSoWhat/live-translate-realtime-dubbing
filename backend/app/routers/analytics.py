@@ -36,21 +36,26 @@ def _require_admin(x_admin_secret: str | None) -> None:
 
 @router.post("/nudge", status_code=status.HTTP_201_CREATED)
 async def record_nudge(event: NudgeEvent) -> dict:
-    """Record a nudge impression or click for the A/B test."""
+    """Record a nudge impression or click for the A/B test (best-effort)."""
     if event.variant not in _VARIANTS or event.action not in _ACTIONS:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid variant or action")
-    sb = await get_supabase()
-    await sb.table("nudge_events").insert({
-        "variant": event.variant,
-        "action": event.action,
-        "feature": event.feature,
-        "surface": event.surface,
-    }).execute()
-    return {"recorded": True}
+    try:
+        sb = await get_supabase()
+        await sb.table("nudge_events").insert({
+            "variant": event.variant,
+            "action": event.action,
+            "feature": event.feature,
+            "surface": event.surface,
+        }).execute()
+        return {"recorded": True}
+    except Exception as exc:  # noqa: BLE001
+        # Analytics is non-critical (e.g. nudge_events table not created yet).
+        logger.warning("Nudge event not recorded", error=str(exc))
+        return {"recorded": False}
 
 
 @router.get("/nudge/stats")
-async def nudge_stats(x_admin_secret: str | None = Header(default=None)) -> dict:  # noqa: B008
+async def nudge_stats(x_admin_secret: str | None = Header(default=None)) -> dict:
     """Admin: conversion (clicked/shown) per nudge variant."""
     _require_admin(x_admin_secret)
     sb = await get_supabase()
