@@ -170,6 +170,17 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - **Desktop (PyQt)**: NEW `services/paypal_checkout.py` (sync httpx: fetch_config, create_subscription, create_order) + `gui/widgets/paypal_dialog.py` (PayPalCheckoutDialog: plan combo + email + background QThread → opens approve_url in browser). Wired into `main_window.py` Account menu ("Upgrade with PayPal…") → `_open_paypal_checkout`. Usage dashboard ALREADY existed (UsageMeterWidget). py_compile OK; new files ruff-clean (pre-existing ruff nits in main_window unrelated).
 - **Railway env (USER action, not code)**: user must set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, PAYPAL_CURRENCY, then POST /paypal/admin/setup-plans (X-Admin-Secret=LT_SYNC_SECRET) → set returned PAYPAL_STARTER_PLAN_ID/PAYPAL_PRO_PLAN_ID + PAYPAL_WEBHOOK_ID. Plus LT_SYNC_SECRET + SUPABASE_DB_URL for sync/metering.
 
+## Deploy artifacts re-verified (2026-06 fork) — blocker is USER git push, not code
+- Re-verified root `/app/Dockerfile`: copies `backend/requirements.txt` then `backend/` → `app.main:app` resolves; CMD binds $PORT:-8080. `.dockerignore` excludes mobile/live-dubbing/wix-app/.git. `backend/app.main:app` imports cleanly (46 routes), requirements.txt complete.
+- Only uncommitted change: `backend/.env.example` WIX_SYNC_SECRET→LT_SYNC_SECRET rename (doc only, harmless).
+- NO cloudbuild.yaml in repo — GCP trigger builds root Dockerfile with repo-root context (matches our setup).
+- ACTION SEQUENCE for user to unblock (order matters):
+  1. Click "Save to GitHub" in chat → pushes root Dockerfile + .dockerignore to the branch Cloud Build watches.
+  2. THEN re-trigger the Cloud Build in GCP console (or let auto-trigger fire on push).
+  3. Grab the Cloud Run service URL → agent curls /health + /api/v1/paypal/config to confirm new image.
+  4. Agent updates BACKEND_URL in Wix (api-key.web.js + sync.web.ts), Flutter (API_BASE_URL), desktop (settings.py:204) to the Cloud Run URL.
+  5. Set Cloud Run env vars (PAYPAL_*, LT_SYNC_SECRET, SUPABASE_*, ELEVENLABS_API_KEY) + PayPal webhook → https://<cloudrun>/api/v1/paypal/webhook.
+
 ## Sync secret renamed WIX_SYNC_SECRET -> LT_SYNC_SECRET (2026-07)
 - Backend config field is now lt_sync_secret with validation_alias=AliasChoices("LT_SYNC_SECRET","WIX_SYNC_SECRET") — canonical LT_SYNC_SECRET, legacy WIX_SYNC_SECRET still accepted.
 - Updated refs in config.py, billing.py, auth.py, paypal.py, main.py; docs (PRODUCTION_READINESS.md, WIX_SSO_SETUP.md, BACKEND_URL.md, velo README) + .env.example.
