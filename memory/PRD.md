@@ -77,6 +77,16 @@ NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix s
 - Endpoints verified end-to-end (TestClient + auth override, local PG): GET /api/v1/user/usage and GET /api/v1/user/me return correct tier + used/limit + period_reset_date (200).
 - BUG FOUND & FIXED (concurrency over-consumption): old `check_and_record_quota` read used-count via `LEFT JOIN usage_records` with `FOR UPDATE OF u` (locked only the users row). Under READ COMMITTED the joined usage row isn't re-read after the lock releases, so N concurrent same-user requests all read used=0 and over-consumed (test recorded 2000s on a 1800s cap). Rewrote to increment-then-check atomically via `INSERT ... ON CONFLICT DO UPDATE ... RETURNING <col>`, comparing the returned new total to the tier limit and raising QuotaExceededError inside the txn to roll back. Row lock on the usage_records row (+ unique index on first insert) now serializes concurrent increments. `exc.used/limit/requested` semantics unchanged (used = total before the rejected request) so proxy.py 402 handler unaffected. 28 existing tests + 10 new all pass, ruff clean.
 
+## Schema applied + FULL webhook dedupe verified in production (2026-07-27)
+- User ran the updated schema. Confirmed `webhook_events` + `nudge_events` now EXIST in live Supabase.
+- Full end-to-end webhook test against REAL Supabase (signature/paypal_configured mocked, everything else live) — ALL PASS:
+  1. Fire event E1 (BILLING.SUBSCRIPTION.ACTIVATED, email|pro) → user provisioned tier=pro.
+  2. Tampered tier→free in DB, refired SAME event id → response `{duplicate:true}`, tier stayed `free` (dedupe works: retry did NOT re-provision). **DEDUPE PASS**
+  3. Fired new event id E2 → not duplicate → tier back to pro. **NON-DUP PASS**
+  4. `POST /analytics/nudge` → 201 recorded (nudge_events write works).
+  5. All test rows cleaned up (users + webhook_events + nudge_events).
+- The complete PayPal → provision → tier-flip pipeline, retry-idempotency, and nudge analytics are now proven in production. REMINDER: user should rotate the service-role key that was shared.
+
 ## Real Supabase tier-write VERIFIED + webhook hardened (2026-07-26)
 - Used the service-role key (`sb_secret_…` new format — works with supabase-py 2.31) to verify the exact code the PayPal webhook runs, against the LIVE Supabase (djjmuvzwjapkeydqdgbu):
   1. `provision_or_update_user(email,'pro','active',subscription_id=...)` → user created, tier=pro, status=active, subscription_id + api_key stored ✅
