@@ -170,7 +170,16 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - **Desktop (PyQt)**: NEW `services/paypal_checkout.py` (sync httpx: fetch_config, create_subscription, create_order) + `gui/widgets/paypal_dialog.py` (PayPalCheckoutDialog: plan combo + email + background QThread → opens approve_url in browser). Wired into `main_window.py` Account menu ("Upgrade with PayPal…") → `_open_paypal_checkout`. Usage dashboard ALREADY existed (UsageMeterWidget). py_compile OK; new files ruff-clean (pre-existing ruff nits in main_window unrelated).
 - **Railway env (USER action, not code)**: user must set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, PAYPAL_CURRENCY, then POST /paypal/admin/setup-plans (X-Admin-Secret=LT_SYNC_SECRET) → set returned PAYPAL_STARTER_PLAN_ID/PAYPAL_PRO_PLAN_ID + PAYPAL_WEBHOOK_ID. Plus LT_SYNC_SECRET + SUPABASE_DB_URL for sync/metering.
 
+## GitHub CI backend tests FIXED (2026-06 fork) — code IS now in ESSSoWhat/live-translate-realtime-dubbing
+- "Save to GitHub" confirmed working — CI ran on commit "Auto-generated changes #54". The GCP "File ... not found" error = code not yet on the branch the Cloud Build trigger watches / repo connection (user-side; guidance given via support_agent: push to the correct repo+branch first, THEN trigger build, or use Emergent's Deploy button).
+- GitHub Actions "Backend tests" job failed on 4 tests (all secret-auth): TestNudgeStats::test_stats_computes_conversion (401≠200), TestPaypalAdminSetupPlans::test_setup_plans_with_correct_admin_returns_503 (401≠503), TestWixSyncRegression wrong/missing-secret (503≠401).
+- ROOT CAUSE: tests hardcode X-Admin-Secret="test-secret-123" and rely on LT_SYNC_SECRET being configured. Local backend/.env supplies it (pass), but CI's ci.yml env block does NOT set LT_SYNC_SECRET and .env is gitignored → empty secret → admin guard 401 / wix-sync 503. Not a code bug — an env-dependent test.
+- FIX (backend/tests/conftest.py): `os.environ.setdefault("LT_SYNC_SECRET", "test-secret-123")` so the suite is self-contained regardless of .env. Verified 50 passed both WITH .env and under CI-sim (mv .env aside + `env -u LT_SYNC_SECRET`).
+- ALSO: `collect_ignore = ["test_usage_tracking_integration.py"]` in conftest. That file is a standalone asyncio script (needs real Postgres). CI pins pytest==8.3.4 (async tests → skipped) but the pod has pytest 9.1.1 (async tests → FAILED). Excluding it from collection future-proofs against a pytest 9 bump. CI does NOT run ruff (only pytest), so pre-existing ruff nits don't block.
+- NEXT: user must "Save to GitHub" again (push the conftest fix) → CI backend job goes green.
+
 ## Deploy artifacts re-verified (2026-06 fork) — blocker is USER git push, not code
+- Re-verified root `/app/Dockerfile`
 - Re-verified root `/app/Dockerfile`: copies `backend/requirements.txt` then `backend/` → `app.main:app` resolves; CMD binds $PORT:-8080. `.dockerignore` excludes mobile/live-dubbing/wix-app/.git. `backend/app.main:app` imports cleanly (46 routes), requirements.txt complete.
 - Only uncommitted change: `backend/.env.example` WIX_SYNC_SECRET→LT_SYNC_SECRET rename (doc only, harmless).
 - NO cloudbuild.yaml in repo — GCP trigger builds root Dockerfile with repo-root context (matches our setup).

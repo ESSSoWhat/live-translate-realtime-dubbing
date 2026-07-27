@@ -14,6 +14,15 @@ os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
 os.environ.setdefault("SUPABASE_JWT_SECRET", "test-jwt-secret")
 os.environ.setdefault("ELEVENLABS_API_KEY", "test-elevenlabs-key")
+# Admin/Wix sync secret the tests authenticate with. Set here so the suite is
+# self-contained (local .env supplies it too, but CI has no .env).
+os.environ.setdefault("LT_SYNC_SECRET", "test-secret-123")
+
+# test_usage_tracking_integration.py is a standalone asyncio script (run directly
+# against a real Postgres), NOT a pytest module. Exclude it from collection so it
+# never fails under pytest versions that treat un-awaited async tests as errors
+# (pytest 9+) instead of skipping them (pytest 8).
+collect_ignore = ["test_usage_tracking_integration.py"]
 
 from app.main import create_app
 
