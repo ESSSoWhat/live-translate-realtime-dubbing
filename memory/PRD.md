@@ -77,6 +77,15 @@ NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix s
 - Endpoints verified end-to-end (TestClient + auth override, local PG): GET /api/v1/user/usage and GET /api/v1/user/me return correct tier + used/limit + period_reset_date (200).
 - BUG FOUND & FIXED (concurrency over-consumption): old `check_and_record_quota` read used-count via `LEFT JOIN usage_records` with `FOR UPDATE OF u` (locked only the users row). Under READ COMMITTED the joined usage row isn't re-read after the lock releases, so N concurrent same-user requests all read used=0 and over-consumed (test recorded 2000s on a 1800s cap). Rewrote to increment-then-check atomically via `INSERT ... ON CONFLICT DO UPDATE ... RETURNING <col>`, comparing the returned new total to the tier limit and raising QuotaExceededError inside the txn to roll back. Row lock on the usage_records row (+ unique index on first insert) now serializes concurrent increments. `exc.used/limit/requested` semantics unchanged (used = total before the rejected request) so proxy.py 402 handler unaffected. 28 existing tests + 10 new all pass, ruff clean.
 
+## BLOCKER: Railway deployment is STALE (2026-07-27)
+- Probed live Railway backend `https://livetranslatedubtool-production.up.railway.app`: `/health`→200 but `/api/v1/paypal/*`→404, `/api/v1/analytics/*`→404, and `/api/v1/billing/wix/sync`→503 "Set WIX_SYNC_SECRET" (OLD name). => deployed build predates the PayPal integration AND the WIX_SYNC_SECRET→LT_SYNC_SECRET rename. A live PayPal webhook test is impossible until redeploy (PayPal would hit /api/v1/paypal/webhook → 404).
+- deployment_agent: code compiles, no hardcoded secrets, env-driven (deploy-ready for Railway). Its MongoDB/ML/frontend "blockers" are Emergent-platform-specific and NOT applicable — user hosts on Railway (Postgres/Supabase supported).
+- USER ACTION to unblock live test:
+  1. Redeploy current /app codebase to Railway (Save to GitHub → Railway redeploy).
+  2. Set Railway env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_URL, LT_SYNC_SECRET, ELEVENLABS_API_KEY, PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, PAYPAL_CURRENCY, PAYPAL_WEBHOOK_ID, PAYPAL_STARTER_PLAN_ID, PAYPAL_PRO_PLAN_ID.
+  3. PayPal dashboard → add webhook → https://<railway>/api/v1/paypal/webhook (events: BILLING.SUBSCRIPTION.ACTIVATED/CANCELLED/EXPIRED/SUSPENDED/UPDATED, PAYMENT.CAPTURE.COMPLETED) → copy Webhook ID into PAYPAL_WEBHOOK_ID.
+  4. Verify: GET /api/v1/paypal/config → {configured:true,...}. Then approve a REAL sandbox subscription (dashboard "send test" often has no custom_id → 200 but no tier flip). Confirm tier flips via Supabase or GET /api/v1/paypal/subscription.
+
 ## Schema applied + FULL webhook dedupe verified in production (2026-07-27)
 - User ran the updated schema. Confirmed `webhook_events` + `nudge_events` now EXIST in live Supabase.
 - Full end-to-end webhook test against REAL Supabase (signature/paypal_configured mocked, everything else live) — ALL PASS:
