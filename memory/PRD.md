@@ -170,6 +170,10 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - **Desktop (PyQt)**: NEW `services/paypal_checkout.py` (sync httpx: fetch_config, create_subscription, create_order) + `gui/widgets/paypal_dialog.py` (PayPalCheckoutDialog: plan combo + email + background QThread → opens approve_url in browser). Wired into `main_window.py` Account menu ("Upgrade with PayPal…") → `_open_paypal_checkout`. Usage dashboard ALREADY existed (UsageMeterWidget). py_compile OK; new files ruff-clean (pre-existing ruff nits in main_window unrelated).
 - **Railway env (USER action, not code)**: user must set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, PAYPAL_CURRENCY, then POST /paypal/admin/setup-plans (X-Admin-Secret=LT_SYNC_SECRET) → set returned PAYPAL_STARTER_PLAN_ID/PAYPAL_PRO_PLAN_ID + PAYPAL_WEBHOOK_ID. Plus LT_SYNC_SECRET + SUPABASE_DB_URL for sync/metering.
 
+## ✅ PROD HARDENED (2026-06 fork) — BACKEND_ENV=production verified
+- User set BACKEND_ENV=production + BACKEND_CORS_ORIGINS=https://www.livetranslate.net(,https://livetranslate.net) on Railway. Verified live: /docs → 404 (hidden); /health 200; /api/v1/paypal/config 200 (API serves); CORS preflight from www.livetranslate.net → 200 with access-control-allow-origin echoed (allowed); random origin evil.example.com → 400 blocked.
+- is_production only affects docs_url + CORS (no auth changes). Native mobile/desktop + server-side Wix Velo unaffected by CORS.
+
 ## 🎉 CORE APP FULLY WORKING END-TO-END (2026-06 fork) — all live-verified
 - After proxy.py fixes deployed + user set the correct ELEVENLABS_API_KEY on Railway (old one was invalid → ElevenLabs 401 invalid_api_key; correct key sk_7651... verified by me directly: /v1/voices 200 47 voices, TTS 200 27KB mp3):
   - GET /api/v1/proxy/voices → 200, 47 voices ✅
