@@ -170,6 +170,12 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - **Desktop (PyQt)**: NEW `services/paypal_checkout.py` (sync httpx: fetch_config, create_subscription, create_order) + `gui/widgets/paypal_dialog.py` (PayPalCheckoutDialog: plan combo + email + background QThread → opens approve_url in browser). Wired into `main_window.py` Account menu ("Upgrade with PayPal…") → `_open_paypal_checkout`. Usage dashboard ALREADY existed (UsageMeterWidget). py_compile OK; new files ruff-clean (pre-existing ruff nits in main_window unrelated).
 - **Railway env (USER action, not code)**: user must set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, PAYPAL_CURRENCY, then POST /paypal/admin/setup-plans (X-Admin-Secret=LT_SYNC_SECRET) → set returned PAYPAL_STARTER_PLAN_ID/PAYPAL_PRO_PLAN_ID + PAYPAL_WEBHOOK_ID. Plus LT_SYNC_SECRET + SUPABASE_DB_URL for sync/metering.
 
+## Live Starter smoke test = DRY-RUN PASS (2026-06 fork)
+- Config fully populated: starter_plan_id P-8FC35096LG2298041NJ5GUPI, pro_plan_id P-4NR95814GS3797306NJ5GUPI, configured:true, env LIVE.
+- POST /api/v1/paypal/subscriptions {email:thesonluu@gmail.com, tier:starter} → 200, subscription_id I-N6XFU6WWPY8B, status APPROVAL_PENDING, valid www.paypal.com approve_url. Proves live checkout pipeline E2E up to approval. NO charge (never approved → auto-expires; PayPal cancel API only works on active subs so nothing to cancel).
+- Full real-charge test (approve → webhook → tier flip → verify Supabase users.tier=starter → cancel) NOT run — user did not opt into the 9.99 AUD live charge. Webhook+provision logic already proven against real Supabase in prior testing (mocked signature).
+- User DECLINED rotating the exposed PayPal Client Secret + LT_SYNC_SECRET (both were pasted in chat). Residual risk acknowledged; their call.
+
 ## PayPal LIVE credentials confirmed working (2026-06 fork)
 - config → configured:true, env LIVE, currency AUD, client_id set.
 - setup-plans succeeded (HTTP 200) = live OAuth against api-m.paypal.com works. Created LIVE product PROD-0BY98957PB715064A; plans starter P-8FC35096LG2298041NJ5GUPI (9.99 AUD/mo), pro P-4NR95814GS3797306NJ5GUPI (24.99 AUD/mo).
