@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, timedelta
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import asyncpg
 import structlog
@@ -23,6 +24,15 @@ _db_pool: asyncpg.Pool | None = None
 _db_pool_lock = asyncio.Lock()
 
 
+def _clean_dsn(dsn: str) -> str:
+    """Drop query params asyncpg can't use (e.g. `pgbouncer=true` in Supabase pooler URIs)."""
+    parts = urlsplit(dsn)
+    if not parts.query:
+        return dsn
+    kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k.lower() != "pgbouncer"]
+    return urlunsplit(parts._replace(query=urlencode(kept)))
+
+
 async def get_db_pool() -> asyncpg.Pool:
     """Return the shared asyncpg connection pool, creating it if needed."""
     global _db_pool
@@ -38,7 +48,11 @@ async def get_db_pool() -> asyncpg.Pool:
                         "Set it to your Supabase PostgreSQL connection string "
                         "(e.g., postgresql://postgres:password@db.xxx.supabase.co:5432/postgres)"
                     )
-                _db_pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10)
+                # statement_cache_size=0 is required for Supabase's transaction pooler
+                # (pgbouncer transaction mode doesn't support prepared statements).
+                _db_pool = await asyncpg.create_pool(
+                    _clean_dsn(dsn), min_size=2, max_size=10, statement_cache_size=0
+                )
                 logger.info("Database pool created")
     return _db_pool
 
