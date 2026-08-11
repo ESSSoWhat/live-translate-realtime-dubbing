@@ -11,7 +11,7 @@ import io
 
 import httpx
 import structlog
-from elevenlabs import AsyncElevenLabs
+from elevenlabs import AsyncElevenLabs, VoiceSettings
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 
@@ -127,9 +127,8 @@ async def transcribe(
 
     client = _elevenlabs()
     try:
-        result = await asyncio.to_thread(
-            client._client.speech_to_text.convert,  # pylint: disable=no-member
-            audio=io.BytesIO(audio_bytes),
+        result = await client.speech_to_text.convert(
+            file=io.BytesIO(audio_bytes),
             model_id="scribe_v1",
             language_code=None if language == "auto" else language,
         )
@@ -164,18 +163,16 @@ async def synthesize(
 
     client = _elevenlabs()
     try:
-        tts_kwargs = {
-            "voice_id": body.voice_id,
-            "text": text,
-            "model_id": body.model_id,
-            "voice_settings": {"stability": body.stability, "similarity_boost": body.similarity_boost},
-            "output_format": "mp3_44100_128",
-        }
-        audio_bytes = await asyncio.to_thread(
-            client._client.text_to_speech.convert,  # pylint: disable=no-member
-            **tts_kwargs,
+        audio_stream = client.text_to_speech.convert(
+            body.voice_id,
+            text=text,
+            model_id=body.model_id,
+            output_format="mp3_44100_128",
+            voice_settings=VoiceSettings(
+                stability=body.stability, similarity_boost=body.similarity_boost
+            ),
         )
-        audio_data = b"".join(audio_bytes) if hasattr(audio_bytes, "__iter__") else audio_bytes
+        audio_data = b"".join([chunk async for chunk in audio_stream])
     except Exception as exc:
         logger.error("ElevenLabs TTS error", error=str(exc))
         raise HTTPException(status_code=502, detail=f"Synthesis failed: {exc}") from exc
@@ -297,7 +294,7 @@ async def translate(
         try:
             from deep_translator import GoogleTranslator
             translated = await asyncio.to_thread(
-                GoogleTranslator(source="auto", target=body.target_language).translate,
+                GoogleTranslator(source="auto", target=body.target_language.strip().lower()).translate,
                 body.text,
             )
         except Exception as exc:
@@ -313,7 +310,7 @@ async def list_voices(user: dict = Depends(get_current_user)) -> list[VoiceItem]
     """Return all ElevenLabs voices available to the user."""
     client = _elevenlabs()
     try:
-        result = await asyncio.to_thread(client._client.voices.get_all)  # pylint: disable=no-member
+        result = await client.voices.get_all()
         return [
             VoiceItem(voice_id=v.voice_id, name=v.name, category=v.category or "premade")
             for v in result.voices
@@ -327,7 +324,7 @@ async def delete_voice(voice_id: str, user: dict = Depends(get_current_user)) ->
     """Delete a cloned voice from ElevenLabs and ownership record if owned by user."""
     client = _elevenlabs()
     try:
-        all_voices = await asyncio.to_thread(client._client.voices.get_all)  # pylint: disable=no-member
+        all_voices = await client.voices.get_all()
         voice_meta = next((v for v in all_voices.voices if v.voice_id == voice_id), None)
         if voice_meta is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice not found")
@@ -343,7 +340,7 @@ async def delete_voice(voice_id: str, user: dict = Depends(get_current_user)) ->
         )
         if not delete_result.data or len(delete_result.data) == 0:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to delete this voice")
-        await asyncio.to_thread(client._client.voices.delete, voice_id)  # pylint: disable=no-member
+        await client.voices.delete(voice_id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -369,11 +366,9 @@ async def clone_voice(
     client = _elevenlabs()
 
     try:
-        voice = await asyncio.to_thread(
-            client._client.voices.ivc.create,  # pylint: disable=no-member
+        voice = await client.voices.ivc.create(
             name=name,
-            description=description,
-            files=[("audio", (audio.filename or "audio.wav", audio_bytes, "audio/wav"))],
+            files=[(audio.filename or "audio.wav", audio_bytes, "audio/wav")],
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Voice cloning failed: {exc}") from exc
@@ -386,7 +381,7 @@ async def clone_voice(
         }).execute()
     except Exception as exc:
         try:
-            await asyncio.to_thread(client._client.voices.delete, voice.voice_id)  # pylint: disable=no-member
+            await client.voices.delete(voice.voice_id)
         except Exception as cleanup_exc:
             logger.warning(
                 "Orphaned ElevenLabs voice after Supabase insert failure; cleanup delete failed",

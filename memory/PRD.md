@@ -170,6 +170,19 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - **Desktop (PyQt)**: NEW `services/paypal_checkout.py` (sync httpx: fetch_config, create_subscription, create_order) + `gui/widgets/paypal_dialog.py` (PayPalCheckoutDialog: plan combo + email + background QThread → opens approve_url in browser). Wired into `main_window.py` Account menu ("Upgrade with PayPal…") → `_open_paypal_checkout`. Usage dashboard ALREADY existed (UsageMeterWidget). py_compile OK; new files ruff-clean (pre-existing ruff nits in main_window unrelated).
 - **Railway env (USER action, not code)**: user must set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, PAYPAL_CURRENCY, then POST /paypal/admin/setup-plans (X-Admin-Secret=LT_SYNC_SECRET) → set returned PAYPAL_STARTER_PLAN_ID/PAYPAL_PRO_PLAN_ID + PAYPAL_WEBHOOK_ID. Plus LT_SYNC_SECRET + SUPABASE_DB_URL for sync/metering.
 
+## 🐛 CORE FEATURE BUGS FOUND + FIXED via live test (2026-06 fork) — needs deploy to verify
+- User: "test app" / "Live translate app" → tested the CORE product endpoints (proxy router) live, found 3 real bugs:
+  1. ElevenLabs BROKEN (voices/TTS/STT/clone all 502): code used `client._client.<resource>` + `asyncio.to_thread`, but installed SDK elevenlabs==2.59.0 AsyncElevenLabs has NO `_client` and methods are async. Error: "'AsyncElevenLabs' object has no attribute '_client'".
+  2. Translation returned ORIGINAL text (not translated): deep_translator GoogleTranslator rejects capitalized "Spanish" (LanguageNotSupportedException) → silently swallowed → returns input.
+  3. (same class) all proxy ElevenLabs calls affected.
+- FIXES in app/routers/proxy.py (verified: proxy imports OK, 50 tests pass; ElevenLabs API confirmed by introspecting SDK v2.59.0):
+  - import VoiceSettings; `client.speech_to_text.convert(file=..., model_id='scribe_v1', language_code=...)` awaited (param is `file=` not `audio=`).
+  - TTS: `client.text_to_speech.convert(voice_id, text=, model_id=, output_format='mp3_44100_128', voice_settings=VoiceSettings(...))` returns async_generator → collect via `[c async for c in stream]`.
+  - `await client.voices.get_all()`, `await client.voices.delete(vid)`, `await client.voices.ivc.create(name=, files=[(fname,bytes,'audio/wav')])` (dropped invalid `description` param + fixed nested-tuple files format).
+  - translate: GoogleTranslator target normalized `.strip().lower()` so "Spanish"/"es"/"ES" all work.
+- NOTE: ELEVENLABS_API_KEY not in pod local .env, so ElevenLabs fix validated structurally (SDK signatures), not with a live call — MUST verify after Railway deploy.
+- ACTION: user Save to GitHub → Railway redeploy → re-run live test: GET /proxy/voices, POST /proxy/translate, POST /proxy/synthesize, and confirm /user/usage counters increment.
+
 ## ✅ MOCK LIVE PAYMENT TEST PASSED + test data cleaned (2026-06 fork)
 - User asked for a mock payment (avoid real 9.99 AUD charge in live mode). Created live Starter subscription I-WDT4MJN81N43 (APPROVAL_PENDING, no charge) for live-test@livetranslate.net.
 - Simulated BILLING.SUBSCRIPTION.ACTIVATED faithfully: provisioned starter via app's real provision_or_update_user (wix/sync starter plan) then set subscription_id=I-WDT4MJN81N43 + subscription_status=active via direct DB (pooler). Verified: public.users row = {tier:starter, subscription_status:active, subscription_id:I-WDT4MJN81N43, has_api_key:true}.
