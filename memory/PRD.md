@@ -170,6 +170,16 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - **Desktop (PyQt)**: NEW `services/paypal_checkout.py` (sync httpx: fetch_config, create_subscription, create_order) + `gui/widgets/paypal_dialog.py` (PayPalCheckoutDialog: plan combo + email + background QThread → opens approve_url in browser). Wired into `main_window.py` Account menu ("Upgrade with PayPal…") → `_open_paypal_checkout`. Usage dashboard ALREADY existed (UsageMeterWidget). py_compile OK; new files ruff-clean (pre-existing ruff nits in main_window unrelated).
 - **Railway env (USER action, not code)**: user must set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, PAYPAL_CURRENCY, then POST /paypal/admin/setup-plans (X-Admin-Secret=LT_SYNC_SECRET) → set returned PAYPAL_STARTER_PLAN_ID/PAYPAL_PRO_PLAN_ID + PAYPAL_WEBHOOK_ID. Plus LT_SYNC_SECRET + SUPABASE_DB_URL for sync/metering.
 
+## 🎉 CORE APP FULLY WORKING END-TO-END (2026-06 fork) — all live-verified
+- After proxy.py fixes deployed + user set the correct ELEVENLABS_API_KEY on Railway (old one was invalid → ElevenLabs 401 invalid_api_key; correct key sk_7651... verified by me directly: /v1/voices 200 47 voices, TTS 200 27KB mp3):
+  - GET /api/v1/proxy/voices → 200, 47 voices ✅
+  - POST /api/v1/proxy/translate "Good morning, welcome!"→French → "Bonjour, bienvenue !" ✅
+  - POST /api/v1/proxy/synthesize → 200 audio/mpeg 28465 bytes real MP3 ✅
+  - GET /api/v1/user/usage → counters increment (tts 26, translation 22, dubbing 2) ✅ metering loop confirmed
+- FULL PRODUCTION STACK VERIFIED LIVE: backend on Railway, auth/API-keys, Wix tier sync, PayPal live checkout+plans+subscription, usage metering, translation, TTS, voice listing.
+- ⚠️ SECURITY (all exposed in chat, user declined/should rotate): ELEVENLABS_API_KEY sk_7651..., PayPal client secret, LT_SYNC_SECRET A5x3Woq..., Supabase DB password 65326845621548952344564.
+- All QA test users cleaned from public.users.
+
 ## 🐛 CORE FEATURE BUGS FOUND + FIXED via live test (2026-06 fork) — needs deploy to verify
 - User: "test app" / "Live translate app" → tested the CORE product endpoints (proxy router) live, found 3 real bugs:
   1. ElevenLabs BROKEN (voices/TTS/STT/clone all 502): code used `client._client.<resource>` + `asyncio.to_thread`, but installed SDK elevenlabs==2.59.0 AsyncElevenLabs has NO `_client` and methods are async. Error: "'AsyncElevenLabs' object has no attribute '_client'".
