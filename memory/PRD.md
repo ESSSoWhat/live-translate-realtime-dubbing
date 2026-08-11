@@ -170,6 +170,12 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - **Desktop (PyQt)**: NEW `services/paypal_checkout.py` (sync httpx: fetch_config, create_subscription, create_order) + `gui/widgets/paypal_dialog.py` (PayPalCheckoutDialog: plan combo + email + background QThread → opens approve_url in browser). Wired into `main_window.py` Account menu ("Upgrade with PayPal…") → `_open_paypal_checkout`. Usage dashboard ALREADY existed (UsageMeterWidget). py_compile OK; new files ruff-clean (pre-existing ruff nits in main_window unrelated).
 - **Railway env (USER action, not code)**: user must set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, PAYPAL_CURRENCY, then POST /paypal/admin/setup-plans (X-Admin-Secret=LT_SYNC_SECRET) → set returned PAYPAL_STARTER_PLAN_ID/PAYPAL_PRO_PLAN_ID + PAYPAL_WEBHOOK_ID. Plus LT_SYNC_SECRET + SUPABASE_DB_URL for sync/metering.
 
+## PayPal LIVE credentials confirmed working (2026-06 fork)
+- config → configured:true, env LIVE, currency AUD, client_id set.
+- setup-plans succeeded (HTTP 200) = live OAuth against api-m.paypal.com works. Created LIVE product PROD-0BY98957PB715064A; plans starter P-8FC35096LG2298041NJ5GUPI (9.99 AUD/mo), pro P-4NR95814GS3797306NJ5GUPI (24.99 AUD/mo).
+- User needs to set PAYPAL_STARTER_PLAN_ID + PAYPAL_PRO_PLAN_ID on Railway, create Live webhook (6 events) → PAYPAL_WEBHOOK_ID, then live Starter smoke test.
+- ⚠️ SECURITY: user pasted PayPal Client Secret AND LT_SYNC_SECRET (A5x3Woq…) in chat → both exposed. Advised: rotate PayPal secret (Generate New Secret) and rotate LT_SYNC_SECRET in BOTH Railway and Wix Secrets Manager (must match). To be done after smoke test.
+
 ## ✅ RAILWAY DEPLOY VERIFIED LIVE (2026-06 fork) — new build serving, clients already correct
 - User deployed to Railway; URL is the SAME domain as before: `https://livetranslatedubtool-production.up.railway.app`. Because the domain is unchanged, ALL clients (Wix api-key.web.js/paypal.web.js/sync.web.ts, desktop settings.py, mobile) ALREADY point to it → NO repointing needed.
 - Curl-verified the NEW build is live (was stale/404 before): /health 200; / 200; /api/v1/paypal/config **200** {configured:false}; /api/v1/analytics/nudge/stats 401 "Invalid admin secret"; /api/v1/paypal/subscription 401; /api/v1/billing/wix/sync wrong-secret **401 "Invalid Wix sync secret"** (proves new code + LT_SYNC_SECRET is set — old build returned 503 "Set WIX_SYNC_SECRET").
