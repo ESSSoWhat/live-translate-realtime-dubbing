@@ -728,6 +728,8 @@ class _WixSsoWorker(QThread):
 
         try:
             webbrowser.open(sso_url)
+            # Local paste page — Wix often cannot redirect to localhost
+            webbrowser.open(redirect_uri)
         except Exception as exc:
             server.stop()
             self.error.emit(f"Could not open browser: {exc}")
@@ -948,30 +950,39 @@ class LoginDialog(QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # SSO (primary): one click, sign in on web, app completes automatically
+        # Google OAuth (works via backend → Supabase; does not depend on Wix redirect)
+        self._google_btn = self._google_button()
+        self._google_btn.clicked.connect(self._on_google_signin)
+        layout.addWidget(self._google_btn)
+
+        layout.addWidget(self._divider("or"))
+
+        # Wix SSO: opens browser; may need paste fallback if site blocks localhost redirect
         self._wix_btn = self._wix_button()
         self._wix_btn.clicked.connect(self._on_wix_signin)
         layout.addWidget(self._wix_btn)
-        wix_tip = QLabel("Opens browser — sign in and you're done.")
+        wix_tip = QLabel("Opens browser. If the app stays on Signing in…, paste your API key below.")
+        wix_tip.setWordWrap(True)
         wix_tip.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(wix_tip)
 
-        # API key fallback (collapsed)
+        # API key fallback (visible — Wix auto-callback is unreliable on published site)
         self._api_key_widget = QWidget()
         api_fallback_layout = QVBoxLayout(self._api_key_widget)
         api_fallback_layout.setContentsMargins(0, 0, 0, 0)
-        self._api_key_input = self._input("API key from account page")
+        self._api_key_input = self._input("API key from livetranslate.net/api-key")
         self._api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self._use_key_btn = QPushButton("Use API key")
         self._use_key_btn.setFlat(True)
         self._use_key_btn.setStyleSheet("QPushButton { color: #4f8cff; }")
         self._use_key_btn.clicked.connect(self._on_use_api_key)
+        open_key_page = self._link_button("Open account page to copy API key")
+        open_key_page.clicked.connect(
+            lambda: webbrowser.open(self._settings.get_wix_api_key_page_url())
+        )
         api_fallback_layout.addWidget(self._api_key_input)
         api_fallback_layout.addWidget(self._use_key_btn)
-        self._api_key_widget.hide()
-        api_trouble_lnk = self._link_button("Having trouble? Use API key")
-        api_trouble_lnk.clicked.connect(lambda: self._api_key_widget.setVisible(not self._api_key_widget.isVisible()))
-        layout.addWidget(api_trouble_lnk)
+        api_fallback_layout.addWidget(open_key_page)
         layout.addWidget(self._api_key_widget)
 
         layout.addWidget(self._divider("or sign in with email"))
@@ -1113,10 +1124,10 @@ class LoginDialog(QDialog):
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def _set_busy(self, busy: bool) -> None:
-        """Enable/disable all auth buttons and update labels.
+        """Enable/disable auth buttons and update labels.
 
-        When going busy, hide any existing error.
-        When un-busying, leave the error label alone so it stays visible.
+        API key paste stays enabled during Wix/Google browser wait so the user can
+        finish sign-in manually when the website does not redirect back.
         """
         assert self._login_btn is not None
         assert self._reg_btn is not None
@@ -1126,21 +1137,21 @@ class LoginDialog(QDialog):
         if self._google_btn is not None:
             self._google_btn.setEnabled(not busy)
         if self._use_key_btn is not None:
-            self._use_key_btn.setEnabled(not busy)
+            self._use_key_btn.setEnabled(True)
+        if self._api_key_input is not None:
+            self._api_key_input.setEnabled(True)
         if self._wix_btn is not None:
             self._wix_btn.setEnabled(not busy)
-            self._wix_btn.setText("Signing in…" if busy else "Sign in with livetranslate.net")
+            self._wix_btn.setText("Waiting for browser…" if busy else "Sign in with livetranslate.net")
         if self._wix_btn_reg is not None:
             self._wix_btn_reg.setEnabled(not busy)
-            self._wix_btn_reg.setText("Signing in…" if busy else "Sign in with livetranslate.net")
+            self._wix_btn_reg.setText("Waiting for browser…" if busy else "Sign in with livetranslate.net")
         self._login_btn.setText("Signing in…" if busy else "Sign In")
         self._reg_btn.setText("Creating account…" if busy else "Create Account — Free")
         if self._google_btn is not None:
             self._google_btn.setText(
                 "Opening browser…" if busy else "\U0001F310  Sign in with Google"
             )
-        # Only hide the error label when starting a new attempt,
-        # NOT when re-enabling buttons after an error.
         if busy:
             self._error_label.hide()
 
