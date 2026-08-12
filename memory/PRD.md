@@ -170,6 +170,16 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - **Desktop (PyQt)**: NEW `services/paypal_checkout.py` (sync httpx: fetch_config, create_subscription, create_order) + `gui/widgets/paypal_dialog.py` (PayPalCheckoutDialog: plan combo + email + background QThread → opens approve_url in browser). Wired into `main_window.py` Account menu ("Upgrade with PayPal…") → `_open_paypal_checkout`. Usage dashboard ALREADY existed (UsageMeterWidget). py_compile OK; new files ruff-clean (pre-existing ruff nits in main_window unrelated).
 - **Railway env (USER action, not code)**: user must set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV, PAYPAL_CURRENCY, then POST /paypal/admin/setup-plans (X-Admin-Secret=LT_SYNC_SECRET) → set returned PAYPAL_STARTER_PLAN_ID/PAYPAL_PRO_PLAN_ID + PAYPAL_WEBHOOK_ID. Plus LT_SYNC_SECRET + SUPABASE_DB_URL for sync/metering.
 
+## Early Adopters (149 AUD one-time) launch (2026-06 fork)
+- Backend READY + live-verified: POST /api/v1/paypal/orders {tier:early_adopters} → 200 order (149 AUD, custom_id email|early_adopters, approve+capture links). Capture POST /orders/{id}/capture → on COMPLETED calls provision_or_update_user(email, early_adopters, active). Webhook PAYMENT.CAPTURE.COMPLETED also provisions (redundant/idempotent).
+- Wix (paypal-page.js): FULLY coded — #paypalEarlyBtn → startOneTime('early_adopters') → create order → redirect → handleReturnFromPayPal captures on return. USER ACTION: add a button element with ID `paypalEarlyBtn` to the Wix pricing page + Publish. No code change needed.
+- Mobile: FIXED the one-time capture gap (was: created order + opened browser but never captured → purchase never completed). Changes:
+  - mobile/lib/services/api_client.dart: added capturePayPalOrder(orderId) → POST /paypal/orders/{id}/capture.
+  - mobile/lib/screens/paywall_screen.dart: State now `with WidgetsBindingObserver`; stores _pendingOrderId on one-time order create; on app resume (didChangeAppLifecycleState) auto-captures the pending order; COMPLETED → refresh /me + onSuccess + snackbar; non-completed/cancel clears pending silently.
+  - ⚠️ NOT testable here (no Flutter/Dart SDK in pod) — code-reviewed only. USER must rebuild the Flutter app to verify. Confirmed onSuccess VoidCallback? exists; capture route path matches.
+- User confirmed PayPal web is the intended Early Adopters path on mobile (not IAP).
+- TO VERIFY FULLY: real 149 AUD purchase (real money) on each client, or trust the code (backend capture path already exercised).
+
 ## ✅ PROD HARDENED (2026-06 fork) — BACKEND_ENV=production verified
 - User set BACKEND_ENV=production + BACKEND_CORS_ORIGINS=https://www.livetranslate.net(,https://livetranslate.net) on Railway. Verified live: /docs → 404 (hidden); /health 200; /api/v1/paypal/config 200 (API serves); CORS preflight from www.livetranslate.net → 200 with access-control-allow-origin echoed (allowed); random origin evil.example.com → 400 blocked.
 - is_production only affects docs_url + CORS (no auth changes). Native mobile/desktop + server-side Wix Velo unaffected by CORS.

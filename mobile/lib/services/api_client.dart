@@ -246,6 +246,19 @@ class ApiClient {
     );
   }
 
+  /// POST /paypal/orders/{order_id}/capture — capture an approved one-time order.
+  /// Call after the buyer approves in the browser; on COMPLETED the backend
+  /// provisions the tier. Returns { status, order_id }.
+  Future<Map<String, dynamic>> capturePayPalOrder(String orderId) async {
+    final r = await _dio.post('/paypal/orders/$orderId/capture');
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
   /// GET /paypal/subscription — current user's plan + live PayPal status.
   Future<Map<String, dynamic>> getSubscription() async {
     final r = await _dio.get<Map<String, dynamic>>('/paypal/subscription');

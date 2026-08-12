@@ -22,7 +22,7 @@ class PaywallScreen extends StatefulWidget {
   State<PaywallScreen> createState() => _PaywallScreenState();
 }
 
-class _PaywallScreenState extends State<PaywallScreen> {
+class _PaywallScreenState extends State<PaywallScreen> with WidgetsBindingObserver {
   final _api = ApiClient();
   List<PaywallProduct> _products = [];
   bool _loading = true;
@@ -30,12 +30,29 @@ class _PaywallScreenState extends State<PaywallScreen> {
   bool _purchasing = false;
   bool _paypalConfigured = false;
   bool _paypalBusy = false;
+  String? _pendingOrderId;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadOfferings();
     _checkPayPal();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // When the user returns from the external PayPal browser, capture the
+    // pending one-time order so the lifetime purchase actually completes.
+    if (state == AppLifecycleState.resumed && _pendingOrderId != null && !_paypalBusy) {
+      _capturePendingOrder();
+    }
   }
 
   Future<void> _checkPayPal() async {
@@ -72,6 +89,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
         approveUrl = res['approve_url'] as String?;
       } else {
         final res = await _api.createPayPalOrder(email: email, tier: tier);
+        _pendingOrderId = res['order_id'] as String?;
         final links = (res['links'] as List?) ?? [];
         for (final l in links) {
           if (l is Map && (l['rel'] == 'approve' || l['rel'] == 'payer-action')) {
@@ -89,6 +107,41 @@ class _PaywallScreenState extends State<PaywallScreen> {
     } catch (e) {
       if (mounted) setState(() => _error = 'PayPal checkout failed. Please try again.');
     } finally {
+      if (mounted) setState(() => _paypalBusy = false);
+    }
+  }
+
+  Future<void> _capturePendingOrder() async {
+    final orderId = _pendingOrderId;
+    if (orderId == null || _paypalBusy) return;
+    setState(() {
+      _paypalBusy = true;
+      _error = null;
+    });
+    try {
+      final res = await _api.capturePayPalOrder(orderId);
+      if ((res['status'] as String?) == 'COMPLETED') {
+        _pendingOrderId = null;
+        // Give the backend a moment to provision the tier, then refresh.
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        try {
+          if (mounted) await _api.getMe();
+        } catch (_) {}
+        if (mounted) {
+          setState(() => _paypalBusy = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Payment complete — your plan is now active!')),
+          );
+          widget.onSuccess?.call();
+        }
+        return;
+      }
+      // Not completed (cancelled or not approved) — stop retrying.
+      _pendingOrderId = null;
+      if (mounted) setState(() => _paypalBusy = false);
+    } catch (_) {
+      // Order not approved / already handled — non-fatal, stop retrying.
+      _pendingOrderId = null;
       if (mounted) setState(() => _paypalBusy = false);
     }
   }
