@@ -36,7 +36,15 @@ def _default_usage(tier: str = "free") -> dict:
         period_end = date(today.year + 1, 1, 1) - timedelta(days=1)
     else:
         period_end = date(today.year, today.month + 1, 1) - timedelta(days=1)
-    limits = {"free": (1800, 50000, 1800, 50000, 1), "starter": (7200, 200000, 7200, 200000, 3), "pro": (36000, 1000000, 36000, 1000000, 10)}
+    # Must match tier_limits in supabase_schema.sql / WIX_SYNC.md:
+    # free 30min, starter (Hobby) 5hr, pro 15hr, early_adopters unlimited.
+    _UNLIMITED = 2147483647
+    limits = {
+        "free": (1800, 50000, 1800, 50000, 1),
+        "starter": (18000, 500000, 18000, 500000, 5),
+        "pro": (54000, 2000000, 54000, 2000000, 20),
+        "early_adopters": (_UNLIMITED, _UNLIMITED, _UNLIMITED, _UNLIMITED, 99),
+    }
     dub, tts, stt, trans, clones = limits.get(tier, limits["free"])
     return {
         "dubbing_seconds_used": 0, "dubbing_seconds_limit": dub,
@@ -51,11 +59,11 @@ def _default_usage(tier: str = "free") -> dict:
 def _verify_wix_secret(request: Request) -> None:
     """Verify Wix request via X-Wix-Sync-Secret or Bearer. Raises HTTPException on failure."""
     cfg = get_settings()
-    secret = (cfg.wix_sync_secret or "").strip()
+    secret = (cfg.lt_sync_secret or "").strip()
     if not secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Wix API key not configured. Set WIX_SYNC_SECRET.",
+            detail="Wix API key not configured. Set LT_SYNC_SECRET.",
         )
     auth = request.headers.get("Authorization") or request.headers.get("X-Wix-Sync-Secret")
     if not auth:

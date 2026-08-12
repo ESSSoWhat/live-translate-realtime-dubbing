@@ -72,7 +72,7 @@ class UsageMeterWidget(QFrame):
 
     upgrade_requested = pyqtSignal(str)  # emits checkout URL
 
-    def __init__(self, settings: "AppSettings", parent=None) -> None:
+    def __init__(self, settings: AppSettings, parent=None) -> None:
         super().__init__(parent)
         self._settings = settings
         self._usage: dict = {}
@@ -188,7 +188,19 @@ class UsageMeterWidget(QFrame):
         pct = min(100, int(used / max(limit, 1) * 100))
 
         self._progress.setValue(pct)
-        self._usage_label.setText(f"{used_min} / {limit_min} min dubbed this month")
+
+        # 80% "upgrade" nudge — only for tiers that can still upgrade (button visible).
+        if pct >= 80 and self._upgrade_btn.isVisible():
+            msg = (
+                "You've used all your minutes — upgrade"
+                if pct >= 100
+                else f"You've used {pct}% of your minutes — upgrade"
+            )
+            self._usage_label.setText(msg)
+            self._usage_label.setStyleSheet("font-size: 10px; color: #f0a020; font-weight: bold;")
+        else:
+            self._usage_label.setText(f"{used_min} / {limit_min} min dubbed this month")
+            self._usage_label.setStyleSheet("font-size: 10px; color: #777;")
 
         # Colour progress bar red when near limit
         if pct >= 90:

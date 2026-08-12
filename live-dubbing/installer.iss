@@ -2,7 +2,9 @@
 ; Build with: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
 #define MyAppName "Live Translate"
+#ifndef MyAppVersion
 #define MyAppVersion "0.1.0"
+#endif
 #define MyAppPublisher "Live Translate Team"
 #define MyAppURL "https://github.com/live-translate"
 #define MyAppExeName "LiveTranslate.exe"

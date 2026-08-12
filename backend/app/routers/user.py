@@ -27,7 +27,7 @@ async def report_usage(
 @router.get("/me", response_model=UserProfile)
 async def get_me(user: dict = Depends(get_current_user)) -> UserProfile:
     user_id = str(user["id"])
-    usage_data = await get_usage_snapshot(user_id)
+    usage_data = await _usage_or_default(user_id, user["tier"])
     return UserProfile(
         user_id=user_id,
         email=user["email"],
@@ -40,5 +40,16 @@ async def get_me(user: dict = Depends(get_current_user)) -> UserProfile:
 @router.get("/usage", response_model=UsageWithTier)
 async def get_usage(user: dict = Depends(get_current_user)) -> UsageWithTier:
     user_id = str(user["id"])
-    usage_data = await get_usage_snapshot(user_id)
+    usage_data = await _usage_or_default(user_id, user["tier"])
     return UsageWithTier(tier=user["tier"], **usage_data)
+
+
+async def _usage_or_default(user_id: str, tier: str) -> dict:
+    """Return the live usage snapshot; fall back to zeroed defaults if the metering DB
+    (SUPABASE_DB_URL) is unavailable so the profile endpoints never hard-crash (500)."""
+    try:
+        return await get_usage_snapshot(user_id)
+    except Exception as e:  # noqa: BLE001 — any DB/config error must degrade, not 500
+        from app.routers.auth import _default_usage
+        logger.warning("usage snapshot unavailable; returning defaults", user_id=user_id, error=str(e))
+        return _default_usage(tier)

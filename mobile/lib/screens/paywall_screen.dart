@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/qonversion_service.dart';
 // ignore: unused_import - used via _api.getMe() after purchase/restore
@@ -21,17 +22,128 @@ class PaywallScreen extends StatefulWidget {
   State<PaywallScreen> createState() => _PaywallScreenState();
 }
 
-class _PaywallScreenState extends State<PaywallScreen> {
+class _PaywallScreenState extends State<PaywallScreen> with WidgetsBindingObserver {
   final _api = ApiClient();
   List<PaywallProduct> _products = [];
   bool _loading = true;
   String? _error;
   bool _purchasing = false;
+  bool _paypalConfigured = false;
+  bool _paypalBusy = false;
+  String? _pendingOrderId;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadOfferings();
+    _checkPayPal();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // When the user returns from the external PayPal browser, capture the
+    // pending one-time order so the lifetime purchase actually completes.
+    if (state == AppLifecycleState.resumed && _pendingOrderId != null && !_paypalBusy) {
+      _capturePendingOrder();
+    }
+  }
+
+  Future<void> _checkPayPal() async {
+    try {
+      final cfg = await _api.getPayPalConfig();
+      if (mounted) setState(() => _paypalConfigured = cfg['configured'] == true);
+    } catch (_) {
+      // leave disabled
+    }
+  }
+
+  Future<String?> _currentEmail() async {
+    try {
+      final me = await _api.getMe();
+      final email = me['email'] as String?;
+      return (email != null && email.isNotEmpty) ? email : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _payWithPayPal(String tier, {required bool subscription}) async {
+    if (_paypalBusy) return;
+    setState(() { _paypalBusy = true; _error = null; });
+    try {
+      final email = await _currentEmail();
+      if (email == null) {
+        if (mounted) setState(() { _paypalBusy = false; _error = 'Please sign in first.'; });
+        return;
+      }
+      String? approveUrl;
+      if (subscription) {
+        final res = await _api.createPayPalSubscription(email: email, tier: tier);
+        approveUrl = res['approve_url'] as String?;
+      } else {
+        final res = await _api.createPayPalOrder(email: email, tier: tier);
+        _pendingOrderId = res['order_id'] as String?;
+        final links = (res['links'] as List?) ?? [];
+        for (final l in links) {
+          if (l is Map && (l['rel'] == 'approve' || l['rel'] == 'payer-action')) {
+            approveUrl = l['href'] as String?;
+            break;
+          }
+        }
+      }
+      if (approveUrl != null && approveUrl.isNotEmpty) {
+        final ok = await launchUrl(Uri.parse(approveUrl), mode: LaunchMode.externalApplication);
+        if (!ok && mounted) setState(() => _error = 'Could not open PayPal.');
+      } else if (mounted) {
+        setState(() => _error = 'PayPal checkout is unavailable right now.');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = 'PayPal checkout failed. Please try again.');
+    } finally {
+      if (mounted) setState(() => _paypalBusy = false);
+    }
+  }
+
+  Future<void> _capturePendingOrder() async {
+    final orderId = _pendingOrderId;
+    if (orderId == null || _paypalBusy) return;
+    setState(() {
+      _paypalBusy = true;
+      _error = null;
+    });
+    try {
+      final res = await _api.capturePayPalOrder(orderId);
+      if ((res['status'] as String?) == 'COMPLETED') {
+        _pendingOrderId = null;
+        // Give the backend a moment to provision the tier, then refresh.
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        try {
+          if (mounted) await _api.getMe();
+        } catch (_) {}
+        if (mounted) {
+          setState(() => _paypalBusy = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Payment complete — your plan is now active!')),
+          );
+          widget.onSuccess?.call();
+        }
+        return;
+      }
+      // Not completed (cancelled or not approved) — stop retrying.
+      _pendingOrderId = null;
+      if (mounted) setState(() => _paypalBusy = false);
+    } catch (_) {
+      // Order not approved / already handled — non-fatal, stop retrying.
+      _pendingOrderId = null;
+      if (mounted) setState(() => _paypalBusy = false);
+    }
   }
 
   Future<void> _loadOfferings() async {
@@ -201,6 +313,45 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   onPressed: _purchasing ? null : _restore,
                   child: const Text('Restore purchases'),
                 ),
+                if (_paypalConfigured) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Expanded(child: Divider()),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Text('or pay on the web',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                )),
+                      ),
+                      const Expanded(child: Divider()),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _paypalBusy ? null : () => _payWithPayPal('starter', subscription: true),
+                    icon: const Icon(Icons.account_balance_wallet_outlined),
+                    label: const Text('PayPal — Starter (monthly)'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _paypalBusy ? null : () => _payWithPayPal('pro', subscription: true),
+                    icon: const Icon(Icons.account_balance_wallet_outlined),
+                    label: const Text('PayPal — Pro (monthly)'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _paypalBusy ? null : () => _payWithPayPal('early_adopters', subscription: false),
+                    icon: const Icon(Icons.workspace_premium_outlined),
+                    label: const Text('PayPal — Early Adopters (lifetime)'),
+                  ),
+                  if (_paypalBusy)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 12),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                ],
               ],
             ],
           ),

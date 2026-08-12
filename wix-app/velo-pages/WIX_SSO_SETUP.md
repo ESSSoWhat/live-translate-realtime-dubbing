@@ -70,20 +70,22 @@ On the api-key page's markup (in Wix Editor):
 
 `api-key-page.js` will show this link with text "Click here if the app didn't sign in" when the automatic redirect may have been blocked (e.g. popup blockers). The link’s `href` is set to the completion URL so the user can click to finish sign-in.
 
-## 7. Backend config: BACKEND_URL and WIX_SYNC_SECRET
+## 7. Backend config: BACKEND_URL and LT_SYNC_SECRET
 
 **BACKEND_URL** (in `api-key.web.js`):
 
 - This must be the actual base URL of your FastAPI backend.
-- Example: `https://api.livetranslate.net` (same default as `api-key.web.js` and `sync.web.ts`).
+- Example: `https://livetranslatedubtool-production.up.railway.app` (same default as `api-key.web.js` and `sync.web.ts`).
 - If APIs are at a different domain (e.g. `https://api.live-translate.com`), change the constant.
 - All frontend calls to sync/auth use this URL.
 
-**WIX_SYNC_SECRET**:
+**Sync secret** — named `LT_SYNC_SECRET` on BOTH sides (Wix Secrets Manager AND backend env):
 
-1. In Wix: open Secrets Manager and set `WIX_SYNC_SECRET` to a secure, random string.
-2. In your backend environment, set the same value: `WIX_SYNC_SECRET=the-same-secret-value`.
-3. Ensure prod/staging match their respective Wix configs — a mismatch breaks sync and API-key provisioning.
+1. In Wix: open Secrets Manager and store a secret named `LT_SYNC_SECRET` with a secure, random value.
+   > ⚠️ Wix rejects secret names starting with `wix` (case-insensitive) — this is why it's `LT_SYNC_SECRET`, not `WIX_SYNC_SECRET`.
+   > `api-key.web.js` reads it via `getSecret('LT_SYNC_SECRET')`.
+2. In your backend environment, set `LT_SYNC_SECRET=<the-same-value>` (same name, **value must match**). Legacy `WIX_SYNC_SECRET` is still accepted for backward compatibility.
+3. Ensure prod/staging match their respective configs — a mismatch breaks sync and API-key provisioning.
 
 ---
 
@@ -94,6 +96,6 @@ On the api-key page's markup (in Wix Editor):
 - [ ] `api-key.web.js` is in backend folder; `BACKEND_URL` is correct
 - [ ] Public page `/app-auth` created with `app-auth-page.js`
 - [ ] Link element `completeSignInLink` added to api-key page (initially hidden)
-- [ ] `WIX_SYNC_SECRET` set in Wix Secrets Manager and backend
+- [ ] `LT_SYNC_SECRET` set in Wix Secrets Manager AND backend env (same name, same value)
 - [ ] `LIVE_TRANSLATE_WIX_APP_AUTH_PATH=/app-auth` (or default) in desktop app env
 - [ ] Site published after all changes

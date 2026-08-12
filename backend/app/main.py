@@ -1,5 +1,7 @@
 """FastAPI application factory."""
 
+from contextlib import asynccontextmanager
+
 import structlog  # type: ignore[import-not-found]
 from fastapi import FastAPI, HTTPException  # pyright: ignore[reportMissingImports]
 from fastapi.exception_handlers import (
@@ -9,12 +11,19 @@ from fastapi.exception_handlers import (
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler  # type: ignore[import-not-found]  # pylint: disable=import-error
-from slowapi.errors import RateLimitExceeded  # type: ignore[import-not-found]  # pylint: disable=import-error
-from slowapi.util import get_remote_address  # type: ignore[import-not-found]  # pylint: disable=import-error
+from slowapi import (  # type: ignore[import-not-found]  # pylint: disable=import-error
+    Limiter,
+    _rate_limit_exceeded_handler,
+)
+from slowapi.errors import (
+    RateLimitExceeded,  # type: ignore[import-not-found]  # pylint: disable=import-error
+)
+from slowapi.util import (
+    get_remote_address,  # type: ignore[import-not-found]  # pylint: disable=import-error
+)
 
 from app.config import get_settings
-from app.routers import auth, billing, proxy, user, voice
+from app.routers import analytics, auth, billing, paypal, proxy, user, voice
 from app.services.supabase_client import SupabaseNotConfiguredError
 
 logger = structlog.get_logger(__name__)
@@ -26,11 +35,25 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application instance."""
     cfg = get_settings()
 
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        from app.routers.billing import active_wix_tier_mapping
+
+        logger.info("Live Translate API starting", env=cfg.backend_env)
+        logger.info(
+            "Wix plan->tier mapping active",
+            wix_sync_configured=bool((cfg.lt_sync_secret or "").strip()),
+            stripe_configured=bool((cfg.stripe_secret_key or "").strip()),
+            **active_wix_tier_mapping(),
+        )
+        yield
+
     application = FastAPI(
         title="Live Translate API",
         version="1.0.0",
         docs_url=None if cfg.is_production else "/docs",
         redoc_url=None,
+        lifespan=lifespan,
     )
 
     # Rate limiting
@@ -98,7 +121,9 @@ def create_app() -> FastAPI:
     application.include_router(user.router, prefix=prefix)
     application.include_router(proxy.router, prefix=prefix)
     application.include_router(billing.router, prefix=prefix)
+    application.include_router(paypal.router, prefix=prefix)
     application.include_router(voice.router, prefix=prefix)
+    application.include_router(analytics.router, prefix=prefix)
 
     @application.get("/")
     async def root() -> dict:
@@ -107,10 +132,6 @@ def create_app() -> FastAPI:
     @application.get("/health")
     async def health() -> dict:
         return {"status": "ok"}
-
-    @application.on_event("startup")
-    async def on_startup() -> None:
-        logger.info("Live Translate API starting", env=cfg.backend_env)
 
     return application
 

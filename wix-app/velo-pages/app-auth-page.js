@@ -30,7 +30,7 @@ function isValidRedirectUri(uri) {
 }
 
 $w.onReady(function () {
-    const query = wixLocation.query;
+    const query = wixLocationFrontend.query;
     const redirectUri = query.redirect_uri;
 
     if (redirectUri && isValidRedirectUri(redirectUri)) {

@@ -17,7 +17,7 @@
 ## Deploy / ops checklist
 
 1. DNS: `api.livetranslate.net` resolves to your FastAPI load balancer.
-2. Backend env: `WIX_SYNC_SECRET` matches Wix Secrets Manager (`WIX_SYNC_SECRET`).
+2. Backend env `LT_SYNC_SECRET` matches the Wix Secrets Manager secret `LT_SYNC_SECRET` (same name & value; legacy `WIX_SYNC_SECRET` still accepted by the backend).
 3. After changing `BACKEND_URL` in Velo, republish the Wix site.
 4. For JSW: `wix env set BACKEND_URL https://api.livetranslate.net` if you override the default.
 5. Smoke-test: `POST /api/v1/billing/wix/sync` and `POST /api/v1/auth/api-key` from Velo with a test member.

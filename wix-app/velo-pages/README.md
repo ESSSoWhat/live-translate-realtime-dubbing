@@ -33,8 +33,11 @@ This folder contains the Velo code for the API key page that enables SSO with th
 
 1. Go to **Wix Dashboard** → **Secrets Manager**
 2. Click **+ Store a Secret**
-3. Name: `WIX_SYNC_SECRET`
-4. Value: Same as your backend's `WIX_SYNC_SECRET` env variable
+3. Name: `LT_SYNC_SECRET`
+   > ⚠️ Do **not** name it `WIX_SYNC_SECRET`. Wix rejects any secret name that begins with
+   > `wix` (case-insensitive) with the error *"Some fields have invalid or missing information."*
+   > The name only needs to match what `api-key.web.js` reads via `getSecret('LT_SYNC_SECRET')`.
+4. Value: Same value as your backend's `LT_SYNC_SECRET` env variable (same name on both sides; the **value** must match)
 5. Click **Save**
 
 ### Step 4: Create the Page
@@ -140,7 +143,7 @@ Check:
 
 1. Ensure `api-key-page.js` is deployed on your Wix api-key page with the `redirect_uri` logic
 2. The api-key page must call `syncMemberToBackend` then `getApiKeyForMember`
-3. `api-key.web.js` `BACKEND_URL` must match your deployed backend (default `https://api.livetranslate.net` — see `wix-app/BACKEND_URL.md`)
+3. `api-key.web.js` `BACKEND_URL` must match your deployed backend (default `https://livetranslatedubtool-production.up.railway.app` — see `wix-app/BACKEND_URL.md`)
 4. `WIX_SYNC_SECRET` in Wix Secrets Manager must match backend's `WIX_SYNC_SECRET`
 5. **Fallback:** If redirect fails, copy your API key from the website and paste it in the app
 

@@ -74,3 +74,9 @@ windows/flutter/ephemeral/
 
 # Large binary files (exceed GitHub 100MB limit)
 *.pdb
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials

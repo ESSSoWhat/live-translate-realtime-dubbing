@@ -1,0 +1,48 @@
+{
+  "summary": "Backend-only integration testing of the Wix subscription-linking flow, Stripe-hidden path, and auth guards. 16/17 tests pass. All requested scenarios verified: (1) Wix sync auth guard rejects missing/wrong secret with 401 and reaches the DB layer (503 'Supabase not configured') with correct secret via either 'X-Wix-Sync-Secret' or 'Authorization: Bearer ...'; (2) Pydantic email validation fires (422) on bad email; (3) /auth/api-key behaves the same; (4) Stripe endpoints return 503 (never 500); (5) startup logs the active plan->tier mapping. One minor deviation: GET /api/v1/user/me returns 422 (missing header) instead of 401/403 when Authorization is absent.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/v1/user/me",
+        "issue": "Returns 422 (Pydantic 'header authorization required') when Authorization header is missing, instead of a proper 401/403. Root cause: `get_current_user(authorization: str = Header(...))` in app/dependencies.py declares the header as required, so Pydantic validates before the auth logic runs. Fix: change signature to `authorization: str | None = Header(default=None)` and raise HTTPException(401) inside the function when it's missing. Same pattern likely applies to any other route depending on get_current_user."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_wix_billing_integration.py",
+    "/app/test_reports/pytest/wix_billing_results.xml",
+    "/app/test_reports/pytest/full_results.xml"
+  ],
+  "action_items": [
+    "Optional: in app/dependencies.py:get_current_user, make the Authorization header optional (Header(default=None)) and raise HTTPException(401, 'Missing authorization header') inside the function body, so unauth calls return 401 instead of a Pydantic 422. This affects every endpoint depending on get_current_user."
+  ],
+  "critical_code_review_comments": [
+    "app/routers/billing.py line 461: `raise HTTPException(status_code=500, detail=\"Database error\")` is missing `from e` — loses exception chaining (linter warn). Cosmetic.",
+    "backend/tests/conftest.py sets SUPABASE_URL/keys via os.environ.setdefault at import time to satisfy get_settings(). Fine, but keep in mind the deployed backend/.env has SUPABASE_URL empty on purpose — that is why every DB-reaching request returns 503, which is the intended sandbox behavior.",
+    "app/main.py uses deprecated `@application.on_event('startup')` (deprecation warning). Migrate to lifespan handler when convenient.",
+    "auth.py:92-97: bare `except Exception` around the initial user lookup silently swallows any non-Postgrest error, only logging a warning. Consider narrowing or re-raising for observability.",
+    "billing.py `_verify_wix_sync_secret` and auth.py `_verify_wix_secret` are near-duplicate helpers (DRY). Consider extracting into a shared dependency in app/dependencies.py.",
+    "billing.py _WIX_PLAN_NAME_TO_TIER / _WIX_KEYWORD_TO_TIER refactor looks clean; startup log confirms mapping is active (verified in backend logs)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_wix_billing_integration.py (new integration test file, 12 tests)"
+  ],
+  "success_rate": {"backend": "94%", "frontend": "n/a"},
+  "test_credentials": "WIX_SYNC_SECRET=test-secret-123 (from backend/.env). No user login credentials — Supabase intentionally disabled in this sandbox.",
+  "seed_data_creation": "None. Supabase not configured, so no DB writes were possible; tests only verify auth/guard/validation layers.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "This is a backend-only Wix billing flow. External URL routes only /api/* to backend:8001; /health and / are NOT reachable externally (they route to frontend:3000 which is in FATAL state — not a concern per the review request). Test file /app/backend/tests/test_wix_billing_integration.py hits /health via http://localhost:8001 and everything else via the external preview URL. Every DB-touching endpoint returns 503 'Supabase not configured' — that is the expected sandbox behavior and is treated as PASS for auth-guard verification. Do NOT try to seed users or issue real API keys — Supabase is intentionally off. Startup log line to look for in /var/log/supervisor/backend.*.log: 'Wix plan->tier mapping active' (confirmed present with keywords/plan_names populated).",
+  "rca of the issue": {
+    "user_reported_issue": "Wix Velo calls to /billing/wix/sync were silently failing — user's plan tier never updated on the backend.",
+    "root_cause_verified_by_tests": "The /api/v1/billing/wix/sync guard `_verify_wix_sync_secret` rejects wrong or missing secret with HTTP 401 'Invalid Wix sync secret' / 'Missing Wix sync auth'. If Wix Velo was sending the wrong secret (or none), it would silently 401 on the client side. The current implementation correctly (a) accepts secret via `X-Wix-Sync-Secret: <secret>` header AND `Authorization: Bearer <secret>`, (b) proceeds past the guard to the DB call when the secret matches, and (c) refactored `_wix_plan_to_tier` to editable mapping tables (verified via startup log dump).",
+    "reproduction": "1) POST /api/v1/billing/wix/sync with no header -> 401 'Missing Wix sync auth'. 2) With header 'X-Wix-Sync-Secret: wrong' -> 401 'Invalid Wix sync secret'. 3) With correct secret -> reaches DB (503 Supabase-not-configured in this sandbox; would succeed in prod).",
+    "mitigation": "User should ensure Wix Velo sets header `X-Wix-Sync-Secret` (or `Authorization: Bearer`) exactly matching WIX_SYNC_SECRET in backend/.env. The 401 response body already contains a clear 'Invalid Wix sync secret' detail — Wix Velo should log that response to surface the issue instead of silently failing."
+  }
+}

@@ -191,6 +191,127 @@ class ApiClient {
     );
   }
 
+  /// GET /user/usage — returns tier + used/limit per feature for the current period.
+  Future<Map<String, dynamic>> getUsage() async {
+    final r = await _dio.get<Map<String, dynamic>>('/user/usage');
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// GET /paypal/config — public PayPal config ({configured, env, currency, ...}).
+  Future<Map<String, dynamic>> getPayPalConfig() async {
+    final r = await _dio.get<Map<String, dynamic>>('/paypal/config');
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    return {'configured': false};
+  }
+
+  /// POST /paypal/subscriptions — start a recurring subscription (starter|pro).
+  /// Returns { subscription_id, status, approve_url } — open approve_url in a browser.
+  Future<Map<String, dynamic>> createPayPalSubscription({
+    required String email,
+    required String tier,
+  }) async {
+    final r = await _dio.post(
+      '/paypal/subscriptions',
+      data: {'email': email, 'tier': tier},
+    );
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// POST /paypal/orders — start a one-time order (e.g. early_adopters).
+  /// Returns { order_id, status, links } — open the 'approve' link in a browser.
+  Future<Map<String, dynamic>> createPayPalOrder({
+    required String email,
+    String tier = 'early_adopters',
+  }) async {
+    final r = await _dio.post(
+      '/paypal/orders',
+      data: {'email': email, 'tier': tier},
+    );
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// POST /paypal/orders/{order_id}/capture — capture an approved one-time order.
+  /// Call after the buyer approves in the browser; on COMPLETED the backend
+  /// provisions the tier. Returns { status, order_id }.
+  Future<Map<String, dynamic>> capturePayPalOrder(String orderId) async {
+    final r = await _dio.post('/paypal/orders/$orderId/capture');
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// GET /paypal/subscription — current user's plan + live PayPal status.
+  Future<Map<String, dynamic>> getSubscription() async {
+    final r = await _dio.get<Map<String, dynamic>>('/paypal/subscription');
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// POST /paypal/subscription/cancel — cancel the current user's PayPal subscription.
+  Future<Map<String, dynamic>> cancelSubscription() async {
+    final r = await _dio.post('/paypal/subscription/cancel');
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// POST /paypal/subscription/revise — switch an existing subscription to another plan.
+  /// Returns { approve_url } when PayPal needs buyer approval (price increase).
+  Future<Map<String, dynamic>> reviseSubscription({required String tier}) async {
+    final r = await _dio.post('/paypal/subscription/revise', data: {'tier': tier});
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// POST /analytics/nudge — record an upgrade-nudge A/B impression/click (best-effort).
+  Future<void> recordNudge({
+    required String variant,
+    required String action,
+    String? feature,
+    String surface = 'mobile',
+  }) async {
+    try {
+      await _dio.post('/analytics/nudge', data: {
+        'variant': variant,
+        'action': action,
+        'feature': feature,
+        'surface': surface,
+      });
+    } catch (_) {
+      // analytics is best-effort; never block the UX
+    }
+  }
+
   /// POST /auth/oauth/google/id-token — login with Google ID token (Android/iOS).
   Future<Map<String, dynamic>> loginWithGoogleIdToken(
     String idToken, {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, timedelta
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import asyncpg
 import structlog
@@ -23,6 +24,15 @@ _db_pool: asyncpg.Pool | None = None
 _db_pool_lock = asyncio.Lock()
 
 
+def _clean_dsn(dsn: str) -> str:
+    """Drop query params asyncpg can't use (e.g. `pgbouncer=true` in Supabase pooler URIs)."""
+    parts = urlsplit(dsn)
+    if not parts.query:
+        return dsn
+    kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k.lower() != "pgbouncer"]
+    return urlunsplit(parts._replace(query=urlencode(kept)))
+
+
 async def get_db_pool() -> asyncpg.Pool:
     """Return the shared asyncpg connection pool, creating it if needed."""
     global _db_pool
@@ -38,7 +48,11 @@ async def get_db_pool() -> asyncpg.Pool:
                         "Set it to your Supabase PostgreSQL connection string "
                         "(e.g., postgresql://postgres:password@db.xxx.supabase.co:5432/postgres)"
                     )
-                _db_pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10)
+                # statement_cache_size=0 is required for Supabase's transaction pooler
+                # (pgbouncer transaction mode doesn't support prepared statements).
+                _db_pool = await asyncpg.create_pool(
+                    _clean_dsn(dsn), min_size=2, max_size=10, statement_cache_size=0
+                )
                 logger.info("Database pool created")
     return _db_pool
 
@@ -116,41 +130,43 @@ async def check_and_record_quota(user_id: str, event_type: str, quantity: int) -
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            row = await conn.fetchrow(
+            # Fetch the tier limit (also validates the user exists).
+            limit_row = await conn.fetchrow(
                 """
-                SELECT
-                    COALESCE(ur.{col}, 0) AS used,
-                    tl.{col}              AS limit_val
+                SELECT tl.{col} AS limit_val
                 FROM users u
                 JOIN tier_limits tl ON tl.tier = u.tier
-                LEFT JOIN usage_records ur
-                    ON ur.user_id = u.id AND ur.period_start = $2
                 WHERE u.id = $1
-                FOR UPDATE OF u
                 """.replace("{col}", col),
-                user_id, period,
+                user_id,
             )
-            if row is None:
+            if limit_row is None:
                 raise LookupError(f"User {user_id} not found")
-            used = int(row["used"])
-            limit_val = int(row["limit_val"])
-            if used + quantity > limit_val:
-                raise QuotaExceededError(
-                    event_type=event_type,
-                    used=used,
-                    limit=limit_val,
-                    requested=quantity,
-                )
-            await conn.execute(
-                f"""
+            limit_val = int(limit_row["limit_val"])
+
+            # Atomically increment and read back the new total. The ON CONFLICT
+            # DO UPDATE takes a row lock on the usage_records row (and the unique
+            # index serializes concurrent first-inserts), so concurrent requests
+            # for the same user cannot both read a stale count and over-consume.
+            new_used = await conn.fetchval(
+                """
                 INSERT INTO usage_records (user_id, period_start, period_end, {col})
                 VALUES ($1, $2, $3, $4)
                 ON CONFLICT (user_id, period_start)
                 DO UPDATE SET {col} = usage_records.{col} + EXCLUDED.{col},
                               updated_at = NOW()
-                """,
+                RETURNING {col}
+                """.replace("{col}", col),
                 user_id, period, period_end, quantity,
             )
+            if new_used > limit_val:
+                # Roll back the increment by raising inside the transaction.
+                raise QuotaExceededError(
+                    event_type=event_type,
+                    used=new_used - quantity,
+                    limit=limit_val,
+                    requested=quantity,
+                )
     logger.info(
         "usage_recorded",
         user_id=user_id,

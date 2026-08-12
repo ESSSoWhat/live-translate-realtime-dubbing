@@ -5,10 +5,20 @@ from __future__ import annotations
 import base64
 import json
 import secrets
-import structlog  # pylint: disable=import-error
+
 import stripe  # pylint: disable=import-error
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status  # pylint: disable=import-error
-from postgrest.exceptions import APIError as PostgrestAPIError  # pylint: disable=import-error
+import structlog  # pylint: disable=import-error
+from fastapi import (  # pylint: disable=import-error
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    status,
+)
+from postgrest.exceptions import (
+    APIError as PostgrestAPIError,  # pylint: disable=import-error
+)
 
 from app.config import get_settings
 from app.dependencies import get_current_user
@@ -58,7 +68,13 @@ def _stripe() -> stripe.Stripe:
 
 @router.get("/plans", response_model=list[PlanInfo])
 async def list_plans() -> list[PlanInfo]:
-    """Return all available subscription tiers."""
+    """Return all available subscription tiers (Stripe path only)."""
+    if not _stripe_configured():
+        # Stripe is intentionally disabled; billing/upgrades are handled by Wix.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Stripe billing is disabled. Subscriptions are managed via Wix.",
+        )
     sb = await get_supabase()
     result = await sb.table("tier_limits").select("*").neq("tier", "free").execute()
     plans = []
@@ -158,7 +174,7 @@ async def customer_portal(
 
 
 @router.post("/webhook", status_code=status.HTTP_200_OK)
-async def stripe_webhook(request: Request, stripe_signature: str = Header(alias="stripe-signature")) -> dict:  # noqa: B008
+async def stripe_webhook(request: Request, stripe_signature: str = Header(alias="stripe-signature")) -> dict:
     """Handle Stripe webhook events to update subscription status."""
     cfg = get_settings()
     payload = await request.body()
@@ -310,40 +326,138 @@ def _qonversion_product_to_tier(product_id: str | None) -> str:
     return "free"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Wix Pricing Plan → backend tier mapping.
+#
+# EDIT THIS to match your real Wix plans (Wix Dashboard → Pricing Plans).
+# Matching is checked in order:
+#   1. Exact Wix plan ID (GUID) — most stable, preferred. Add "<plan-id>": "<tier>".
+#   2. Exact plan name (case-insensitive).
+#   3. Keyword-in-name fallback (case-insensitive substring).
+# First match wins. Anything unmatched → "free".
+#
+# Tier caps (see supabase_schema.sql / WIX_SYNC.md):
+#   free 30 min • starter (Hobby) 5 hr • pro 15 hr • early_adopters unlimited
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 1. Stable plan-ID → tier (Wix plan GUIDs; recommended, names can change).
+_WIX_PLAN_ID_TO_TIER: dict[str, str] = {
+    "146fe70b-7ba2-4ec4-b9cc-72c77c645aac": "pro",
+    "fe160051-2f9a-4a28-929a-053ece47dcc7": "starter",
+    "954bf0a7-cb41-4726-ace1-c61c7a75425c": "early_adopters",
+    "5f9d4418-240c-4dcf-8748-c006011eff2f": "free",
+}
+
+# 2. Exact plan name (lowercased) → tier.
+_WIX_PLAN_NAME_TO_TIER: dict[str, str] = {
+    "early adopters life time access": "early_adopters",
+    "early adopters lifetime access": "early_adopters",
+    "monthly language unlocked - pro tier": "pro",
+    "monthly language unlocked - hobby tier": "starter",
+    "free trial": "free",
+}
+
+# 3. Keyword substrings (checked in order) → tier. Broad fallback.
+_WIX_KEYWORD_TO_TIER: tuple[tuple[str, str], ...] = (
+    ("early adopters", "early_adopters"),
+    ("lifetime", "early_adopters"),
+    ("pro tier", "pro"),
+    ("pro", "pro"),
+    ("hobby", "starter"),
+    ("starter", "starter"),
+    ("free trial", "free"),
+)
+
+
 def _wix_plan_to_tier(plan_id: str | None, plan_name: str | None) -> str:
-    """Map Wix plan id/name to backend tier. Limits: free 30min, starter 15hr, pro 25hr, early_adopters unlimited."""
-    for val in (plan_id, plan_name):
-        if not val:
-            continue
-        v = (val or "").lower()
-        if "early adopters" in v or "lifetime" in v and "early" in v:
-            return "early_adopters"
-        if "monthly language unlocked - pro tier" in v or "pro tier" in v:
-            return "pro"
-        if "monthly language unlocked - hobby" in v or "hobby tier" in v:
-            return "starter"
-        if "free trial" in v:
-            return "free"  # 30 min/month
-        if "pro" in v:
-            return "pro"
-        if "starter" in v or "hobby" in v:
-            return "starter"
+    """Map a Wix plan id/name to a backend tier (free/starter/pro/early_adopters)."""
+    # 1. Match on stable plan ID first.
+    if plan_id and plan_id.strip() in _WIX_PLAN_ID_TO_TIER:
+        return _WIX_PLAN_ID_TO_TIER[plan_id.strip()]
+
+    name = (plan_name or "").strip().lower()
+    if not name:
+        return "free"
+
+    # 2. Exact name match.
+    if name in _WIX_PLAN_NAME_TO_TIER:
+        return _WIX_PLAN_NAME_TO_TIER[name]
+
+    # 3. Keyword fallback.
+    for keyword, tier in _WIX_KEYWORD_TO_TIER:
+        if keyword in name:
+            return tier
     return "free"
+
+
+def active_wix_tier_mapping() -> dict:
+    """Return a summary of the active Wix plan->tier mapping (for startup logging)."""
+    return {
+        "plan_ids": dict(_WIX_PLAN_ID_TO_TIER),
+        "plan_names": dict(_WIX_PLAN_NAME_TO_TIER),
+        "keywords": [f"{k}->{t}" for k, t in _WIX_KEYWORD_TO_TIER],
+    }
+
+
+async def provision_or_update_user(
+    email: str,
+    tier: str,
+    subscription_status: str,
+    subscription_id: str | None = None,
+) -> dict:
+    """Create or update a user's tier + API key by email (shared by Wix & PayPal paths).
+
+    Never downgrades an existing paid tier (uses _max_tier), and always ensures an API key.
+    Persists the provider subscription_id when supplied (used by the manage/cancel flow).
+    Returns {"tier": <effective>, "user_created": bool}.
+    """
+    sb = await get_supabase()
+    existing = await sb.table("users").select("id", "tier", "api_key").eq("email", email).limit(1).execute()
+    existing_data = existing.data or []
+
+    if not existing_data:
+        api_key = secrets.token_urlsafe(32)
+        row = {
+            "email": email,
+            "tier": tier,
+            "subscription_status": subscription_status,
+            "api_key": api_key,
+        }
+        if subscription_id:
+            row["subscription_id"] = subscription_id
+        ins = await sb.table("users").insert(row).execute()
+        if not ins.data:
+            raise HTTPException(status_code=500, detail="Failed to create user")
+        logger.info("Provisioned user with API key", email=email, tier=tier)
+        return {"tier": tier, "user_created": True}
+
+    user_id = existing_data[0]["id"]
+    current_tier = (existing_data[0].get("tier") or "free").strip().lower()
+    new_tier = _max_tier(current_tier, tier) if subscription_status == "active" else tier
+    update = {"tier": new_tier, "subscription_status": subscription_status}
+    if subscription_id:
+        update["subscription_id"] = subscription_id
+    if not existing_data[0].get("api_key"):
+        update["api_key"] = secrets.token_urlsafe(32)
+    await sb.table("users").update(update).eq("id", user_id).execute()
+    logger.info("Updated user tier", email=email, tier=new_tier, status=subscription_status)
+    return {"tier": new_tier, "user_created": False}
+
 
 
 def _wix_sync_configured() -> bool:
     """Return True if Wix sync secret is set."""
-    return bool((get_settings().wix_sync_secret or "").strip())
+    return bool((get_settings().lt_sync_secret or "").strip())
 
 
 def _verify_wix_sync_secret(request: Request) -> None:
     """Verify Wix sync request via header or Bearer token. Raises HTTPException on failure."""
     cfg = get_settings()
-    secret = (cfg.wix_sync_secret or "").strip()
+    secret = (cfg.lt_sync_secret or "").strip()
     if not secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Wix sync not configured. Set WIX_SYNC_SECRET.",
+            detail="Wix sync not configured. Set LT_SYNC_SECRET.",
         )
     auth = request.headers.get("Authorization") or request.headers.get("X-Wix-Sync-Secret")
     if not auth:
@@ -400,7 +514,7 @@ async def wix_sync(body: WixSyncRequest, request: Request) -> dict:
             }).execute()
         except Exception as e:
             logger.error("Wix sync: insert failed", email=body.email, error=str(e))
-            raise HTTPException(status_code=500, detail="Database error")
+            raise HTTPException(status_code=500, detail="Database error") from e
         if ins.data and len(ins.data) > 0:
             row = ins.data[0] if isinstance(ins.data, list) else ins.data
             user_id = row["id"]
@@ -478,7 +592,7 @@ async def qonversion_webhook(request: Request) -> dict:
             "tier": tier,
             "subscription_status": "active",
         }).eq("id", user_id).execute()
-        logger.info("Qonversion: tier updated", user_id=user_id, tier=tier, event=event_name)
+        logger.info("Qonversion: tier updated", user_id=user_id, tier=tier, event_name=event_name)
     # Events that revoke premium
     elif event_name in (
         "subscription_canceled",
@@ -490,7 +604,7 @@ async def qonversion_webhook(request: Request) -> dict:
             "tier": "free",
             "subscription_status": "canceled",
         }).eq("id", user_id).execute()
-        logger.info("Qonversion: tier set to free", user_id=user_id, event=event_name)
+        logger.info("Qonversion: tier set to free", user_id=user_id, event_name=event_name)
     else:
         logger.debug("Qonversion webhook unhandled event", event_name=event_name, user_id=user_id)
 

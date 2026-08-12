@@ -100,10 +100,14 @@ class AsyncWorker(QThread):
         return None
 
     def stop(self) -> None:
-        """Stop the async worker."""
+        """Signal the async worker to stop and let the loop finish gracefully.
+
+        Setting ``_running`` to False lets ``_run_orchestrator`` exit its idle
+        loop and run ``orchestrator.shutdown()`` before ``run_until_complete``
+        returns normally. Calling ``loop.stop()`` here would abort the loop
+        mid-future and raise "Event loop stopped before Future completed."
+        """
         self._running = False
-        if self._loop:
-            self._loop.call_soon_threadsafe(self._loop.stop)
 
 
 class Application:
