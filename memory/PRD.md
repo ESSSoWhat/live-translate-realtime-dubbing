@@ -52,11 +52,6 @@ NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix s
 - ACTION: user must ROTATE the sb_secret_ key (pasted in chat) and remove leftover test users (test@example.com, test1@example.com, audit_run_test@example.com); son-luu@hotmail.com looks like a real member — left intact.
 - Removed brittle testing-agent file tests/test_wix_billing_integration.py (asserted sandbox-only 503s, wrote to live DB, would break CI).
 
-## Cloud Run deployment (project livetranslate-488616, australia-southeast2)
-- FIXED: Dockerfile hardcoded `--port 8000` -> now `CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 2`. Cloud Run injects $PORT=8080; hardcoded port = failed deploy. Verified start command binds $PORT (/health 200 on 8080 and default).
-- Set on Cloud Run: BACKEND_ENV=production, BACKEND_CORS_ORIGINS, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (new sb_secret_), WIX_SYNC_SECRET, SUPABASE_DB_URL, ELEVENLABS_API_KEY.
-- After deploy, set the Cloud Run URL as the SINGLE backend URL for ALL clients: desktop settings.py:204, Wix BACKEND_URL (api-key.web.js + sync.web.ts), mobile API_BASE_URL. Desktop currently points to a dead Railway URL; Wix to api.livetranslate.net (no DNS record).
-
 ## Backend LIVE on Railway (2026-07)
 - URL: https://livetranslatedubtool-production.up.railway.app — /health 200, / 200, billing/plans 503 (Stripe hidden OK).
 - Fixed monorepo build: Railway Root Directory must = backend (Railpack failed at repo root due to package.json+pyproject conflict).
@@ -77,15 +72,9 @@ NOTE: Wix Secrets Manager forbids secret names starting with `wix` → the Wix s
 - Endpoints verified end-to-end (TestClient + auth override, local PG): GET /api/v1/user/usage and GET /api/v1/user/me return correct tier + used/limit + period_reset_date (200).
 - BUG FOUND & FIXED (concurrency over-consumption): old `check_and_record_quota` read used-count via `LEFT JOIN usage_records` with `FOR UPDATE OF u` (locked only the users row). Under READ COMMITTED the joined usage row isn't re-read after the lock releases, so N concurrent same-user requests all read used=0 and over-consumed (test recorded 2000s on a 1800s cap). Rewrote to increment-then-check atomically via `INSERT ... ON CONFLICT DO UPDATE ... RETURNING <col>`, comparing the returned new total to the tier limit and raising QuotaExceededError inside the txn to roll back. Row lock on the usage_records row (+ unique index on first insert) now serializes concurrent increments. `exc.used/limit/requested` semantics unchanged (used = total before the rejected request) so proxy.py 402 handler unaffected. 28 existing tests + 10 new all pass, ruff clean.
 
-## ROOT CAUSE of failed deploys FOUND + FIXED: Cloud Build Dockerfile path (2026-07-27)
-- Real deploy target is **Google Cloud Run via a Cloud Build trigger** (project livetranslate-488616, australia-southeast2, repo github.com/ESSSoWhat/live-translate-realtime-dubbing) — NOT Railway. The Railway URL in the Wix config is a STALE box. GitHub Actions ci.yml only tests (no deploy).
-- Cloud Build error: `unable to prepare context: ... lstat /workspace/Dockerfile: no such file or directory` → the trigger builds a Dockerfile at REPO ROOT, but ours was at `backend/Dockerfile`. Every build failed → Cloud Run kept the old revision → new code never shipped.
-- FIX (code-side, so the existing trigger works with no GCP console change): added root `/app/Dockerfile` (builds backend from repo-root context: `COPY backend/requirements.txt .` + `COPY backend/ .`, runs `uvicorn app.main:app` on $PORT:-8080) + `/app/.dockerignore` (excludes mobile/live-dubbing/wix-app/.git/etc. to keep context small). Does NOT affect Railway (uses backend/Dockerfile via railway.json). No Docker in pod so not built locally, but mirrors the proven backend/Dockerfile.
-- REMAINING USER ACTIONS:
-  1. Save to GitHub → push root Dockerfile + .dockerignore to the branch Cloud Build watches → trigger rebuilds → deploys to Cloud Run. (Alt: edit trigger → Dockerfile dir = backend/.)
-  2. Set env on the Cloud Run service: PAYPAL_CLIENT_ID/SECRET/ENV/CURRENCY/WEBHOOK_ID/STARTER_PLAN_ID/PRO_PLAN_ID, LT_SYNC_SECRET, SUPABASE_URL/SERVICE_ROLE_KEY/DB_URL, ELEVENLABS_API_KEY.
-  3. CLIENT URL MISMATCH: Wix BACKEND_URL (and Flutter/desktop configs) still point to the stale Railway URL — must be repointed to the Cloud Run service URL. (Agent can update these once user provides the Cloud Run URL.)
-  4. PayPal webhook → point at https://<cloudrun>/api/v1/paypal/webhook.
+## Deploy path: Railway only (Cloud Build / Cloud Run retired)
+- Production backend is Railway (`backend/Dockerfile` via `railway.json`). Root Cloud Build Dockerfile + `.dockerignore` removed; GCP Cloud Build GitHub trigger should be deleted so it no longer fails checks on push.
+- Clients (Wix, desktop, mobile) use the Railway URL. Supabase remains the database.
 
 ## Deploy-readiness CONFIRMED; blocker is Railway↔GitHub wiring (2026-07-27)
 - Ruled out all code-side deploy causes: code compiles; no hardcoded secrets; env-driven; requirements.txt complete for all new imports (email-validator, asyncpg, supabase 2.31, structlog, httpx, pydantic, fastapi, uvicorn[standard], pyjwt[crypto]); Procfile + nixpacks start cmd bind to $PORT; routers registered; verified E2E vs real Supabase.
@@ -256,30 +245,18 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - NEXT: user sets PayPal vars → re-check config → configured:true → live subscription smoke test → confirm tier flip.
 
 ## Railway chosen as deploy target (2026-06 fork) — railway.json switched to Dockerfile builder
-- User picked Railway over GCP Cloud Build (GCP kept failing with "repository not found" = broken 2nd-gen GitHub connection, a user-side GCP console fix; web-searched + gave reconnect checklist).
+- Production deploy target is Railway (Cloud Build / Cloud Run path retired).
 - ROOT CAUSE of earlier Railway flakiness identified: `backend/package.json` declares a Node devDependency (`supabase` CLI) → Railpack/Nixpacks detects a Node app instead of Python. FIX: `backend/railway.json` builder changed RAILPACK → DOCKERFILE (`dockerfilePath: "Dockerfile"`) so Railway builds the proven `backend/Dockerfile` (binds $PORT). Valid JSON confirmed.
 - DEPLOY STEPS given to user: Save to GitHub → Railway New Project from repo → **Root Directory = backend** (critical) → set env vars (BACKEND_ENV=production, BACKEND_CORS_ORIGINS=https://www.livetranslate.net, SUPABASE_URL/SERVICE_ROLE_KEY/DB_URL, ELEVENLABS_API_KEY, LT_SYNC_SECRET, PAYPAL_*) → Generate Domain → verify /health + /api/v1/paypal/config.
 - PENDING: user deploys + shares live Railway URL → then repoint Wix (api-key.web.js:22, paypal.web.js:23, sync.web.ts:16), desktop (settings.py:204 backend_base_url), mobile (api_config.dart) from stale https://livetranslatedubtool-production.up.railway.app to the new URL.
 
 ## GitHub CI backend tests FIXED (2026-06 fork) — code IS now in ESSSoWhat/live-translate-realtime-dubbing
-- "Save to GitHub" confirmed working — CI ran on commit "Auto-generated changes #54". The GCP "File ... not found" error = code not yet on the branch the Cloud Build trigger watches / repo connection (user-side; guidance given via support_agent: push to the correct repo+branch first, THEN trigger build, or use Emergent's Deploy button).
+- "Save to GitHub" confirmed working — CI ran on commit "Auto-generated changes #54".
 - GitHub Actions "Backend tests" job failed on 4 tests (all secret-auth): TestNudgeStats::test_stats_computes_conversion (401≠200), TestPaypalAdminSetupPlans::test_setup_plans_with_correct_admin_returns_503 (401≠503), TestWixSyncRegression wrong/missing-secret (503≠401).
 - ROOT CAUSE: tests hardcode X-Admin-Secret="test-secret-123" and rely on LT_SYNC_SECRET being configured. Local backend/.env supplies it (pass), but CI's ci.yml env block does NOT set LT_SYNC_SECRET and .env is gitignored → empty secret → admin guard 401 / wix-sync 503. Not a code bug — an env-dependent test.
 - FIX (backend/tests/conftest.py): `os.environ.setdefault("LT_SYNC_SECRET", "test-secret-123")` so the suite is self-contained regardless of .env. Verified 50 passed both WITH .env and under CI-sim (mv .env aside + `env -u LT_SYNC_SECRET`).
 - ALSO: `collect_ignore = ["test_usage_tracking_integration.py"]` in conftest. That file is a standalone asyncio script (needs real Postgres). CI pins pytest==8.3.4 (async tests → skipped) but the pod has pytest 9.1.1 (async tests → FAILED). Excluding it from collection future-proofs against a pytest 9 bump. CI does NOT run ruff (only pytest), so pre-existing ruff nits don't block.
 - NEXT: user must "Save to GitHub" again (push the conftest fix) → CI backend job goes green.
-
-## Deploy artifacts re-verified (2026-06 fork) — blocker is USER git push, not code
-- Re-verified root `/app/Dockerfile`
-- Re-verified root `/app/Dockerfile`: copies `backend/requirements.txt` then `backend/` → `app.main:app` resolves; CMD binds $PORT:-8080. `.dockerignore` excludes mobile/live-dubbing/wix-app/.git. `backend/app.main:app` imports cleanly (46 routes), requirements.txt complete.
-- Only uncommitted change: `backend/.env.example` WIX_SYNC_SECRET→LT_SYNC_SECRET rename (doc only, harmless).
-- NO cloudbuild.yaml in repo — GCP trigger builds root Dockerfile with repo-root context (matches our setup).
-- ACTION SEQUENCE for user to unblock (order matters):
-  1. Click "Save to GitHub" in chat → pushes root Dockerfile + .dockerignore to the branch Cloud Build watches.
-  2. THEN re-trigger the Cloud Build in GCP console (or let auto-trigger fire on push).
-  3. Grab the Cloud Run service URL → agent curls /health + /api/v1/paypal/config to confirm new image.
-  4. Agent updates BACKEND_URL in Wix (api-key.web.js + sync.web.ts), Flutter (API_BASE_URL), desktop (settings.py:204) to the Cloud Run URL.
-  5. Set Cloud Run env vars (PAYPAL_*, LT_SYNC_SECRET, SUPABASE_*, ELEVENLABS_API_KEY) + PayPal webhook → https://<cloudrun>/api/v1/paypal/webhook.
 
 ## Sync secret renamed WIX_SYNC_SECRET -> LT_SYNC_SECRET (2026-07)
 - Backend config field is now lt_sync_secret with validation_alias=AliasChoices("LT_SYNC_SECRET","WIX_SYNC_SECRET") — canonical LT_SYNC_SECRET, legacy WIX_SYNC_SECRET still accepted.
