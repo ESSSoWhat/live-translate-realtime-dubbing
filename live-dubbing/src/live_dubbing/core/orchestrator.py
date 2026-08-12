@@ -495,6 +495,18 @@ class Orchestrator:
             self._set_translation_state(TranslationState.IDLE)
             self._set_app_state(AppState.READY)
 
+    async def shutdown(self) -> None:
+        """Gracefully stop translation and release resources on app exit."""
+        logger.info("Shutting down orchestrator")
+        with contextlib.suppress(Exception):
+            if self._app_state in (AppState.RUNNING, AppState.STOPPING):
+                await self.stop_translation()
+        for unsub in self._event_unsubscribers:
+            with contextlib.suppress(Exception):
+                unsub()
+        self._event_unsubscribers.clear()
+        logger.info("Orchestrator shutdown complete")
+
     async def _on_audio_chunk(self, audio_data: bytes, timestamp_ms: int) -> None:
         """Handle incoming audio chunk from capture."""
         if not self._processing_pipeline:

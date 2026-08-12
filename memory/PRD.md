@@ -285,3 +285,13 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - Backend config field is now lt_sync_secret with validation_alias=AliasChoices("LT_SYNC_SECRET","WIX_SYNC_SECRET") — canonical LT_SYNC_SECRET, legacy WIX_SYNC_SECRET still accepted.
 - Updated refs in config.py, billing.py, auth.py, paypal.py, main.py; docs (PRODUCTION_READINESS.md, WIX_SSO_SETUP.md, BACKEND_URL.md, velo README) + .env.example.
 - Both Wix Secrets Manager AND backend env now use the SAME name: LT_SYNC_SECRET. 28/28 tests pass, alias verified.
+
+
+## Desktop app clean-shutdown fix (2026-06 fork)
+- CONTEXT: User got `live-dubbing` PyQt app running locally on Windows (S:\Coding project\live-dubbing) after fixing ffmpeg PATH. debug.log confirmed FULL pipeline works (audio capture → VAD → STT → translate → TTS → output ran 09:08 session). ffmpeg + Silero/torch load fine.
+- BUG (only error left in app.log on every quit): `RuntimeError: Event loop stopped before Future completed.`
+- ROOT CAUSE (two linked issues):
+  1. `app.py::AsyncWorker.stop()` called `self._loop.call_soon_threadsafe(self._loop.stop)` while `run_until_complete(_run_orchestrator())` was still awaiting → aborts loop mid-future → RuntimeError.
+  2. `_run_orchestrator` awaits `self.orchestrator.shutdown()` but Orchestrator had NO `shutdown()` method → would raise AttributeError even after #1, leaving audio devices held open.
+- FIX: (1) `AsyncWorker.stop()` now only sets `self._running = False` (loop winds down gracefully, `while self._running` exits within 0.1s, shutdown runs, run_until_complete returns clean). (2) Added `Orchestrator.async def shutdown()` — stops active translation if RUNNING/STOPPING + unsubscribes event handlers.
+- VERIFIED: both files `py_compile` clean. NOT runtime-tested (PyQt is Windows-only; can't run in Linux container). User must pull (Save to GitHub → git pull) and confirm app.log shows "Orchestrator shutdown complete" and no RuntimeError on quit.
