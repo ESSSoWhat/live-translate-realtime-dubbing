@@ -1,0 +1,6 @@
+[submodule "native/whisper.cpp"]
+	path = native/whisper.cpp
+	url = https://github.com/ggerganov/whisper.cpp.git
+[submodule "website"]
+	path = website
+	url = https://github.com/ESSSoWhat/livetranslate-website.git
