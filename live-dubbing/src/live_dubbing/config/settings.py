@@ -247,14 +247,12 @@ class AppSettings(BaseModel):
         return f"{self.get_website_url()}{path}"
 
     def get_wix_sso_entry_url(self, redirect_uri: str) -> str:
-        """Return URL to open for Wix SSO.
+        """Return URL to open for Wix SSO (legacy localhost-callback flow).
 
-        Login bar (default): Opens homepage with ?sso_return=... so the user sees the full
-        site and uses the login bar (Sign in in header). homepage-sso.js stores the path
-        for the login page. Set LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN=1 for /login directly.
-
-        app-auth path: If LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN=0 and app-auth is set, uses
-        /app-auth which redirects to /api-key?redirect_uri=...
+        Login bar (default): opens homepage with ?sso_return=... so the user uses
+        the site's login bar; homepage-sso.js stores the path for the login page.
+        Set LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN=1 for /login directly. Otherwise uses
+        /app-auth which forwards to /api-key?redirect_uri=...
         """
         import urllib.parse
 
@@ -286,6 +284,39 @@ class AppSettings(BaseModel):
             return f"{base}{app_auth_path}?{sso_params}"
         sso_params = urllib.parse.urlencode({"redirect_uri": redirect_uri})
         return f"{base}{api_key_path}?{sso_params}"
+
+    def get_wix_handoff_entry_url(self, handoff_code: str) -> str:
+        """Return URL to open for Wix sign-in using the backend-handoff flow.
+
+        Carries ?handoff=<code> through login (no localhost redirect). After the
+        member logs in, the Wix /api-key page posts the api_key to the backend
+        and the desktop polls GET /api/v1/auth/desktop-handoff?code=<code>.
+        Honours the same LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN / app-auth options.
+        """
+        import urllib.parse
+
+        base = self.get_website_url()
+        api_key_path = os.environ.get("LIVE_TRANSLATE_WIX_API_KEY_PATH", "/api-key").strip()
+        if not api_key_path.startswith("/"):
+            api_key_path = "/" + api_key_path
+        handoff_qs = urllib.parse.urlencode({"handoff": handoff_code})
+
+        use_login_bar = os.environ.get("LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN", "0").strip() in ("0", "false", "no")
+        if use_login_bar:
+            destination = f"{api_key_path}?{handoff_qs}"
+            sso_return = urllib.parse.quote(destination, safe="")
+            return f"{base}/?sso_return={sso_return}"
+
+        use_login_first = os.environ.get("LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN", "0").strip() in ("1", "true", "yes")
+        if use_login_first:
+            destination = f"{api_key_path}?{handoff_qs}"
+            return_url = urllib.parse.quote(destination, safe="")
+            return f"{base}/login?returnUrl={return_url}"
+
+        app_auth_path = os.environ.get("LIVE_TRANSLATE_WIX_APP_AUTH_PATH", "/app-auth").strip()
+        if app_auth_path.startswith("/"):
+            return f"{base}{app_auth_path}?{handoff_qs}"
+        return f"{base}{api_key_path}?{handoff_qs}"
 
     def get_download_url(self) -> str:
         """Return app download page URL on the website."""

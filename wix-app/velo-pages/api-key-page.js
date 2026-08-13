@@ -18,7 +18,7 @@
 import wixLocationFrontend from 'wix-location-frontend';
 import { currentMember } from 'wix-members-frontend';
 import wixWindowFrontend from 'wix-window-frontend';
-import { getApiKeyForMember, syncMemberToBackend } from 'backend/api-key.web';
+import { getApiKeyForMember, syncMemberToBackend, storeDesktopHandoff } from 'backend/api-key.web';
 
 // Trusted redirect hosts (for security)
 const TRUSTED_HOSTS = [
@@ -71,6 +71,13 @@ $w.onReady(async function () {
                 sessionStorage.setItem('live_translate_redirect_uri', redirectUri);
             } catch (e) { /* ignore */ }
         }
+        // Store handoff code early too (backend-handoff flow, no localhost redirect)
+        const handoffCode = query.handoff;
+        if (handoffCode) {
+            try {
+                sessionStorage.setItem('live_translate_handoff', handoffCode);
+            } catch (e) { /* ignore */ }
+        }
 
         // Get current member
         const member = await currentMember.getMember();
@@ -94,6 +101,34 @@ $w.onReady(async function () {
         }
 
         const apiKey = result.apiKey;
+
+        // Preferred: backend-handoff flow — post the key to the backend so the
+        // desktop app (which is polling) receives it without any localhost redirect.
+        const storedHandoff = (typeof sessionStorage !== 'undefined') ?
+            sessionStorage.getItem('live_translate_handoff') : null;
+        const handoffForPost = query.handoff || storedHandoff;
+        if (storedHandoff) {
+            try { sessionStorage.removeItem('live_translate_handoff'); } catch (e) { /* ignore */ }
+        }
+        if (handoffForPost) {
+            setStatus('Signing you in to the app...');
+            const handoffResult = await storeDesktopHandoff(
+                handoffForPost, apiKey, result.userId, result.tier, email
+            );
+            if (handoffResult && handoffResult.stored) {
+                setStatus('✓ Signed in! You can return to the Live Translate app — it will continue automatically.');
+            } else {
+                setStatus('Could not sign in automatically. Copy your API key below and paste it into the app.');
+                showKey(apiKey);
+                try {
+                    $w('#copyButton').onClick(() => {
+                        wixWindowFrontend.copyToClipboard(apiKey);
+                        setStatus('API key copied!');
+                    });
+                } catch (e) { /* ignore */ }
+            }
+            return;
+        }
 
         // Check for redirect_uri: in query (direct load) or sessionStorage (returned from login)
         const storedUri = (typeof sessionStorage !== 'undefined') ?

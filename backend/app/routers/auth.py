@@ -123,6 +123,108 @@ async def create_or_get_api_key(body: ApiKeyRequest, request: Request) -> dict:
     return {"api_key": api_key, "user_id": str(user_id), "email": body.email, "tier": tier}
 
 
+# ── Desktop login handoff (device-code style; no localhost redirect) ──────────
+# Wix cannot redirect back to http://localhost, so the classic OAuth-callback
+# flow is impossible. Instead: the desktop generates a one-time `code`, opens the
+# browser to Wix; after member login the Wix web module POSTs the api_key here,
+# and the desktop polls GET /desktop-handoff?code=... to retrieve it (single-use).
+_HANDOFF_TTL_SECONDS = 600  # handoff codes expire after 10 minutes
+
+
+class DesktopHandoffStore(BaseModel):
+    """Payload posted by the Wix backend web module after member login."""
+
+    code: str
+    api_key: str
+    user_id: str | None = None
+    tier: str | None = "free"
+    email: str | None = None
+
+
+@router.post("/desktop-handoff", status_code=status.HTTP_200_OK)
+async def store_desktop_handoff(body: DesktopHandoffStore, request: Request) -> dict:
+    """Store a one-time desktop-login handoff (Wix backend only, sync-secret auth)."""
+    _verify_wix_secret(request)
+    if not body.code or not body.api_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="code and api_key are required",
+        )
+    from datetime import datetime, timezone
+
+    sb = await get_supabase()
+    record = {
+        "code": body.code,
+        "api_key": body.api_key,
+        "user_id": str(body.user_id) if body.user_id else None,
+        "tier": body.tier or "free",
+        "email": body.email,
+        "consumed": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        await sb.table("desktop_handoffs").upsert(record, on_conflict="code").execute()
+    except PostgrestAPIError as e:
+        logger.error("desktop-handoff store failed", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to store handoff") from e
+    logger.info("desktop-handoff stored", user_id=str(body.user_id))
+    return {"stored": True}
+
+
+@router.get("/desktop-handoff", status_code=status.HTTP_200_OK)
+async def poll_desktop_handoff(code: str = Query(..., min_length=16)) -> dict:
+    """Poll for a stored handoff. Single-use; returns the api_key exactly once.
+
+    Response: {"status": "pending"} (not stored yet — keep polling)
+            | {"status": "ready", "api_key", "user_id", "tier", "email"}
+            | {"status": "expired"} (consumed, expired, or never created).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    sb = await get_supabase()
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_HANDOFF_TTL_SECONDS)).isoformat()
+
+    # Atomically claim a fresh, unconsumed handoff (single-use even under races).
+    try:
+        claimed = (
+            await sb.table("desktop_handoffs")
+            .update({"consumed": True})
+            .eq("code", code)
+            .eq("consumed", False)
+            .gte("created_at", cutoff)
+            .execute()
+        )
+    except PostgrestAPIError as e:
+        logger.error("desktop-handoff poll (claim) failed", error=str(e))
+        raise HTTPException(status_code=500, detail="Database error") from e
+
+    if claimed is not None and claimed.data:
+        row = claimed.data[0]
+        return {
+            "status": "ready",
+            "api_key": row["api_key"],
+            "user_id": str(row.get("user_id") or ""),
+            "tier": row.get("tier", "free"),
+            "email": row.get("email"),
+        }
+
+    # Nothing claimed — distinguish "not stored yet" (pending) from consumed/expired.
+    try:
+        existing = (
+            await sb.table("desktop_handoffs")
+            .select("consumed")
+            .eq("code", code)
+            .limit(1)
+            .execute()
+        )
+    except PostgrestAPIError:
+        existing = None
+
+    if existing is not None and existing.data:
+        return {"status": "expired"}
+    return {"status": "pending"}
+
+
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest) -> AuthResponse:
     """Create a new account."""

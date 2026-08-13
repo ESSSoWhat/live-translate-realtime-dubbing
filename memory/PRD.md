@@ -295,3 +295,14 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
   2. `_run_orchestrator` awaits `self.orchestrator.shutdown()` but Orchestrator had NO `shutdown()` method → would raise AttributeError even after #1, leaving audio devices held open.
 - FIX: (1) `AsyncWorker.stop()` now only sets `self._running = False` (loop winds down gracefully, `while self._running` exits within 0.1s, shutdown runs, run_until_complete returns clean). (2) Added `Orchestrator.async def shutdown()` — stops active translation if RUNNING/STOPPING + unsubscribes event handlers.
 - VERIFIED: both files `py_compile` clean. NOT runtime-tested (PyQt is Windows-only; can't run in Linux container). User must pull (Save to GitHub → git pull) and confirm app.log shows "Orchestrator shutdown complete" and no RuntimeError on quit.
+
+## Desktop sign-in: backend handoff flow (2026-06 fork)
+- ROOT CAUSE of "voice clone failed / using default voice": the desktop app was UNAUTHENTICATED because "Sign in with livetranslate.net" was broken. Old flow opened a local http://localhost callback server and expected Wix to redirect back to it — Wix REFUSES to redirect to localhost, so the callback never arrived ("Waiting for browser…" forever). No token → backend-proxy AI calls (incl. voice clone) fail.
+- FIX: implemented a device-code style backend handoff (no localhost).
+  - Backend (`backend/app/routers/auth.py`): added `POST /api/v1/auth/desktop-handoff` (Wix stores key, requires LT_SYNC_SECRET) + `GET /api/v1/auth/desktop-handoff?code=` (desktop polls; single-use atomic claim via `.update().eq(consumed,False).gte(created_at,cutoff)`; 10-min TTL; returns status pending|ready|expired). Uses existing supabase-py `get_supabase()`.
+  - New table: `backend/migrations/002_desktop_handoffs.sql` (desktop_handoffs: code PK, api_key, user_id, tier, email, consumed, created_at; RLS on, no policies = backend-only).
+  - Desktop: `settings.py` new `get_wix_handoff_entry_url(code)`; `login_dialog.py::_WixSsoWorker._run` rewritten to generate `secrets.token_urlsafe(32)`, open browser, poll backend ~300s (150×2s), then validate via /user/me. Removed localhost OAuthCallbackServer usage.
+  - Wix: `app-auth-page.js` carries `?handoff` through; `api-key.web.js` adds `storeDesktopHandoff()` (POSTs key + LT_SYNC_SECRET); `api-key-page.js` posts handoff (priority over legacy redirect_uri) and shows "✓ Signed in! Return to the app".
+- VERIFIED (local, no prod DB): route registered in OpenAPI; 422 short code; 401 store w/o secret; 503 poll when Supabase unconfigured; supabase-py 2.31 supports `.gte` + `upsert(on_conflict)`. NOT E2E tested — needs user to: (1) run migration 002 in Supabase, (2) redeploy backend to Railway, (3) publish 3 Wix files. Guide: `wix-app/DESKTOP_HANDOFF_SETUP.md`.
+- IMMEDIATE UNBLOCK (no deploy): open livetranslate.net/api-key directly → copy key → paste into desktop "Having trouble? Use API key". Manual fallback still intact both sides.
+

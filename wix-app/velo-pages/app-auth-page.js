@@ -32,12 +32,17 @@ function isValidRedirectUri(uri) {
 $w.onReady(function () {
     const query = wixLocationFrontend.query;
     const redirectUri = query.redirect_uri;
+    const handoff = query.handoff;
+    const apiKeyPath = '/api-key'; // Must match your api-key page slug
 
+    const params = [];
+    // Preferred: backend-handoff flow (no localhost redirect). Opaque one-time code.
+    if (handoff) params.push('handoff=' + encodeURIComponent(handoff));
+    // Legacy: localhost-callback flow (kept for backward compatibility).
     if (redirectUri && isValidRedirectUri(redirectUri)) {
-        const apiKeyPath = '/api-key'; // Must match your api-key page slug
-        const target = `${apiKeyPath}?redirect_uri=${encodeURIComponent(redirectUri)}`;
-        wixLocationFrontend.to(target);
-    } else {
-        wixLocationFrontend.to('/api-key');
+        params.push('redirect_uri=' + encodeURIComponent(redirectUri));
     }
+
+    const target = params.length ? `${apiKeyPath}?${params.join('&')}` : apiKeyPath;
+    wixLocationFrontend.to(target);
 });

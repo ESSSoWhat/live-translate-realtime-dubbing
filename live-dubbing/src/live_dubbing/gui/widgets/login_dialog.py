@@ -697,7 +697,9 @@ class _ApiKeyWorker(QThread):
 
 
 class _WixSsoWorker(QThread):
-    """Drive the Wix SSO flow: opens livetranslate.net/login, waits for callback with API key."""
+    """Drive Wix sign-in via the backend-handoff flow (no localhost callback):
+    open the browser to livetranslate.net with a one-time code, then poll the
+    backend until the member's API key is delivered."""
 
     success = pyqtSignal(dict)
     error = pyqtSignal(str)
@@ -715,51 +717,55 @@ class _WixSsoWorker(QThread):
             self.error.emit(f"Unexpected error during Wix sign-in: {exc}")
 
     def _run(self) -> None:
-        from live_dubbing.services.oauth_callback_server import OAuthCallbackServer
-        import urllib.parse as _urlparse
-
-        server = OAuthCallbackServer()
-        port = server.start()
-        redirect_uri = server.redirect_uri
-        logger.info("Wix SSO callback server started", port=port)
-
-        sso_url = self._settings.get_wix_sso_entry_url(redirect_uri)
-        logger.info("Opening livetranslate.net login", url_preview=sso_url[:80])
+        # Backend-handoff flow — Wix cannot redirect to http://localhost, so we
+        # never open a local callback server. Generate a one-time code, open the
+        # browser, and poll the backend until the Wix page posts the api_key.
+        handoff_code = secrets.token_urlsafe(32)
+        sso_url = self._settings.get_wix_handoff_entry_url(handoff_code)
+        logger.info("Opening livetranslate.net login (handoff flow)", url_preview=sso_url[:80])
 
         try:
             webbrowser.open(sso_url)
         except Exception as exc:
-            server.stop()
             self.error.emit(f"Could not open browser: {exc}")
             return
 
-        logger.info("Waiting for Wix SSO callback…")
-        result = None
-        remaining = 300.0
-        while remaining > 0 and not self.isInterruptionRequested():
-            result = server.wait_for_token(timeout=min(1.0, remaining))
-            if result is not None:
-                break
-            remaining -= 1.0
-        server.stop()
+        logger.info("Waiting for backend handoff…")
+        poll_url = f"{self._base_url}/api/v1/auth/desktop-handoff"
+        api_key: str | None = None
+        # ~300s total: 150 polls at ~2s each.
+        with httpx.Client(timeout=15.0) as client:
+            for _ in range(150):
+                if self.isInterruptionRequested():
+                    break
+                try:
+                    resp = client.get(poll_url, params={"code": handoff_code})
+                    if resp.status_code == 200:
+                        body = resp.json()
+                        status_val = body.get("status")
+                        if status_val == "ready" and body.get("api_key"):
+                            api_key = body["api_key"]
+                            break
+                        if status_val == "expired":
+                            self.error.emit("Sign-in expired. Please try signing in again.")
+                            return
+                        # "pending" — the Wix page hasn't posted the key yet; keep polling.
+                except Exception as exc:  # transient network error — keep polling
+                    logger.debug("Handoff poll error (will retry)", error=str(exc))
+                # Sleep ~2s while staying responsive to cancellation.
+                for _ in range(4):
+                    if self.isInterruptionRequested():
+                        break
+                    self.msleep(500)
 
-        if not result:
+        if not api_key:
             self.error.emit(
                 "Sign-in timed out. Complete sign-in in the browser, then paste your API key below, "
                 "or try again."
             )
             return
 
-        if result.get("error"):
-            self.error.emit(f"Wix sign-in failed: {result.get('error_description') or result.get('error')}")
-            return
-
-        api_key = result.get("api_key") or result.get("access_token")
-        if not api_key:
-            self.error.emit("No API key received from Wix. Please try again or use manual API key entry.")
-            return
-
-        logger.info("Wix SSO callback received — validating API key")
+        logger.info("Handoff received — validating API key")
         try:
             with httpx.Client(timeout=15.0) as client:
                 r = client.get(f"{self._base_url}/api/v1/user/me", headers={"Authorization": f"Bearer {api_key}"})

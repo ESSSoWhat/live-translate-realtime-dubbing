@@ -123,3 +123,51 @@ export const getApiKeyForMember = webMethod(
         }
     }
 );
+
+/**
+ * Store a one-time desktop-login handoff on the backend.
+ * The desktop app generated `code`, opened the browser here; after member login
+ * we post the member's api_key so the app can poll for it (no localhost redirect).
+ * @param {string} code - One-time handoff code from the desktop app
+ * @param {string} apiKey - Member's API key
+ * @param {string} [userId]
+ * @param {string} [tier]
+ * @param {string} [email]
+ * @returns {Promise<{stored: boolean, error?: string}>}
+ */
+export const storeDesktopHandoff = webMethod(
+    Permissions.SiteMember,
+    async (code, apiKey, userId, tier, email) => {
+        try {
+            if (!code || !apiKey) return { stored: false, error: 'Missing code or api key' };
+            const secret = await getSecret('LT_SYNC_SECRET');
+            if (!secret) {
+                console.error('LT_SYNC_SECRET not found in Secrets Manager');
+                return { stored: false, error: 'Configuration error' };
+            }
+            const res = await fetch(`${BACKEND_URL}/api/v1/auth/desktop-handoff`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Wix-Sync-Secret': secret,
+                },
+                body: JSON.stringify({
+                    code,
+                    api_key: apiKey,
+                    user_id: userId || null,
+                    tier: tier || 'free',
+                    email: email || null,
+                }),
+            });
+            if (!res.ok) {
+                const errorText = await res.text();
+                console.error('Handoff store error:', res.status, errorText);
+                return { stored: false, error: `Backend error: ${res.status}` };
+            }
+            return await res.json();
+        } catch (error) {
+            console.error('storeDesktopHandoff failed:', error);
+            return { stored: false, error: 'Failed to store handoff' };
+        }
+    }
+);
