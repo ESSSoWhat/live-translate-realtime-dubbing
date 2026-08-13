@@ -106,12 +106,16 @@ $w.onReady(async function () {
         if (uriForRedirect && isValidRedirectUri(uriForRedirect)) {
             const separator = uriForRedirect.includes('?') ? '&' : '?';
             const finalUrl = `${uriForRedirect}${separator}api_key=${encodeURIComponent(apiKey)}`;
-            setStatus('Signing you in...');
-            // Try automatic redirect first
+            setStatus('Signing you in to the desktop app…');
+            // Always show key + fallback link — Wix often blocks redirects to localhost
+            showKey(apiKey);
+            showCompleteSignInFallback(finalUrl);
             setTimeout(() => {
-                wixLocationFrontend.to(finalUrl);
-                // Fallback: show completeSignInLink in case redirect is blocked (e.g. popup blockers)
-                setTimeout(() => showCompleteSignInFallback(finalUrl), 1500);
+                try {
+                    wixLocationFrontend.to(finalUrl);
+                } catch (e) {
+                    setStatus('Click the link above (or copy your API key) to finish sign-in.');
+                }
             }, 300);
             return;
         }

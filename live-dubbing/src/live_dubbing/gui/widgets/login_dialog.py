@@ -950,23 +950,19 @@ class LoginDialog(QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Google OAuth (works via backend → Supabase; does not depend on Wix redirect)
-        self._google_btn = self._google_button()
-        self._google_btn.clicked.connect(self._on_google_signin)
-        layout.addWidget(self._google_btn)
-
-        layout.addWidget(self._divider("or"))
-
-        # Wix SSO: opens browser; may need paste fallback if site blocks localhost redirect
+        # Primary: Wix site sign-in (same Google login as the website — no GCP client needed)
         self._wix_btn = self._wix_button()
         self._wix_btn.clicked.connect(self._on_wix_signin)
         layout.addWidget(self._wix_btn)
-        wix_tip = QLabel("Opens browser. If the app stays on Signing in…, paste your API key below.")
+        wix_tip = QLabel(
+            "Opens livetranslate.net — sign in there (Google/email). "
+            "If the app doesn’t finish automatically, copy your API key from the site and paste below."
+        )
         wix_tip.setWordWrap(True)
         wix_tip.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(wix_tip)
 
-        # API key fallback (visible — Wix auto-callback is unreliable on published site)
+        # API key fallback (Wix often blocks automatic redirect to localhost)
         self._api_key_widget = QWidget()
         api_fallback_layout = QVBoxLayout(self._api_key_widget)
         api_fallback_layout.setContentsMargins(0, 0, 0, 0)
@@ -999,6 +995,12 @@ class LoginDialog(QDialog):
         layout.addWidget(self._login_password)
         layout.addSpacing(4)
         layout.addWidget(self._login_btn)
+
+        # Optional Supabase Google (needs your own GCP OAuth client — not Wix)
+        layout.addWidget(self._divider("or"))
+        self._google_btn = self._google_button()
+        self._google_btn.clicked.connect(self._on_google_signin)
+        layout.addWidget(self._google_btn)
 
         bottom = QHBoxLayout()
         bottom.addWidget(QLabel("Don't have an account?"))
