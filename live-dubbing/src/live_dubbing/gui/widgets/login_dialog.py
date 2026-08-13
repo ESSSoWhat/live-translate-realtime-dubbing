@@ -661,38 +661,6 @@ class _OAuthWorker(QThread):
         )
 
 
-# ── API key worker (Wix flow) ──────────────────────────────────────────────────
-
-class _ApiKeyWorker(QThread):
-    """Validate API key by calling GET /user/me; emit success(user_dict) or error(str)."""
-
-    success = pyqtSignal(dict)
-    error = pyqtSignal(str)
-
-    def __init__(self, base_url: str, api_key: str) -> None:
-        super().__init__()
-        self._base_url = base_url.rstrip("/")
-        self._api_key = api_key.strip()
-
-    def run(self) -> None:
-        if not self._api_key:
-            self.error.emit("Please enter an API key.")
-            return
-        try:
-            with httpx.Client(timeout=15.0) as client:
-                r = client.get(
-                    f"{self._base_url}/api/v1/user/me",
-                    headers={"Authorization": f"Bearer {self._api_key}"},
-                )
-            if r.status_code != 200:
-                self.error.emit("Invalid API key or server error. Check the key from the website.")
-                return
-            data = r.json()
-            self.success.emit(data)
-        except Exception as exc:
-            logger.exception("API key validation failed", error=str(exc))
-            self.error.emit("Could not reach the server. Check your connection.")
-
 # ── Wix SSO worker ─────────────────────────────────────────────────────────────
 
 
@@ -728,8 +696,6 @@ class _WixSsoWorker(QThread):
 
         try:
             webbrowser.open(sso_url)
-            # Local paste page — Wix often cannot redirect to localhost
-            webbrowser.open(redirect_uri)
         except Exception as exc:
             server.stop()
             self.error.emit(f"Could not open browser: {exc}")
@@ -747,8 +713,8 @@ class _WixSsoWorker(QThread):
 
         if not result:
             self.error.emit(
-                "Sign-in timed out. Complete sign-in in the browser, then paste your API key below, "
-                "or try again."
+                "Sign-in timed out. Finish signing in at livetranslate.net, then try again. "
+                "If a “complete sign-in” link appears in the browser, click it."
             )
             return
 
@@ -758,7 +724,7 @@ class _WixSsoWorker(QThread):
 
         api_key = result.get("api_key") or result.get("access_token")
         if not api_key:
-            self.error.emit("No API key received from Wix. Please try again or use manual API key entry.")
+            self.error.emit("No sign-in token received from the website. Please try again.")
             return
 
         logger.info("Wix SSO callback received — validating API key")
@@ -804,10 +770,7 @@ class LoginDialog(QDialog):
         self._reg_btn: QPushButton | None = None
         self._worker: QThread | None = None
         self._oauth_worker: QThread | None = None
-        self._api_key_worker: QThread | None = None
         self._wix_sso_worker: QThread | None = None
-        self._api_key_input: QLineEdit | None = None
-        self._use_key_btn: QPushButton | None = None
         self._wix_btn: QPushButton | None = None
         self._wix_btn_reg: QPushButton | None = None
 
@@ -956,30 +919,11 @@ class LoginDialog(QDialog):
         layout.addWidget(self._wix_btn)
         wix_tip = QLabel(
             "Opens livetranslate.net — sign in there (Google/email). "
-            "If the app doesn’t finish automatically, copy your API key from the site and paste below."
+            "Return to this app when the browser says you’re signed in."
         )
         wix_tip.setWordWrap(True)
         wix_tip.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(wix_tip)
-
-        # API key fallback (Wix often blocks automatic redirect to localhost)
-        self._api_key_widget = QWidget()
-        api_fallback_layout = QVBoxLayout(self._api_key_widget)
-        api_fallback_layout.setContentsMargins(0, 0, 0, 0)
-        self._api_key_input = self._input("API key from livetranslate.net/api-key")
-        self._api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._use_key_btn = QPushButton("Use API key")
-        self._use_key_btn.setFlat(True)
-        self._use_key_btn.setStyleSheet("QPushButton { color: #4f8cff; }")
-        self._use_key_btn.clicked.connect(self._on_use_api_key)
-        open_key_page = self._link_button("Open account page to copy API key")
-        open_key_page.clicked.connect(
-            lambda: webbrowser.open(self._settings.get_wix_api_key_page_url())
-        )
-        api_fallback_layout.addWidget(self._api_key_input)
-        api_fallback_layout.addWidget(self._use_key_btn)
-        api_fallback_layout.addWidget(open_key_page)
-        layout.addWidget(self._api_key_widget)
 
         layout.addWidget(self._divider("or sign in with email"))
 
@@ -1048,42 +992,6 @@ class LoginDialog(QDialog):
         logger.warning("Wix SSO error", message=message)
         self._show_error(message)
 
-    def _on_use_api_key(self) -> None:
-        """Validate pasted API key and complete sign-in."""
-        if self._api_key_input is None:
-            return
-        key = self._api_key_input.text().strip()
-        if not key:
-            self._show_error("Please paste your API key from the account page.")
-            return
-        self._set_busy(True)
-        self._show_error("")
-        self._api_key_worker = _ApiKeyWorker(self._settings.get_backend_url(), key)
-        self._api_key_worker.success.connect(self._on_api_key_success)
-        self._api_key_worker.error.connect(self._on_api_key_error)
-        self._api_key_worker.finished.connect(lambda: self._set_busy(False))
-        self._api_key_worker.start()
-
-    def _on_api_key_success(self, data: dict) -> None:
-        key = self._api_key_input.text().strip() if self._api_key_input else ""
-        if not key:
-            return
-        self._settings.set_auth_tokens(key, "")
-        user_id = str(data.get("user_id", ""))
-        tier = str(data.get("tier", "free"))
-        self._settings.set_cached_user_info(user_id, tier)
-        usage = data.get("usage") or _free_tier_defaults()
-        self.auth_response = {
-            "user_id": user_id,
-            "email": data.get("email", ""),
-            "tier": tier,
-            "usage": usage,
-        }
-        self.accept()
-
-    def _on_api_key_error(self, message: str) -> None:
-        self._show_error(message)
-
     def _build_register_page(self) -> QWidget:
         assert self._stack is not None
         page = QWidget()
@@ -1126,11 +1034,7 @@ class LoginDialog(QDialog):
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def _set_busy(self, busy: bool) -> None:
-        """Enable/disable auth buttons and update labels.
-
-        API key paste stays enabled during Wix/Google browser wait so the user can
-        finish sign-in manually when the website does not redirect back.
-        """
+        """Enable/disable auth buttons and update labels."""
         assert self._login_btn is not None
         assert self._reg_btn is not None
         assert self._error_label is not None
@@ -1138,10 +1042,6 @@ class LoginDialog(QDialog):
         self._reg_btn.setEnabled(not busy)
         if self._google_btn is not None:
             self._google_btn.setEnabled(not busy)
-        if self._use_key_btn is not None:
-            self._use_key_btn.setEnabled(True)
-        if self._api_key_input is not None:
-            self._api_key_input.setEnabled(True)
         if self._wix_btn is not None:
             self._wix_btn.setEnabled(not busy)
             self._wix_btn.setText("Waiting for browser…" if busy else "Sign in with livetranslate.net")

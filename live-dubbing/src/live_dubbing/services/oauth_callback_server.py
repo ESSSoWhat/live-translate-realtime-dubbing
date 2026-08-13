@@ -156,45 +156,11 @@ _CAPTURE_HTML = """\
     return;
   }
 
-  // ── Manual paste fallback (Wix often blocks redirects to localhost) ───
-  document.getElementById('title').textContent = 'Paste your API key';
-  document.getElementById('sub').innerHTML =
-    'If the website did not return to the app, copy your API key from ' +
-    '<a href="https://www.livetranslate.net/api-key" style="color:#4f8cff">livetranslate.net/api-key</a> ' +
-    'and paste it below.';
-  var form = document.createElement('div');
-  form.style.marginTop = '20px';
-  form.innerHTML =
-    '<input id="apiKeyInput" type="password" placeholder="API key" ' +
-    'style="width:100%;padding:10px;border-radius:6px;border:1px solid #444;background:#111;color:#eee;margin-bottom:12px"/>' +
-    '<button id="apiKeySubmit" type="button" ' +
-    'style="width:100%;padding:10px;border:none;border-radius:6px;background:#4f8cff;color:#fff;font-weight:600;cursor:pointer">' +
-    'Sign in to Live Translate</button>';
-  document.getElementById('card').appendChild(form);
-  document.getElementById('card').className = 'card';
-  document.getElementById('apiKeySubmit').onclick = function () {
-    var key = (document.getElementById('apiKeyInput').value || '').trim();
-    if (!key) {
-      document.getElementById('sub').textContent = 'Please paste your API key first.';
-      return;
-    }
-    document.getElementById('sub').textContent = 'Completing sign-in\u2026';
-    fetch('/finish', {
-      method:  'POST',
-      headers: {'Content-Type': 'application/json'},
-      body:    JSON.stringify({api_key: key})
-    }).then(function(r) {
-      if (!r.ok) throw new Error('finish failed');
-      document.getElementById('card').className    = 'card success';
-      document.getElementById('title').textContent = 'Signed in!';
-      document.getElementById('sub').textContent   = 'You can close this tab and return to Live Translate.';
-      form.remove();
-    }).catch(function() {
-      document.getElementById('card').className    = 'card error';
-      document.getElementById('title').textContent = 'Sign-in failed';
-      document.getElementById('sub').textContent   = 'Could not contact the app. Is Live Translate still open?';
-    });
-  };
+  // ── Nothing received ──────────────────────────────────────────────────
+  document.getElementById('card').className    = 'card error';
+  document.getElementById('title').textContent = 'Sign-in incomplete';
+  document.getElementById('sub').textContent   =
+    'No sign-in data received. Return to Live Translate and try Sign in with livetranslate.net again.';
 })();
 </script>
 </body>
