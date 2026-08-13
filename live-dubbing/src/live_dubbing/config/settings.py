@@ -246,11 +246,16 @@ class AppSettings(BaseModel):
             path = "/" + path
         return f"{self.get_website_url()}{path}"
 
-    def get_wix_sso_entry_url(self, redirect_uri: str) -> str:
+    def get_wix_sso_entry_url(
+        self, redirect_uri: str, desktop_session: str | None = None
+    ) -> str:
         """Return URL to open for Wix SSO.
 
         Default: ``/app-auth?redirect_uri=...`` (public page → ``/api-key`` with
         redirect preserved through Wix login). This auto-completes back to the app.
+
+        ``desktop_session`` is a one-time id the website posts to the backend so the
+        desktop app can poll for the API key without a localhost redirect.
 
         Overrides via ``LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN``:
         - ``1`` / ``true``: open ``/login?returnUrl=...`` first
@@ -262,7 +267,10 @@ class AppSettings(BaseModel):
         api_key_path = os.environ.get("LIVE_TRANSLATE_WIX_API_KEY_PATH", "/api-key").strip()
         if not api_key_path.startswith("/"):
             api_key_path = "/" + api_key_path
-        destination = f"{api_key_path}?{urllib.parse.urlencode({'redirect_uri': redirect_uri})}"
+        params: dict[str, str] = {"redirect_uri": redirect_uri}
+        if desktop_session:
+            params["desktop_session"] = desktop_session
+        destination = f"{api_key_path}?{urllib.parse.urlencode(params)}"
         mode = os.environ.get("LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN", "app-auth").strip().lower()
 
         if mode in ("1", "true", "yes", "login"):
@@ -278,10 +286,8 @@ class AppSettings(BaseModel):
         if not app_auth_path.startswith("/"):
             app_auth_path = "/" + app_auth_path
         if app_auth_path:
-            sso_params = urllib.parse.urlencode({"redirect_uri": redirect_uri})
-            return f"{base}{app_auth_path}?{sso_params}"
-        sso_params = urllib.parse.urlencode({"redirect_uri": redirect_uri})
-        return f"{base}{api_key_path}?{sso_params}"
+            return f"{base}{app_auth_path}?{urllib.parse.urlencode(params)}"
+        return f"{base}{api_key_path}?{urllib.parse.urlencode(params)}"
 
     def get_download_url(self) -> str:
         """Return app download page URL on the website."""

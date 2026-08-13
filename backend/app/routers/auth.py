@@ -25,7 +25,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @router.get("/", include_in_schema=False)
 async def auth_info() -> dict:
     """Auth module info; use POST /login, /register, /api-key, etc."""
-    return {"auth": "ok", "endpoints": ["login", "register", "api-key", "refresh", "oauth/google", "oauth/apple"]}
+    return {"auth": "ok", "endpoints": ["login", "register", "api-key", "desktop-handoff", "refresh", "oauth/google", "oauth/apple"]}
 
 
 def _default_usage(tier: str = "free") -> dict:
@@ -121,6 +121,57 @@ async def create_or_get_api_key(body: ApiKeyRequest, request: Request) -> dict:
         tier = row.get("tier", "free")
     logger.info("API key provisioned", email=body.email, user_id=str(user_id))
     return {"api_key": api_key, "user_id": str(user_id), "email": body.email, "tier": tier}
+
+
+class DesktopHandoffRequest(BaseModel):
+    """Wix → backend: deliver API key for a desktop waiting session."""
+
+    session_id: str
+    api_key: str
+
+
+@router.post("/desktop-handoff", status_code=status.HTTP_200_OK)
+async def store_desktop_handoff(body: DesktopHandoffRequest, request: Request) -> dict:
+    """
+    Store an API key for a desktop SSO session.
+
+    Called from Wix after member login. The desktop app polls
+    ``GET /auth/desktop-handoff/{session_id}`` until the key appears.
+    This avoids relying on Wix navigating to ``http://localhost``.
+    """
+    _verify_wix_secret(request)
+    session_id = (body.session_id or "").strip()
+    api_key = (body.api_key or "").strip()
+    if not session_id or len(session_id) < 16:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid session_id")
+    if not api_key or len(api_key) < 16:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid api_key")
+
+    from app.services.desktop_handoff import put_handoff
+
+    put_handoff(session_id, api_key)
+    logger.info("Desktop handoff stored", session_prefix=session_id[:8])
+    return {"ok": True}
+
+
+@router.get("/desktop-handoff/{session_id}", status_code=status.HTTP_200_OK)
+async def poll_desktop_handoff(session_id: str) -> dict:
+    """
+    Poll for a completed Wix → desktop handoff.
+
+    Returns ``{"ready": false}`` until the key is available, then
+    ``{"ready": true, "api_key": "..."}`` once (token is consumed).
+    """
+    sid = (session_id or "").strip()
+    if not sid or len(sid) < 16:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid session_id")
+
+    from app.services.desktop_handoff import take_handoff
+
+    api_key = take_handoff(sid)
+    if not api_key:
+        return {"ready": False}
+    return {"ready": True, "api_key": api_key}
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)

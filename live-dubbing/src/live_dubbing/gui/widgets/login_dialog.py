@@ -684,15 +684,18 @@ class _WixSsoWorker(QThread):
 
     def _run(self) -> None:
         from live_dubbing.services.oauth_callback_server import OAuthCallbackServer
-        import urllib.parse as _urlparse
+        import secrets as _secrets
 
         server = OAuthCallbackServer()
         port = server.start()
         redirect_uri = server.redirect_uri
-        logger.info("Wix SSO callback server started", port=port)
+        desktop_session = _secrets.token_urlsafe(24)
+        logger.info("Wix SSO callback server started", port=port, session_prefix=desktop_session[:8])
 
-        sso_url = self._settings.get_wix_sso_entry_url(redirect_uri)
-        logger.info("Opening livetranslate.net login", url_preview=sso_url[:80])
+        sso_url = self._settings.get_wix_sso_entry_url(
+            redirect_uri, desktop_session=desktop_session
+        )
+        logger.info("Opening livetranslate.net login", url_preview=sso_url[:120])
 
         try:
             webbrowser.open(sso_url)
@@ -701,10 +704,25 @@ class _WixSsoWorker(QThread):
             self.error.emit(f"Could not open browser: {exc}")
             return
 
-        logger.info("Waiting for Wix SSO callback…")
+        logger.info("Waiting for Wix SSO (handoff poll + localhost callback)…")
         result = None
         remaining = 300.0
         while remaining > 0 and not self.isInterruptionRequested():
+            # Preferred: backend handoff (Wix posts key; no localhost redirect required)
+            try:
+                with httpx.Client(timeout=5.0) as client:
+                    r = client.get(
+                        f"{self._base_url}/api/v1/auth/desktop-handoff/{desktop_session}"
+                    )
+                if r.status_code == 200:
+                    payload = r.json()
+                    if payload.get("ready") and payload.get("api_key"):
+                        result = {"api_key": payload["api_key"]}
+                        break
+            except Exception as exc:
+                logger.debug("Handoff poll error", error=str(exc))
+
+            # Fallback: localhost redirect from browser
             result = server.wait_for_token(timeout=min(1.0, remaining))
             if result is not None:
                 break
@@ -713,8 +731,8 @@ class _WixSsoWorker(QThread):
 
         if not result:
             self.error.emit(
-                "Sign-in timed out. Finish signing in at livetranslate.net, then try again. "
-                "If a “complete sign-in” link appears in the browser, click it."
+                "Sign-in timed out. After logging in on the website, wait for "
+                "“Signed in! You can close this tab”, then try again if needed."
             )
             return
 
@@ -773,6 +791,7 @@ class LoginDialog(QDialog):
         self._wix_sso_worker: QThread | None = None
         self._wix_btn: QPushButton | None = None
         self._wix_btn_reg: QPushButton | None = None
+        self._cancel_wait_btn: QPushButton | None = None
 
         self.setWindowTitle("Live Translate — Sign In")
         self.setMinimumWidth(380)
@@ -925,6 +944,11 @@ class LoginDialog(QDialog):
         wix_tip.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(wix_tip)
 
+        self._cancel_wait_btn = self._link_button("Cancel waiting")
+        self._cancel_wait_btn.hide()
+        self._cancel_wait_btn.clicked.connect(self._on_cancel_wix_wait)
+        layout.addWidget(self._cancel_wait_btn)
+
         layout.addWidget(self._divider("or sign in with email"))
 
         # Email / password fields
@@ -962,16 +986,32 @@ class LoginDialog(QDialog):
         assert self._error_label is not None
         self._set_busy(True)
         self._error_label.hide()
+        if self._cancel_wait_btn is not None:
+            self._cancel_wait_btn.show()
 
         worker = _WixSsoWorker(self._settings.get_backend_url(), self._settings)
         worker.success.connect(self._on_wix_sso_success)
         worker.error.connect(self._on_wix_sso_error)
+        worker.finished.connect(self._on_wix_sso_finished)
         worker.finished.connect(worker.deleteLater)
         self._wix_sso_worker = worker
         worker.start()
 
+    def _on_cancel_wix_wait(self) -> None:
+        """Stop waiting for the browser SSO callback."""
+        worker = self._wix_sso_worker
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+        self._show_error("Sign-in cancelled.")
+
+    def _on_wix_sso_finished(self) -> None:
+        if self._cancel_wait_btn is not None:
+            self._cancel_wait_btn.hide()
+
     def _on_wix_sso_success(self, data: dict) -> None:
         """Handle successful Wix SSO sign-in."""
+        if self._cancel_wait_btn is not None:
+            self._cancel_wait_btn.hide()
         api_key = data.get("_api_key", "")
         if api_key:
             self._settings.set_auth_tokens(api_key, "")
@@ -989,6 +1029,8 @@ class LoginDialog(QDialog):
 
     def _on_wix_sso_error(self, message: str) -> None:
         """Handle Wix SSO error."""
+        if self._cancel_wait_btn is not None:
+            self._cancel_wait_btn.hide()
         logger.warning("Wix SSO error", message=message)
         self._show_error(message)
 

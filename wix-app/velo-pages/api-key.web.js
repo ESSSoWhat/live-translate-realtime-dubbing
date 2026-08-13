@@ -123,3 +123,41 @@ export const getApiKeyForMember = webMethod(
         }
     }
 );
+
+/**
+ * Push API key to backend for a desktop app waiting session (no localhost redirect).
+ * @param {string} sessionId - One-time id from the desktop app
+ * @param {string} apiKey - Member API key
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export const completeDesktopHandoff = webMethod(
+    Permissions.SiteMember,
+    async (sessionId, apiKey) => {
+        try {
+            const secret = await getSecret('LT_SYNC_SECRET');
+            if (!secret) {
+                return { success: false, error: 'Configuration error' };
+            }
+            if (!sessionId || !apiKey) {
+                return { success: false, error: 'Missing session or key' };
+            }
+            const res = await fetch(`${BACKEND_URL}/api/v1/auth/desktop-handoff`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Wix-Sync-Secret': secret,
+                },
+                body: JSON.stringify({ session_id: sessionId, api_key: apiKey }),
+            });
+            if (!res.ok) {
+                const errorText = await res.text();
+                console.error('Desktop handoff failed:', res.status, errorText);
+                return { success: false, error: `Backend error: ${res.status}` };
+            }
+            return { success: true };
+        } catch (e) {
+            console.error('Desktop handoff error:', e);
+            return { success: false, error: 'Failed to complete desktop handoff' };
+        }
+    }
+);

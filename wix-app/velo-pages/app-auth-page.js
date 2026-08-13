@@ -4,9 +4,8 @@
  * Entry point for "Sign in with livetranslate.net" from the desktop app.
  * Must be public so it runs before Wix forces Members login.
  *
- * Critical: store redirect_uri in sessionStorage HERE. If we only put it on
- * /api-key?redirect_uri=..., Wix login often strips the query before api-key
- * JS runs — then the desktop app never gets the callback.
+ * Stores redirect_uri + desktop_session in sessionStorage so they survive
+ * the Members login redirect (query params are often stripped).
  *
  * SETUP:
  * 1. Create a new page with slug "app-auth"
@@ -39,6 +38,15 @@ function isValidRedirectUri(uri) {
 $w.onReady(function () {
     const query = wixLocationFrontend.query;
     const redirectUri = query.redirect_uri;
+    const desktopSession = query.desktop_session;
+
+    if (desktopSession && typeof desktopSession === 'string' && desktopSession.length >= 16) {
+        try {
+            sessionStorage.setItem('live_translate_desktop_session', desktopSession);
+        } catch (e) {
+            /* ignore */
+        }
+    }
 
     if (redirectUri && isValidRedirectUri(redirectUri)) {
         try {
@@ -46,10 +54,9 @@ $w.onReady(function () {
         } catch (e) {
             /* ignore */
         }
-        // Also pass query for the rare case Members page loads without stripping it
-        const target =
-            '/api-key?' +
-            new URLSearchParams({ redirect_uri: redirectUri }).toString();
+        const params = { redirect_uri: redirectUri };
+        if (desktopSession) params.desktop_session = desktopSession;
+        const target = '/api-key?' + new URLSearchParams(params).toString();
         wixLocationFrontend.to(target);
         return;
     }
