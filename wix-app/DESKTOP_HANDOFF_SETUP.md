@@ -3,38 +3,30 @@
 Wix cannot redirect back to `http://localhost`, so the desktop app no longer waits
 for a localhost callback. Instead it uses a **device-code style handoff**:
 
-1. The desktop app generates a one-time `code` and opens the browser to livetranslate.net (carrying `?handoff=<code>`).
-2. You log in on the website. The `/api-key` page posts your API key to the backend, keyed by that `code`.
-3. The desktop app polls `GET /api/v1/auth/desktop-handoff?code=<code>` and receives the key **once** (single-use, expires in 10 min).
+1. The desktop app generates a one-time `session_id` and opens the browser to livetranslate.net (carrying `?session_id=<id>`).
+2. You log in on the website. The `/api-key` page posts your API key to the backend, keyed by that `session_id`.
+3. The desktop app polls `GET /api/v1/auth/desktop-handoff/<session_id>` and receives the key **once**.
 
 No localhost redirect anywhere.
 
 ---
 
-## What you need to do (3 steps)
+## Good news: the backend is ALREADY deployed
 
-### Step 1 — Supabase: create the handoff table (run once)
+The Railway backend already serves these endpoints (verified live):
 
-Supabase Dashboard → **SQL Editor** → New query → paste the contents of
-`backend/migrations/002_desktop_handoffs.sql` → **Run**.
+- `POST /api/v1/auth/desktop-handoff` — body `{session_id, api_key}`, protected by `LT_SYNC_SECRET`.
+- `GET  /api/v1/auth/desktop-handoff/{session_id}` — returns `{"ready": false}` until the key is posted, then `{"ready": true, "api_key": ...}`.
 
-It creates `public.desktop_handoffs` and is safe to run multiple times.
+So you do **NOT** need to redeploy Railway or run the Supabase migration to make sign-in work.
+`backend/migrations/002_desktop_handoffs.sql` is only needed **if** you later redeploy THIS repo's
+backend (which uses a reliable DB-backed store).
 
-### Step 2 — Railway: redeploy the backend
+---
 
-Push the updated `backend/` to Railway (adds two endpoints in
-`backend/app/routers/auth.py`):
+## What you need to do: publish 2 Wix files + pull the desktop app
 
-- `POST /api/v1/auth/desktop-handoff` — Wix stores the key here (needs `LT_SYNC_SECRET`).
-- `GET  /api/v1/auth/desktop-handoff?code=...` — desktop polls here (no secret; the code is the credential).
-
-Verify after deploy (should return `{"status":"pending"}`):
-
-```
-curl "https://livetranslatedubtool-production.up.railway.app/api/v1/auth/desktop-handoff?code=testtesttesttesttest"
-```
-
-### Step 3 — Wix: publish 3 files, then Publish the site
+### Step 1 — Wix: publish, then Publish the site
 
 Replace the code in your Wix editor with these repo copies, then click **Publish**:
 
@@ -46,22 +38,30 @@ Replace the code in your Wix editor with these repo copies, then click **Publish
 
 No new Wix elements are required (it reuses `#statusText`, `#apiKeyText`, `#copyButton`).
 
+### Step 2 — Desktop: pull the updated app
+
+Save to GitHub → `git pull` on your machine (updates `login_dialog.py` + `settings.py`).
+
 ---
 
 ## Test it
 
 1. Restart the desktop app.
-2. Click **Sign in with livetranslate.net**.
-3. Log in in the browser → the page shows
-   *"✓ Signed in! You can return to the Live Translate app…"*.
+2. Click **Sign in with livetranslate.net** — the app shows live status ("Opening your browser…" → "Waiting for you to sign in…").
+3. Log in in the browser → the page shows *"✓ Signed in! You can return to the Live Translate app…"*.
 4. The app auto-completes sign-in within a couple of seconds — no copy/paste.
 
 If anything fails, the app still shows the **"Having trouble? Use API key"** manual
-fallback, and the website still shows your key with a Copy button.
+fallback, and the website still shows your key with a Copy button. There's also a
+**Cancel** button during the wait so you can abort and retry.
 
-## Notes
+## Fallback: redeploy this repo's backend (only if the live handoff is flaky)
 
-- The legacy `redirect_uri` (localhost) path is kept for backward compatibility; the
-  handoff path takes priority when both are present.
-- `desktop_handoffs` rows are single-use and expire after 10 minutes. Old rows can be
-  cleaned up with the optional `DELETE` statement at the bottom of the migration.
+The live backend's internal storage is not in this repo, so if seamless login is ever
+unreliable (e.g. under multiple workers), redeploy `backend/` from this repo — it uses a
+single-use, DB-backed store. First run `backend/migrations/002_desktop_handoffs.sql` in the
+Supabase SQL Editor, then redeploy to Railway. Verify:
+
+```
+curl ".../api/v1/auth/desktop-handoff/testtesttesttesttest"   # -> {"ready":false}
+```

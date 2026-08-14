@@ -125,45 +125,41 @@ async def create_or_get_api_key(body: ApiKeyRequest, request: Request) -> dict:
 
 # ── Desktop login handoff (device-code style; no localhost redirect) ──────────
 # Wix cannot redirect back to http://localhost, so the classic OAuth-callback
-# flow is impossible. Instead: the desktop generates a one-time `code`, opens the
-# browser to Wix; after member login the Wix web module POSTs the api_key here,
-# and the desktop polls GET /desktop-handoff?code=... to retrieve it (single-use).
-_HANDOFF_TTL_SECONDS = 600  # handoff codes expire after 10 minutes
+# flow is impossible. Instead: the desktop generates a one-time `session_id`,
+# opens the browser to Wix; after member login the Wix web module POSTs the
+# api_key here, and the desktop polls GET /desktop-handoff/{session_id} to
+# retrieve it (single-use). Contract matches the endpoints already live on
+# Railway so this repo stays deploy-compatible.
+_HANDOFF_TTL_SECONDS = 600  # handoff sessions expire after 10 minutes
 
 
-class DesktopHandoffStore(BaseModel):
+class DesktopHandoffRequest(BaseModel):
     """Payload posted by the Wix backend web module after member login."""
 
-    code: str
+    session_id: str
     api_key: str
-    user_id: str | None = None
-    tier: str | None = "free"
-    email: str | None = None
 
 
 @router.post("/desktop-handoff", status_code=status.HTTP_200_OK)
-async def store_desktop_handoff(body: DesktopHandoffStore, request: Request) -> dict:
+async def store_desktop_handoff(body: DesktopHandoffRequest, request: Request) -> dict:
     """Store a one-time desktop-login handoff (Wix backend only, sync-secret auth)."""
     _verify_wix_secret(request)
-    if not body.code or not body.api_key:
+    if not body.session_id or not body.api_key:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="code and api_key are required",
+            detail="session_id and api_key are required",
         )
     from datetime import datetime, timedelta, timezone
 
     sb = await get_supabase()
     record = {
-        "code": body.code,
+        "session_id": body.session_id,
         "api_key": body.api_key,
-        "user_id": str(body.user_id) if body.user_id else None,
-        "tier": body.tier or "free",
-        "email": body.email,
         "consumed": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        await sb.table("desktop_handoffs").upsert(record, on_conflict="code").execute()
+        await sb.table("desktop_handoffs").upsert(record, on_conflict="session_id").execute()
     except PostgrestAPIError as e:
         logger.error("desktop-handoff store failed", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to store handoff") from e
@@ -171,19 +167,21 @@ async def store_desktop_handoff(body: DesktopHandoffStore, request: Request) -> 
     with contextlib.suppress(Exception):
         stale = (datetime.now(timezone.utc) - timedelta(seconds=_HANDOFF_TTL_SECONDS)).isoformat()
         await sb.table("desktop_handoffs").delete().lt("created_at", stale).execute()
-    logger.info("desktop-handoff stored", user_id=str(body.user_id))
+    logger.info("desktop-handoff stored")
     return {"stored": True}
 
 
-@router.get("/desktop-handoff", status_code=status.HTTP_200_OK)
-async def poll_desktop_handoff(code: str = Query(..., min_length=16)) -> dict:
+@router.get("/desktop-handoff/{session_id}", status_code=status.HTTP_200_OK)
+async def poll_desktop_handoff(session_id: str) -> dict:
     """Poll for a stored handoff. Single-use; returns the api_key exactly once.
 
-    Response: {"status": "pending"} (not stored yet — keep polling)
-            | {"status": "ready", "api_key", "user_id", "tier", "email"}
-            | {"status": "expired"} (consumed, expired, or never created).
+    Response: {"ready": false} while pending/expired/unknown, or
+              {"ready": true, "api_key": ...} once available (then consumed).
     """
     from datetime import datetime, timedelta, timezone
+
+    if not session_id or len(session_id) < 16:
+        return {"ready": False}
 
     sb = await get_supabase()
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_HANDOFF_TTL_SECONDS)).isoformat()
@@ -193,7 +191,7 @@ async def poll_desktop_handoff(code: str = Query(..., min_length=16)) -> dict:
         claimed = (
             await sb.table("desktop_handoffs")
             .update({"consumed": True})
-            .eq("code", code)
+            .eq("session_id", session_id)
             .eq("consumed", False)
             .gte("created_at", cutoff)
             .execute()
@@ -204,29 +202,9 @@ async def poll_desktop_handoff(code: str = Query(..., min_length=16)) -> dict:
 
     if claimed is not None and claimed.data:
         row = claimed.data[0]
-        return {
-            "status": "ready",
-            "api_key": row["api_key"],
-            "user_id": str(row.get("user_id") or ""),
-            "tier": row.get("tier", "free"),
-            "email": row.get("email"),
-        }
+        return {"ready": True, "api_key": row["api_key"]}
 
-    # Nothing claimed — distinguish "not stored yet" (pending) from consumed/expired.
-    try:
-        existing = (
-            await sb.table("desktop_handoffs")
-            .select("consumed")
-            .eq("code", code)
-            .limit(1)
-            .execute()
-        )
-    except PostgrestAPIError:
-        existing = None
-
-    if existing is not None and existing.data:
-        return {"status": "expired"}
-    return {"status": "pending"}
+    return {"ready": False}
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)

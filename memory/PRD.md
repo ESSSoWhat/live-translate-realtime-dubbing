@@ -318,3 +318,18 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - REMEMBER ME: already implemented — no change. `app.py` lines 159-170 skip LoginDialog when `is_token_valid()` (api_key persisted in keyring via `set_auth_tokens`); `is_token_valid` returns True for non-JWT api keys. Browser handoff happens once; key cleared only on explicit sign-out (`clear_auth_tokens`).
 - USER INFRA ACTIONS STILL PENDING: Deploy & Verify (migration 002 + Railway redeploy + publish 3 Wix files) and Secret Rotation (LT_SYNC_SECRET in BOTH Railway+Wix, Supabase password, PayPal secret). Guide: wix-app/DESKTOP_HANDOFF_SETUP.md.
 
+
+## IMPORTANT reconciliation: handoff was ALREADY deployed (2026-06 fork)
+- DISCOVERY: production Railway backend ALREADY serves desktop-handoff endpoints (a prior session deployed them but never committed to this repo). Repo matched prod on all 42 other routes; only the handoff differed.
+- DEPLOYED CONTRACT (source of truth, verified live via curl):
+  - `POST /api/v1/auth/desktop-handoff` body `{session_id, api_key}`, requires LT_SYNC_SECRET (401 "Missing Wix auth" without it).
+  - `GET /api/v1/auth/desktop-handoff/{session_id}` (path param) → `{"ready": false}` until posted, then `{"ready": true, "api_key": ...}`. HTTP 200 both cases.
+- DECISION: aligned everything to the deployed `session_id` contract (NOT my earlier `code`+query design). So NO Railway redeploy and NO Supabase migration are needed for login to work — the live backend already handles it.
+  - Repo backend `auth.py` rewritten to the session_id contract (DB-backed, single-use, TTL) so repo == prod behaviorally and a future redeploy stays compatible + reliable.
+  - Migration 002 rewritten: table `desktop_handoffs(session_id PK, api_key, consumed, created_at)`. Only needed IF redeploying repo backend.
+  - Desktop `settings.get_wix_handoff_entry_url(session_id)` passes `?session_id=`; `_WixSsoWorker` polls `GET .../desktop-handoff/{session_id}` and reads `{ready, api_key}`.
+  - Wix: `app-auth-page.js` carries `session_id`; `api-key.web.js storeDesktopHandoff(sessionId, apiKey)` POSTs `{session_id, api_key}` + sync secret; `api-key-page.js` posts session_id (priority over legacy redirect_uri).
+- USER ACTIONS NOW (much reduced): publish 3 Wix files + pull desktop app. NO backend/Railway/Supabase work. Guide: wix-app/DESKTOP_HANDOFF_SETUP.md.
+- VERIFIED locally: repo backend routes/auth/response shape now identical to prod (GET short→{ready:false}, long→503 no-local-DB, POST no-secret→401). NOT E2E tested (needs Wix publish + browser + PyQt).
+- CAVEAT: live backend's internal storage is unknown (not in repo). If seamless login is flaky across its 2 workers, fallback = run migration 002 + redeploy repo backend (reliable DB-backed store).
+

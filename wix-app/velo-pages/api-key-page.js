@@ -71,11 +71,11 @@ $w.onReady(async function () {
                 sessionStorage.setItem('live_translate_redirect_uri', redirectUri);
             } catch (e) { /* ignore */ }
         }
-        // Store handoff code early too (backend-handoff flow, no localhost redirect)
-        const handoffCode = query.handoff;
-        if (handoffCode) {
+        // Store handoff session id early too (backend-handoff flow, no localhost redirect)
+        const sessionId = query.session_id;
+        if (sessionId) {
             try {
-                sessionStorage.setItem('live_translate_handoff', handoffCode);
+                sessionStorage.setItem('live_translate_session_id', sessionId);
             } catch (e) { /* ignore */ }
         }
 
@@ -104,17 +104,15 @@ $w.onReady(async function () {
 
         // Preferred: backend-handoff flow — post the key to the backend so the
         // desktop app (which is polling) receives it without any localhost redirect.
-        const storedHandoff = (typeof sessionStorage !== 'undefined') ?
-            sessionStorage.getItem('live_translate_handoff') : null;
-        const handoffForPost = query.handoff || storedHandoff;
-        if (storedHandoff) {
-            try { sessionStorage.removeItem('live_translate_handoff'); } catch (e) { /* ignore */ }
+        const storedSession = (typeof sessionStorage !== 'undefined') ?
+            sessionStorage.getItem('live_translate_session_id') : null;
+        const sessionForPost = query.session_id || storedSession;
+        if (storedSession) {
+            try { sessionStorage.removeItem('live_translate_session_id'); } catch (e) { /* ignore */ }
         }
-        if (handoffForPost) {
+        if (sessionForPost) {
             setStatus('Signing you in to the app...');
-            const handoffResult = await storeDesktopHandoff(
-                handoffForPost, apiKey, result.userId, result.tier, email
-            );
+            const handoffResult = await storeDesktopHandoff(sessionForPost, apiKey);
             if (handoffResult && handoffResult.stored) {
                 setStatus('✓ Signed in! You can return to the Live Translate app — it will continue automatically.');
             } else {

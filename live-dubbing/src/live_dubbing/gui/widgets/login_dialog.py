@@ -719,10 +719,10 @@ class _WixSsoWorker(QThread):
 
     def _run(self) -> None:
         # Backend-handoff flow — Wix cannot redirect to http://localhost, so we
-        # never open a local callback server. Generate a one-time code, open the
-        # browser, and poll the backend until the Wix page posts the api_key.
-        handoff_code = secrets.token_urlsafe(32)
-        sso_url = self._settings.get_wix_handoff_entry_url(handoff_code)
+        # never open a local callback server. Generate a one-time session id, open
+        # the browser, and poll the backend until the Wix page posts the api_key.
+        session_id = secrets.token_urlsafe(32)
+        sso_url = self._settings.get_wix_handoff_entry_url(session_id)
         logger.info("Opening livetranslate.net login (handoff flow)", url_preview=sso_url[:80])
         self.progress.emit("Opening your browser…")
 
@@ -734,7 +734,7 @@ class _WixSsoWorker(QThread):
 
         logger.info("Waiting for backend handoff…")
         self.progress.emit("Waiting for you to sign in in the browser…")
-        poll_url = f"{self._base_url}/api/v1/auth/desktop-handoff"
+        poll_url = f"{self._base_url}/api/v1/auth/desktop-handoff/{session_id}"
         api_key: str | None = None
         # ~300s total: 150 polls at ~2s each.
         with httpx.Client(timeout=15.0) as client:
@@ -742,18 +742,14 @@ class _WixSsoWorker(QThread):
                 if self.isInterruptionRequested():
                     break
                 try:
-                    resp = client.get(poll_url, params={"code": handoff_code})
+                    resp = client.get(poll_url)
                     if resp.status_code == 200:
                         body = resp.json()
-                        status_val = body.get("status")
-                        if status_val == "ready" and body.get("api_key"):
+                        if body.get("ready") and body.get("api_key"):
                             api_key = body["api_key"]
                             self.progress.emit("✓ Signed in — finishing…")
                             break
-                        if status_val == "expired":
-                            self.error.emit("Sign-in expired. Please try signing in again.")
-                            return
-                        # "pending" — the Wix page hasn't posted the key yet; keep polling.
+                        # not ready yet — the Wix page hasn't posted the key; keep polling.
                 except Exception as exc:  # transient network error — keep polling
                     logger.debug("Handoff poll error (will retry)", error=str(exc))
                 # Sleep ~2s while staying responsive to cancellation.

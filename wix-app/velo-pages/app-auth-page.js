@@ -32,12 +32,12 @@ function isValidRedirectUri(uri) {
 $w.onReady(function () {
     const query = wixLocationFrontend.query;
     const redirectUri = query.redirect_uri;
-    const handoff = query.handoff;
+    const sessionId = query.session_id;
     const apiKeyPath = '/api-key'; // Must match your api-key page slug
 
     const params = [];
-    // Preferred: backend-handoff flow (no localhost redirect). Opaque one-time code.
-    if (handoff) params.push('handoff=' + encodeURIComponent(handoff));
+    // Preferred: backend-handoff flow (no localhost redirect). Opaque one-time id.
+    if (sessionId) params.push('session_id=' + encodeURIComponent(sessionId));
     // Legacy: localhost-callback flow (kept for backward compatibility).
     if (redirectUri && isValidRedirectUri(redirectUri)) {
         params.push('redirect_uri=' + encodeURIComponent(redirectUri));

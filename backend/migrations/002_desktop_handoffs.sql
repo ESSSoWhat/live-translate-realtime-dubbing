@@ -2,16 +2,18 @@
 -- Run once in Supabase SQL Editor (or psql) against your project.
 -- Idempotent: safe to run multiple times.
 --
+-- NOTE: The Railway backend already serves the desktop-handoff endpoints, so
+-- this migration is only required if you redeploy THIS repo's backend (which
+-- uses a reliable, DB-backed, single-use store). It is not needed for the
+-- currently-live deployment.
+--
 -- Purpose: the desktop app cannot receive a Wix->localhost redirect, so it
--- generates a one-time `code`, opens the browser to Wix, and after login the
--- Wix backend posts the member's api_key here. The desktop polls for it once.
+-- generates a one-time `session_id`, opens the browser to Wix, and after login
+-- the Wix backend posts the member's api_key here. The desktop polls for it once.
 
 CREATE TABLE IF NOT EXISTS public.desktop_handoffs (
-    code        TEXT PRIMARY KEY,
+    session_id  TEXT PRIMARY KEY,
     api_key     TEXT NOT NULL,
-    user_id     TEXT,
-    tier        TEXT NOT NULL DEFAULT 'free',
-    email       TEXT,
     consumed    BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -29,8 +31,8 @@ ALTER TABLE public.desktop_handoffs ENABLE ROW LEVEL SECURITY;
 -- periodically (e.g. a scheduled job) or manually.
 -- DELETE FROM public.desktop_handoffs WHERE created_at < NOW() - INTERVAL '1 day';
 
--- Optional: scheduled daily cleanup via pg_cron (Supabase → Database → Extensions
--- → enable "pg_cron" first). Runs every day at 03:00 UTC. Idempotent to re-schedule.
+-- Optional: scheduled daily cleanup via pg_cron (Supabase -> Database -> Extensions
+-- -> enable "pg_cron" first). Runs every day at 03:00 UTC. Idempotent to re-schedule.
 -- NOTE: the backend also purges expired rows opportunistically on every new
 -- handoff, so this job is a belt-and-braces safety net, not strictly required.
 --
