@@ -312,3 +312,9 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - SIGN-IN STATUS UI: `_WixSsoWorker` now emits `progress` signal ("Opening your browser…" → "Waiting for you to sign in in the browser…" → "✓ Signed in — finishing…"). Login dialog added a blue `_status_label` (shared, below stack, above red error label); `_on_wix_progress` shows it; `_set_busy` hides it on every toggle so progress re-shows fresh. Verified py_compile only (PyQt Windows-only; not runtime-tested here).
 - STILL PENDING (user infra actions): (1) Deploy & Verify — run migration 002, redeploy Railway, publish 3 Wix files; (2) Secret Rotation — Supabase DB password (update Railway DATABASE/connection env), LT_SYNC_SECRET (must change in BOTH Railway env AND Wix Secrets Manager together or sync breaks), PayPal Client Secret (Railway env + redeploy).
 
+
+## Cancel sign-in + Remember-me confirmation (2026-06 fork)
+- CANCEL SIGN-IN: `login_dialog.py` — `_WixSsoWorker._run` returns silently (no timeout error) when `isInterruptionRequested()` and no key found. Dialog adds `_cancel_btn` (muted flat "Cancel", shown only during Wix sign-in, hidden by `_set_busy`). `_on_cancel_wix_signin` calls `worker.requestInterruption()` + `_set_busy(False)` to reset UI immediately. py_compile OK; PyQt UI not runtime-tested here.
+- REMEMBER ME: already implemented — no change. `app.py` lines 159-170 skip LoginDialog when `is_token_valid()` (api_key persisted in keyring via `set_auth_tokens`); `is_token_valid` returns True for non-JWT api keys. Browser handoff happens once; key cleared only on explicit sign-out (`clear_auth_tokens`).
+- USER INFRA ACTIONS STILL PENDING: Deploy & Verify (migration 002 + Railway redeploy + publish 3 Wix files) and Secret Rotation (LT_SYNC_SECRET in BOTH Railway+Wix, Supabase password, PayPal secret). Guide: wix-app/DESKTOP_HANDOFF_SETUP.md.
+

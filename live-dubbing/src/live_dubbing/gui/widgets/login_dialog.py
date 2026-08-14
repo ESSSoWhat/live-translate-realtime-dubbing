@@ -763,6 +763,9 @@ class _WixSsoWorker(QThread):
                     self.msleep(500)
 
         if not api_key:
+            if self.isInterruptionRequested():
+                logger.info("Wix sign-in cancelled by user")
+                return  # cancelled — the dialog resets its UI; no error to show
             self.error.emit(
                 "Sign-in timed out. Complete sign-in in the browser, then paste your API key below, "
                 "or try again."
@@ -819,6 +822,7 @@ class LoginDialog(QDialog):
         self._use_key_btn: QPushButton | None = None
         self._wix_btn: QPushButton | None = None
         self._wix_btn_reg: QPushButton | None = None
+        self._cancel_btn: QPushButton | None = None
 
         self.setWindowTitle("Live Translate — Sign In")
         self.setMinimumWidth(380)
@@ -860,6 +864,14 @@ class LoginDialog(QDialog):
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._status_label.hide()
         root.addWidget(self._status_label)
+
+        # Cancel button (shown only during the Wix sign-in wait)
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setFlat(True)
+        self._cancel_btn.setStyleSheet("QPushButton { color: #888; border: none; }")
+        self._cancel_btn.clicked.connect(self._on_cancel_wix_signin)
+        self._cancel_btn.hide()
+        root.addWidget(self._cancel_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # Error label (shared between pages)
         self._error_label = QLabel("")
@@ -1032,6 +1044,18 @@ class LoginDialog(QDialog):
         worker.finished.connect(worker.deleteLater)
         self._wix_sso_worker = worker
         worker.start()
+        if self._cancel_btn is not None:
+            self._cancel_btn.show()
+
+    def _on_cancel_wix_signin(self) -> None:
+        """Abort an in-progress Wix sign-in and reset the dialog."""
+        worker = self._wix_sso_worker
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+        logger.info("User cancelled Wix sign-in")
+        self._set_busy(False)  # re-enables buttons; hides status + cancel
+        if self._error_label is not None:
+            self._error_label.hide()
 
     def _on_wix_progress(self, message: str) -> None:
         """Show live sign-in status during the handoff poll."""
@@ -1172,6 +1196,9 @@ class LoginDialog(QDialog):
         # Status label is transient: hide on any toggle; progress signal re-shows it.
         if self._status_label is not None:
             self._status_label.hide()
+        # Cancel is only shown while a Wix sign-in is actively running.
+        if self._cancel_btn is not None:
+            self._cancel_btn.hide()
 
     def _show_error(self, message: str) -> None:
         """Re-enable buttons then display the error message."""
