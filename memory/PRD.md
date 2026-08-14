@@ -333,3 +333,11 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - VERIFIED locally: repo backend routes/auth/response shape now identical to prod (GET short→{ready:false}, long→503 no-local-DB, POST no-secret→401). NOT E2E tested (needs Wix publish + browser + PyQt).
 - CAVEAT: live backend's internal storage is unknown (not in repo). If seamless login is flaky across its 2 workers, fallback = run migration 002 + redeploy repo backend (reliable DB-backed store).
 
+
+## BLOCKER: Wix Harmony editor cannot edit Velo code (2026-06 fork)
+- User's site opens in the NEW "Wix Harmony/Aria" AI editor, which per Wix docs does NOT support Velo site code (no Dev Mode anywhere in menus — confirmed via user screenshots of WIX menu + Site Actions submenu).
+- Consequence: user cannot paste/publish the 3 updated Wix files (api-key.web.js, app-auth-page.js, api-key-page.js) from the Harmony editor. Their Velo code (api-key issuance already works) lives in Wix Studio / classic Wix Editor / Wix IDE.
+- Guidance given (3 doors): (1) Wix IDE at dev.wix.com — src/backend/api-key.web.js + src/pages for the two pages, then Publish [most reliable]; (2) Wix Studio editor </> Code -> Start Coding -> Public & Backend; (3) contact Wix support to locate the code editor for a Harmony-migrated site.
+- STATUS: all code work complete on our side (backend live on Railway with session_id handoff, desktop app + Wix files aligned, status UI + cancel button). Seamless one-click login is BLOCKED only on the user reaching a code-capable Wix editor to publish the 3 files.
+- WORKING NOW (no Wix publish needed): manual API-key sign-in — livetranslate.net/api-key (direct) -> copy key -> desktop "Having trouble? Use API key" -> paste. Remember-me persists it. This is the current usable login path.
+
