@@ -306,3 +306,9 @@ Wired all three clients to the live PayPal endpoints and surfaced live usage. Ba
 - VERIFIED (local, no prod DB): route registered in OpenAPI; 422 short code; 401 store w/o secret; 503 poll when Supabase unconfigured; supabase-py 2.31 supports `.gte` + `upsert(on_conflict)`. NOT E2E tested — needs user to: (1) run migration 002 in Supabase, (2) redeploy backend to Railway, (3) publish 3 Wix files. Guide: `wix-app/DESKTOP_HANDOFF_SETUP.md`.
 - IMMEDIATE UNBLOCK (no deploy): open livetranslate.net/api-key directly → copy key → paste into desktop "Having trouble? Use API key". Manual fallback still intact both sides.
 
+
+## Handoff follow-ups: cleanup job + sign-in status UI (2026-06 fork)
+- HANDOFF CLEANUP: backend now purges expired `desktop_handoffs` opportunistically on every new store (`auth.py::store_desktop_handoff`, best-effort `delete().lt(created_at, now-TTL)`, wrapped in contextlib.suppress). Migration 002 also documents an OPTIONAL pg_cron daily job (`cron.schedule('purge_desktop_handoffs', '0 3 * * *', ...)`) — requires enabling pg_cron extension in Supabase. No linger of API keys.
+- SIGN-IN STATUS UI: `_WixSsoWorker` now emits `progress` signal ("Opening your browser…" → "Waiting for you to sign in in the browser…" → "✓ Signed in — finishing…"). Login dialog added a blue `_status_label` (shared, below stack, above red error label); `_on_wix_progress` shows it; `_set_busy` hides it on every toggle so progress re-shows fresh. Verified py_compile only (PyQt Windows-only; not runtime-tested here).
+- STILL PENDING (user infra actions): (1) Deploy & Verify — run migration 002, redeploy Railway, publish 3 Wix files; (2) Secret Rotation — Supabase DB password (update Railway DATABASE/connection env), LT_SYNC_SECRET (must change in BOTH Railway env AND Wix Secrets Manager together or sync breaks), PayPal Client Secret (Railway env + redeploy).
+

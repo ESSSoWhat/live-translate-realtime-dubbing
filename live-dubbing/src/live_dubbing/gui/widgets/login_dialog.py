@@ -703,6 +703,7 @@ class _WixSsoWorker(QThread):
 
     success = pyqtSignal(dict)
     error = pyqtSignal(str)
+    progress = pyqtSignal(str)
 
     def __init__(self, base_url: str, settings: "AppSettings") -> None:
         super().__init__()
@@ -723,6 +724,7 @@ class _WixSsoWorker(QThread):
         handoff_code = secrets.token_urlsafe(32)
         sso_url = self._settings.get_wix_handoff_entry_url(handoff_code)
         logger.info("Opening livetranslate.net login (handoff flow)", url_preview=sso_url[:80])
+        self.progress.emit("Opening your browser…")
 
         try:
             webbrowser.open(sso_url)
@@ -731,6 +733,7 @@ class _WixSsoWorker(QThread):
             return
 
         logger.info("Waiting for backend handoff…")
+        self.progress.emit("Waiting for you to sign in in the browser…")
         poll_url = f"{self._base_url}/api/v1/auth/desktop-handoff"
         api_key: str | None = None
         # ~300s total: 150 polls at ~2s each.
@@ -745,6 +748,7 @@ class _WixSsoWorker(QThread):
                         status_val = body.get("status")
                         if status_val == "ready" and body.get("api_key"):
                             api_key = body["api_key"]
+                            self.progress.emit("✓ Signed in — finishing…")
                             break
                         if status_val == "expired":
                             self.error.emit("Sign-in expired. Please try signing in again.")
@@ -798,6 +802,7 @@ class LoginDialog(QDialog):
         # Widgets set in _build_ui / _build_login_page / _build_register_page
         self._stack: QStackedWidget | None = None
         self._error_label: QLabel | None = None
+        self._status_label: QLabel | None = None
         self._google_btn: QPushButton | None = None
         self._login_email: QLineEdit | None = None
         self._login_password: QLineEdit | None = None
@@ -847,6 +852,14 @@ class LoginDialog(QDialog):
         self._stack.addWidget(self._build_login_page())
         self._stack.addWidget(self._build_register_page())
         root.addWidget(self._stack)
+
+        # Sign-in progress label (shared) — shows live handoff status
+        self._status_label = QLabel("")
+        self._status_label.setWordWrap(True)
+        self._status_label.setStyleSheet("color: #4f8cff; margin-top: 8px; font-size: 12px;")
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._status_label.hide()
+        root.addWidget(self._status_label)
 
         # Error label (shared between pages)
         self._error_label = QLabel("")
@@ -1007,7 +1020,7 @@ class LoginDialog(QDialog):
         return page
 
     def _on_wix_signin(self) -> None:
-        """Start the Wix SSO flow: open browser and wait for redirect with API key."""
+        """Start the Wix SSO flow: open browser and poll the backend for the API key."""
         assert self._error_label is not None
         self._set_busy(True)
         self._error_label.hide()
@@ -1015,9 +1028,16 @@ class LoginDialog(QDialog):
         worker = _WixSsoWorker(self._settings.get_backend_url(), self._settings)
         worker.success.connect(self._on_wix_sso_success)
         worker.error.connect(self._on_wix_sso_error)
+        worker.progress.connect(self._on_wix_progress)
         worker.finished.connect(worker.deleteLater)
         self._wix_sso_worker = worker
         worker.start()
+
+    def _on_wix_progress(self, message: str) -> None:
+        """Show live sign-in status during the handoff poll."""
+        if self._status_label is not None:
+            self._status_label.setText(message)
+            self._status_label.show()
 
     def _on_wix_sso_success(self, data: dict) -> None:
         """Handle successful Wix SSO sign-in."""
@@ -1149,6 +1169,9 @@ class LoginDialog(QDialog):
         # NOT when re-enabling buttons after an error.
         if busy:
             self._error_label.hide()
+        # Status label is transient: hide on any toggle; progress signal re-shows it.
+        if self._status_label is not None:
+            self._status_label.hide()
 
     def _show_error(self, message: str) -> None:
         """Re-enable buttons then display the error message."""

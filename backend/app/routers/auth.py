@@ -150,7 +150,7 @@ async def store_desktop_handoff(body: DesktopHandoffStore, request: Request) -> 
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="code and api_key are required",
         )
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     sb = await get_supabase()
     record = {
@@ -167,6 +167,10 @@ async def store_desktop_handoff(body: DesktopHandoffStore, request: Request) -> 
     except PostgrestAPIError as e:
         logger.error("desktop-handoff store failed", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to store handoff") from e
+    # Best-effort housekeeping: purge expired handoffs so API keys never linger.
+    with contextlib.suppress(Exception):
+        stale = (datetime.now(timezone.utc) - timedelta(seconds=_HANDOFF_TTL_SECONDS)).isoformat()
+        await sb.table("desktop_handoffs").delete().lt("created_at", stale).execute()
     logger.info("desktop-handoff stored", user_id=str(body.user_id))
     return {"stored": True}
 

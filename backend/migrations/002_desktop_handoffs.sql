@@ -28,3 +28,15 @@ ALTER TABLE public.desktop_handoffs ENABLE ROW LEVEL SECURITY;
 -- Optional housekeeping: delete stale handoffs older than 1 day. Safe to run
 -- periodically (e.g. a scheduled job) or manually.
 -- DELETE FROM public.desktop_handoffs WHERE created_at < NOW() - INTERVAL '1 day';
+
+-- Optional: scheduled daily cleanup via pg_cron (Supabase → Database → Extensions
+-- → enable "pg_cron" first). Runs every day at 03:00 UTC. Idempotent to re-schedule.
+-- NOTE: the backend also purges expired rows opportunistically on every new
+-- handoff, so this job is a belt-and-braces safety net, not strictly required.
+--
+-- SELECT cron.schedule(
+--     'purge_desktop_handoffs',
+--     '0 3 * * *',
+--     $$DELETE FROM public.desktop_handoffs WHERE created_at < NOW() - INTERVAL '1 hour'$$
+-- );
+-- To remove it later: SELECT cron.unschedule('purge_desktop_handoffs');
