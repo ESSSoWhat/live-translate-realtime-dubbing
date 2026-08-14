@@ -1,17 +1,7 @@
 /**
- * Wix Velo Page Code for /app-auth (PUBLIC page — not Members Only)
+ * Wix Velo Page Code for /app-auth (PUBLIC — not Members Only)
  *
- * Entry point for "Sign in with livetranslate.net" from the desktop app.
- * Must be public so it runs before Wix forces Members login.
- *
- * Stores redirect_uri + desktop_session in sessionStorage so they survive
- * the Members login redirect (query params are often stripped).
- *
- * SETUP:
- * 1. Create a new page with slug "app-auth"
- * 2. Do NOT set it to Members Only
- * 3. Paste this code in the page's code panel
- * 4. Publish
+ * Desktop SSO entry: forwards redirect_uri + session_id to /api-key.
  */
 
 import wixLocationFrontend from 'wix-location-frontend';
@@ -23,13 +13,8 @@ function isValidRedirectUri(uri) {
             return url.protocol === 'http:';
         }
         if (url.protocol !== 'https:') return false;
-        const trusted = [
-            'livetranslate.app',
-            'www.livetranslate.app',
-            'livetranslate.net',
-            'www.livetranslate.net',
-        ];
-        return trusted.some((h) => url.hostname === h || url.hostname.endsWith('.' + h));
+        const trusted = ['livetranslate.app', 'www.livetranslate.app', 'livetranslate.net', 'www.livetranslate.net'];
+        return trusted.some(h => url.hostname === h || url.hostname.endsWith('.' + h));
     } catch {
         return false;
     }
@@ -38,28 +23,15 @@ function isValidRedirectUri(uri) {
 $w.onReady(function () {
     const query = wixLocationFrontend.query;
     const redirectUri = query.redirect_uri;
-    const desktopSession = query.desktop_session;
+    const sessionId = query.session_id;
+    const apiKeyPath = '/api-key'; // Must match your api-key page slug
 
-    if (desktopSession && typeof desktopSession === 'string' && desktopSession.length >= 16) {
-        try {
-            sessionStorage.setItem('live_translate_desktop_session', desktopSession);
-        } catch (e) {
-            /* ignore */
-        }
-    }
-
+    const params = [];
+    if (sessionId) params.push('session_id=' + encodeURIComponent(sessionId));
     if (redirectUri && isValidRedirectUri(redirectUri)) {
-        try {
-            sessionStorage.setItem('live_translate_redirect_uri', redirectUri);
-        } catch (e) {
-            /* ignore */
-        }
-        const params = { redirect_uri: redirectUri };
-        if (desktopSession) params.desktop_session = desktopSession;
-        const target = '/api-key?' + new URLSearchParams(params).toString();
-        wixLocationFrontend.to(target);
-        return;
+        params.push('redirect_uri=' + encodeURIComponent(redirectUri));
     }
 
-    wixLocationFrontend.to('/api-key');
+    const target = params.length ? `${apiKeyPath}?${params.join('&')}` : apiKeyPath;
+    wixLocationFrontend.to(target);
 });

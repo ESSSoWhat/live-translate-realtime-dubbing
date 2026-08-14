@@ -251,15 +251,10 @@ class AppSettings(BaseModel):
     ) -> str:
         """Return URL to open for Wix SSO.
 
-        Default: ``/app-auth?redirect_uri=...`` (public page → ``/api-key`` with
-        redirect preserved through Wix login). This auto-completes back to the app.
+        Default: ``/app-auth?redirect_uri=...&session_id=...`` (public page → ``/api-key``).
 
-        ``desktop_session`` is a one-time id the website posts to the backend so the
-        desktop app can poll for the API key without a localhost redirect.
-
-        Overrides via ``LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN``:
-        - ``1`` / ``true``: open ``/login?returnUrl=...`` first
-        - ``homepage``: open ``/?sso_return=...`` (login-bar flow; needs homepage-sso.js)
+        ``desktop_session`` is sent as query ``session_id`` so the Wix page can POST the
+        API key to the backend handoff endpoint for the desktop app to poll.
         """
         import urllib.parse
 
@@ -269,7 +264,7 @@ class AppSettings(BaseModel):
             api_key_path = "/" + api_key_path
         params: dict[str, str] = {"redirect_uri": redirect_uri}
         if desktop_session:
-            params["desktop_session"] = desktop_session
+            params["session_id"] = desktop_session
         destination = f"{api_key_path}?{urllib.parse.urlencode(params)}"
         mode = os.environ.get("LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN", "app-auth").strip().lower()
 
@@ -281,7 +276,6 @@ class AppSettings(BaseModel):
             sso_return = urllib.parse.quote(destination, safe="")
             return f"{base}/?sso_return={sso_return}"
 
-        # Default / app-auth: public page that forwards to api-key with redirect_uri
         app_auth_path = os.environ.get("LIVE_TRANSLATE_WIX_APP_AUTH_PATH", "/app-auth").strip()
         if not app_auth_path.startswith("/"):
             app_auth_path = "/" + app_auth_path
