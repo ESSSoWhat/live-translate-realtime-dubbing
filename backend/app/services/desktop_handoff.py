@@ -42,19 +42,26 @@ async def put_handoff(session_id: str, api_key: str) -> None:
 async def take_handoff(session_id: str) -> str | None:
     """Return api_key once and delete the row. Expired rows are ignored."""
     sb = await get_supabase()
-    now = datetime.now(timezone.utc)
-    cutoff = (now - _TTL).isoformat()
     result = (
         await sb.table("desktop_handoffs")
         .delete()
         .eq("session_id", session_id)
-        .gte("created_at", cutoff)
-        .select("api_key")
+        .select("api_key", "created_at")
         .execute()
     )
     if not result.data:
-        # Drop expired row if present
-        await sb.table("desktop_handoffs").delete().eq("session_id", session_id).execute()
         return None
     row = result.data[0] if isinstance(result.data, list) else result.data
-    return str(row["api_key"]) if row and row.get("api_key") else None
+    if not row or not row.get("api_key"):
+        return None
+    created_raw = row.get("created_at")
+    if created_raw:
+        try:
+            created = datetime.fromisoformat(str(created_raw).replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - created > _TTL:
+                return None
+        except ValueError:
+            pass
+    return str(row["api_key"])

@@ -128,18 +128,14 @@
   }
 
   function finishLocal(apiKey) {
-    if (!redirectUri) {
-      setMsg("Signed in. Return to the Live Translate app — it should continue automatically.", true);
-      return;
+    // Handoff is already stored; the desktop app polls and finishes without localhost.
+    // Do not auto-navigate to http://localhost — the callback port is often closed by then
+    // (ERR_CONNECTION_REFUSED), which looks like a failed sign-in even when it succeeded.
+    setMsg("Signed in! You can close this tab and return to the Live Translate app.", true);
+    if (redirectUri) {
+      var sep = redirectUri.indexOf("?") >= 0 ? "&" : "?";
+      showOpenApp(redirectUri + sep + "api_key=" + encodeURIComponent(apiKey));
     }
-    var sep = redirectUri.indexOf("?") >= 0 ? "&" : "?";
-    var finalUrl = redirectUri + sep + "api_key=" + encodeURIComponent(apiKey);
-    setMsg("Signed in. Returning to the app…", true);
-    showOpenApp(finalUrl);
-    // App also polls backend handoff; localhost redirect is best-effort (browsers may block it).
-    setTimeout(function () {
-      window.location.replace(finalUrl);
-    }, 200);
   }
 
   function detailMessage(data, status) {
@@ -172,10 +168,10 @@
       }
       if (data.redirect) {
         showOpenApp(data.redirect);
-        window.location.replace(data.redirect);
+        setMsg("Signed in! You can close this tab and return to the Live Translate app.", true);
         return;
       }
-      setMsg("Signed in. Return to the Live Translate app.", true);
+      setMsg("Signed in! You can close this tab and return to the Live Translate app.", true);
     } catch (e) {
       setMsg(e.message || "Sign-in failed");
       loginBtn.disabled = false;
