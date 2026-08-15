@@ -116,8 +116,9 @@ class MainWindow(QMainWindow):
         self._connect_events()
         self._setup_refresh_timer()
 
-        # Populate saved voices on startup
+        # Populate saved voices / profiles on startup
         self._refresh_voice_list()
+        self._refresh_profile_list()
 
         # Kick off usage meter polling (token is valid by this point in normal flow)
         tier = self._auth_response.get("tier", "free")
@@ -607,6 +608,85 @@ class MainWindow(QMainWindow):
 
         voice_btn_layout.addStretch()
         voice_layout.addLayout(voice_btn_layout)
+
+        # ── Voice profiles (speaker → TTS clone) ─────────────────────────
+        profiles_label_row = QHBoxLayout()
+        profiles_title = QLabel("Voice Profiles")
+        profiles_title.setStyleSheet("font-weight: bold; color: #bbb;")
+        profiles_label_row.addWidget(profiles_title)
+        self._profile_count_label = QLabel("0 profiles")
+        self._profile_count_label.setStyleSheet("color: #888; font-size: 11px;")
+        profiles_label_row.addStretch()
+        profiles_label_row.addWidget(self._profile_count_label)
+        voice_layout.addLayout(profiles_label_row)
+
+        self._profile_list = QListWidget()
+        self._profile_list.setMinimumHeight(80)
+        self._profile_list.setMaximumHeight(140)
+        self._profile_list.setAlternatingRowColors(True)
+        self._profile_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._profile_list.setStyleSheet(self._voice_list.styleSheet())
+        self._profile_list.setToolTip(
+            "Detected speakers. Assign a clone for TTS; unmatched speech uses the default profile."
+        )
+        self._profile_list.currentItemChanged.connect(self._on_profile_selection_changed)
+        voice_layout.addWidget(self._profile_list)
+
+        default_row = QHBoxLayout()
+        default_row.addWidget(QLabel("Default:"))
+        self._default_profile_combo = QComboBox()
+        self._default_profile_combo.setMinimumWidth(140)
+        self._default_profile_combo.setToolTip(
+            "Used for TTS when the speaker cannot be identified"
+        )
+        self._default_profile_combo.currentIndexChanged.connect(
+            self._on_default_profile_changed
+        )
+        default_row.addWidget(self._default_profile_combo, 1)
+        voice_layout.addLayout(default_row)
+
+        assign_row = QHBoxLayout()
+        assign_row.addWidget(QLabel("Clone:"))
+        self._profile_voice_combo = QComboBox()
+        self._profile_voice_combo.setMinimumWidth(140)
+        self._profile_voice_combo.setToolTip("Cloned voice assigned to the selected profile")
+        self._profile_voice_combo.currentIndexChanged.connect(
+            self._on_profile_voice_assigned
+        )
+        assign_row.addWidget(self._profile_voice_combo, 1)
+        voice_layout.addLayout(assign_row)
+
+        profile_btn_row = QHBoxLayout()
+        profile_btn_row.setSpacing(6)
+        self._rename_profile_btn = QPushButton("Rename")
+        self._rename_profile_btn.setMinimumHeight(28)
+        self._rename_profile_btn.setToolTip("Rename selected profile")
+        self._rename_profile_btn.clicked.connect(self._on_rename_profile_clicked)
+        profile_btn_row.addWidget(self._rename_profile_btn)
+
+        self._delete_profile_btn = QPushButton("Delete")
+        self._delete_profile_btn.setMinimumHeight(28)
+        self._delete_profile_btn.setToolTip("Delete selected profile")
+        self._delete_profile_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #c62828;
+                color: white;
+                border-radius: 4px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover { background-color: #b71c1c; }
+            QPushButton:disabled { background-color: #555; }
+            """
+        )
+        self._delete_profile_btn.clicked.connect(self._on_delete_profile_clicked)
+        profile_btn_row.addWidget(self._delete_profile_btn)
+        profile_btn_row.addStretch()
+        self._active_profile_label = QLabel("")
+        self._active_profile_label.setStyleSheet("color: #81C784; font-size: 11px;")
+        profile_btn_row.addWidget(self._active_profile_label)
+        voice_layout.addLayout(profile_btn_row)
+
         control_layout.addWidget(voice_group)
 
         # Audio meter
@@ -804,6 +884,11 @@ class MainWindow(QMainWindow):
 
         unsub = self._event_bus.subscribe(
             EventType.VOICE_CLONE_FAILED, self._on_clone_failed
+        )
+        self._unsubscribers.append(unsub)
+
+        unsub = self._event_bus.subscribe(
+            EventType.VOICE_PROFILE_CHANGED, self._on_voice_profile_changed
         )
         self._unsubscribers.append(unsub)
 
@@ -1496,6 +1581,7 @@ class MainWindow(QMainWindow):
         self._import_voice_btn.setEnabled(True)
         # Refresh the voice list so the new clone appears
         self._refresh_voice_list()
+        self._refresh_profile_list()
 
     @pyqtSlot(object)
     def _on_clone_failed(self, event: Event) -> None:
@@ -1556,6 +1642,166 @@ class MainWindow(QMainWindow):
         self._voice_count_label.setText(
             f"{count} voice{'s' if count != 1 else ''}"
         )
+        # Keep profile assign combo in sync with clone library
+        self._populate_profile_voice_combo()
+
+    def _refresh_profile_list(self) -> None:
+        """Reload voice profiles and default-profile combo."""
+        if not hasattr(self, "_profile_list"):
+            return
+
+        self._updating_profile_ui = True
+        try:
+            profiles = self._orchestrator.get_voice_profiles()
+            default_id = self._orchestrator.get_default_profile_id()
+            active_id = self._orchestrator.get_active_profile_id()
+            voices_by_id = {v.voice_id: v for v in self._orchestrator.get_saved_voices()}
+
+            prev_id = None
+            cur = self._profile_list.currentItem()
+            if cur:
+                prev_id = cur.data(Qt.ItemDataRole.UserRole)
+
+            self._profile_list.clear()
+            self._default_profile_combo.clear()
+            self._default_profile_combo.addItem("(none)", None)
+
+            for p in profiles:
+                assigned = voices_by_id.get(p.assigned_voice_id) if p.assigned_voice_id else None
+                assigned_label = assigned.name if assigned else "Unassigned"
+                markers = []
+                if p.id == default_id:
+                    markers.append("default")
+                if p.id == active_id:
+                    markers.append("active")
+                suffix = f" [{', '.join(markers)}]" if markers else ""
+                display = f"{p.name}  —  {assigned_label}{suffix}"
+                item = QListWidgetItem(display)
+                item.setData(Qt.ItemDataRole.UserRole, p.id)
+                if p.id == active_id:
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                self._profile_list.addItem(item)
+                if p.id == prev_id:
+                    self._profile_list.setCurrentItem(item)
+
+                self._default_profile_combo.addItem(p.name, p.id)
+
+            # Restore default combo selection
+            if default_id:
+                idx = self._default_profile_combo.findData(default_id)
+                if idx >= 0:
+                    self._default_profile_combo.setCurrentIndex(idx)
+
+            count = len(profiles)
+            self._profile_count_label.setText(
+                f"{count} profile{'s' if count != 1 else ''}"
+            )
+            self._populate_profile_voice_combo()
+        finally:
+            self._updating_profile_ui = False
+
+    def _populate_profile_voice_combo(self) -> None:
+        """Fill the assign-clone combo for the selected profile."""
+        if not hasattr(self, "_profile_voice_combo"):
+            return
+        was_updating = getattr(self, "_updating_profile_ui", False)
+        self._updating_profile_ui = True
+        try:
+            self._profile_voice_combo.clear()
+            self._profile_voice_combo.addItem("(unassigned)", None)
+            for v in self._orchestrator.get_saved_voices():
+                self._profile_voice_combo.addItem(v.name, v.voice_id)
+
+            item = self._profile_list.currentItem() if hasattr(self, "_profile_list") else None
+            if not item:
+                return
+            profile_id = item.data(Qt.ItemDataRole.UserRole)
+            profile = next(
+                (p for p in self._orchestrator.get_voice_profiles() if p.id == profile_id),
+                None,
+            )
+            if profile and profile.assigned_voice_id:
+                idx = self._profile_voice_combo.findData(profile.assigned_voice_id)
+                if idx >= 0:
+                    self._profile_voice_combo.setCurrentIndex(idx)
+        finally:
+            self._updating_profile_ui = was_updating
+
+    @pyqtSlot(object)
+    def _on_voice_profile_changed(self, event: Event) -> None:
+        """Update active profile label when TTS voice switches."""
+        name = event.data.get("profile_name") or ""
+        voice = event.data.get("name") or ""
+        if name:
+            self._active_profile_label.setText(f"Active: {name}" + (f" → {voice}" if voice else ""))
+        QTimer.singleShot(0, self._refresh_profile_list)
+
+    def _on_profile_selection_changed(
+        self,
+        _current: QListWidgetItem | None,
+        _previous: QListWidgetItem | None,
+    ) -> None:
+        if getattr(self, "_updating_profile_ui", False):
+            return
+        self._populate_profile_voice_combo()
+
+    def _on_default_profile_changed(self, _index: int) -> None:
+        if getattr(self, "_updating_profile_ui", False):
+            return
+        profile_id = self._default_profile_combo.currentData()
+        if self._orchestrator.set_default_profile(profile_id):
+            self._settings.voice_clone.default_profile_id = profile_id
+            ConfigManager().save(self._settings)
+            self._refresh_profile_list()
+
+    def _on_profile_voice_assigned(self, _index: int) -> None:
+        if getattr(self, "_updating_profile_ui", False):
+            return
+        item = self._profile_list.currentItem()
+        if not item:
+            return
+        profile_id = item.data(Qt.ItemDataRole.UserRole)
+        voice_id = self._profile_voice_combo.currentData()
+        if self._orchestrator.set_profile_voice(profile_id, voice_id):
+            self._refresh_profile_list()
+
+    def _on_rename_profile_clicked(self) -> None:
+        item = self._profile_list.currentItem()
+        if not item:
+            QMessageBox.information(self, "No Profile Selected", "Select a profile first.")
+            return
+        profile_id = item.data(Qt.ItemDataRole.UserRole)
+        current_name = ""
+        for p in self._orchestrator.get_voice_profiles():
+            if p.id == profile_id:
+                current_name = p.name
+                break
+        new_name, ok = QInputDialog.getText(
+            self, "Rename Profile", "Profile name:", text=current_name
+        )
+        if ok and new_name.strip():
+            if self._orchestrator.rename_profile(profile_id, new_name.strip()):
+                self._refresh_profile_list()
+
+    def _on_delete_profile_clicked(self) -> None:
+        item = self._profile_list.currentItem()
+        if not item:
+            QMessageBox.information(self, "No Profile Selected", "Select a profile first.")
+            return
+        profile_id = item.data(Qt.ItemDataRole.UserRole)
+        name = item.text().split("  —  ")[0]
+        reply = QMessageBox.question(
+            self,
+            "Delete Profile",
+            f"Delete profile '{name}'?\nIts speaker embedding will be removed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if self._orchestrator.delete_profile(profile_id):
+            self._refresh_profile_list()
 
     def _on_voice_double_clicked(self, item: QListWidgetItem) -> None:
         """Activate a voice by double-clicking it in the list."""

@@ -46,29 +46,47 @@ class SpeakerIdentifier:
 
     # ── public API ────────────────────────────────────────────────────────
 
-    def register_speaker(self, voice_id: str, audio: np.ndarray) -> None:
-        """Register (or update) a speaker embedding for *voice_id*."""
+    def register_speaker(self, speaker_key: str, audio: np.ndarray) -> np.ndarray | None:
+        """Register (or update) a speaker embedding for *speaker_key*.
+
+        Returns the embedding vector, or None if audio was too short.
+        """
         if len(audio) < self._sample_rate * 0.5:
             logger.warning(
                 "Audio too short for reliable embedding",
-                voice_id=voice_id,
+                speaker_key=speaker_key,
                 duration_sec=len(audio) / self._sample_rate,
             )
-            return
+            return None
         emb = self._compute_embedding(audio)
-        self._embeddings[voice_id] = emb
+        self._embeddings[speaker_key] = emb
         logger.info(
             "Speaker embedding registered",
-            voice_id=voice_id,
+            speaker_key=speaker_key,
             duration_sec=round(len(audio) / self._sample_rate, 1),
         )
+        return emb
 
-    def unregister_speaker(self, voice_id: str) -> None:
+    def register_embedding(self, speaker_key: str, embedding: np.ndarray | list[float]) -> None:
+        """Register a precomputed L2-normalised embedding (e.g. from disk)."""
+        emb = np.asarray(embedding, dtype=np.float32)
+        norm = float(np.linalg.norm(emb))
+        if norm > 0:
+            emb = emb / norm
+        self._embeddings[speaker_key] = emb
+        logger.info("Speaker embedding rehydrated", speaker_key=speaker_key)
+
+    def get_embedding(self, speaker_key: str) -> np.ndarray | None:
+        """Return the stored embedding for *speaker_key*, if any."""
+        emb = self._embeddings.get(speaker_key)
+        return emb.copy() if emb is not None else None
+
+    def unregister_speaker(self, speaker_key: str) -> None:
         """Remove a speaker embedding."""
-        self._embeddings.pop(voice_id, None)
+        self._embeddings.pop(speaker_key, None)
 
     def identify(self, audio: np.ndarray) -> tuple[str | None, float]:
-        """Return ``(voice_id, confidence)`` of the best match, or ``(None, 0)``."""
+        """Return ``(speaker_key, confidence)`` of the best match, or ``(None, 0)``."""
         if not self._embeddings or len(audio) < self._sample_rate * 0.3:
             return None, 0.0
 
@@ -77,11 +95,11 @@ class SpeakerIdentifier:
         best_id: str | None = None
         best_score = -1.0
 
-        for voice_id, stored in self._embeddings.items():
+        for speaker_key, stored in self._embeddings.items():
             score = float(np.dot(emb, stored))  # cosine sim (both L2-normed)
             if score > best_score:
                 best_score = score
-                best_id = voice_id
+                best_id = speaker_key
 
         if best_score >= self._threshold:
             return best_id, best_score
@@ -92,6 +110,11 @@ class SpeakerIdentifier:
     def has_multiple_speakers(self) -> bool:
         """True when ≥2 speakers are registered (speaker-switching is useful)."""
         return len(self._embeddings) >= 2
+
+    @property
+    def has_speakers(self) -> bool:
+        """True when at least one speaker embedding is registered."""
+        return len(self._embeddings) >= 1
 
     @property
     def speaker_count(self) -> int:

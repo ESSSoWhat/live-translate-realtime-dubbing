@@ -528,36 +528,51 @@ class ProcessingPipeline:
         self._silence_count = 0
 
     def _detect_and_switch_speaker(self, audio: np.ndarray) -> None:
-        """Identify the current speaker and switch TTS voice if needed."""
-        if not self._voice_manager or not self._voice_manager.can_identify_speakers:
+        """Identify the current speaker profile and resolve TTS voice."""
+        if not self._voice_manager:
             return
         if self._voice_manager.is_capturing:
             return  # Don't switch while actively capturing a new voice
 
-        voice_id, confidence = self._voice_manager.identify_speaker(audio)
-        if voice_id is None:
+        profile, confidence = self._voice_manager.resolve_profile_for_audio(audio)
+        resolved = self._voice_manager.resolve_tts_voice(profile)
+        if not resolved:
             return
-        if self._cloned_voice and voice_id == self._cloned_voice.voice_id:
+
+        if self._cloned_voice and resolved.voice_id == self._cloned_voice.voice_id:
             return  # Already using this voice
 
-        # Switch to the identified speaker's cloned voice
-        matched_voice = self._voice_manager.get_cached_voice(voice_id)
-        if matched_voice:
-            self._cloned_voice = matched_voice
-            self._event_bus.emit(
-                EventType.VOICE_CLONE_COMPLETED,
-                {
-                    "voice_id": matched_voice.voice_id,
-                    "name": matched_voice.name,
-                    "auto_switched": True,
-                },
-            )
-            logger.info(
-                "Auto-switched TTS voice to detected speaker",
-                voice_id=voice_id,
-                name=matched_voice.name,
-                confidence=f"{confidence:.2f}",
-            )
+        self._cloned_voice = resolved
+        profile_name = profile.name if profile else "Default"
+        self._event_bus.emit(
+            EventType.VOICE_PROFILE_CHANGED,
+            {
+                "profile_id": profile.id if profile else None,
+                "profile_name": profile_name,
+                "voice_id": resolved.voice_id,
+                "name": resolved.name,
+                "confidence": confidence,
+                "auto_switched": True,
+            },
+        )
+        # Keep legacy event for existing UI listeners
+        self._event_bus.emit(
+            EventType.VOICE_CLONE_COMPLETED,
+            {
+                "voice_id": resolved.voice_id,
+                "name": resolved.name,
+                "auto_switched": True,
+                "profile_name": profile_name,
+            },
+        )
+        logger.info(
+            "Resolved TTS voice from speaker profile",
+            profile_id=profile.id if profile else None,
+            profile_name=profile_name,
+            voice_id=resolved.voice_id,
+            name=resolved.name,
+            confidence=f"{confidence:.2f}",
+        )
 
     async def process_chunk(
         self,

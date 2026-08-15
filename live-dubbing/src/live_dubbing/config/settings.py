@@ -154,6 +154,8 @@ class VoiceCloneConfig(BaseModel):
     use_premade_voice_id: str | None = None
     # Last-used cloned voice ID (auto-selected on startup).
     default_voice_id: str | None = None
+    # Default voice profile used when speaker identification fails.
+    default_profile_id: str | None = None
     # Automatically clone the speaker's voice when translation starts.
     auto_clone_voice: bool = True
 

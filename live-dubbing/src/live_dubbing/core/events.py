@@ -32,6 +32,7 @@ class EventType(Enum):
     VOICE_CLONE_PROGRESS = auto()
     VOICE_CLONE_COMPLETED = auto()
     VOICE_CLONE_FAILED = auto()
+    VOICE_PROFILE_CHANGED = auto()
 
     # Translation pipeline events
     TRANSLATION_STARTED = auto()

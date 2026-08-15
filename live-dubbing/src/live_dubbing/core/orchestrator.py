@@ -243,6 +243,14 @@ class Orchestrator:
             event_bus=self._event_bus,
             config=pipeline_config,
         )
+        # Mirror default profile between settings and profile store
+        vm = self._processing_pipeline._voice_manager
+        if vm:
+            settings_default = self._settings.voice_clone.default_profile_id
+            if settings_default and vm.get_profile(settings_default):
+                vm.set_default_profile(settings_default)
+            else:
+                self._settings.voice_clone.default_profile_id = vm.get_default_profile_id()
 
     async def _refresh_audio_sessions(self) -> None:
         """Refresh list of available audio sessions."""
@@ -906,3 +914,55 @@ class Orchestrator:
             self._settings.voice_clone.default_voice_id = None
 
         return success
+
+    # ── Voice profiles ───────────────────────────────────────────────────
+
+    def get_voice_profiles(self) -> list:
+        """Get all voice profiles from the pipeline's voice manager."""
+        if self._processing_pipeline and self._processing_pipeline._voice_manager:
+            return self._processing_pipeline._voice_manager.list_profiles()
+        return []
+
+    def get_default_profile_id(self) -> str | None:
+        """Get the default voice profile id."""
+        if self._settings.voice_clone.default_profile_id:
+            return self._settings.voice_clone.default_profile_id
+        if self._processing_pipeline and self._processing_pipeline._voice_manager:
+            return self._processing_pipeline._voice_manager.get_default_profile_id()
+        return None
+
+    def set_profile_voice(self, profile_id: str, voice_id: str | None) -> bool:
+        """Assign a cloned voice to a profile."""
+        if not self._processing_pipeline or not self._processing_pipeline._voice_manager:
+            return False
+        return self._processing_pipeline._voice_manager.set_profile_voice(profile_id, voice_id)
+
+    def set_default_profile(self, profile_id: str | None) -> bool:
+        """Set the default profile used when speaker identification fails."""
+        if not self._processing_pipeline or not self._processing_pipeline._voice_manager:
+            return False
+        ok = self._processing_pipeline._voice_manager.set_default_profile(profile_id)
+        if ok:
+            self._settings.voice_clone.default_profile_id = profile_id
+        return ok
+
+    def rename_profile(self, profile_id: str, new_name: str) -> bool:
+        """Rename a voice profile."""
+        if not self._processing_pipeline or not self._processing_pipeline._voice_manager:
+            return False
+        return self._processing_pipeline._voice_manager.rename_profile(profile_id, new_name)
+
+    def delete_profile(self, profile_id: str) -> bool:
+        """Delete a voice profile."""
+        if not self._processing_pipeline or not self._processing_pipeline._voice_manager:
+            return False
+        ok = self._processing_pipeline._voice_manager.delete_profile(profile_id)
+        if ok and self._settings.voice_clone.default_profile_id == profile_id:
+            self._settings.voice_clone.default_profile_id = None
+        return ok
+
+    def get_active_profile_id(self) -> str | None:
+        """Get the currently active (last matched) profile id."""
+        if self._processing_pipeline and self._processing_pipeline._voice_manager:
+            return self._processing_pipeline._voice_manager.get_active_profile_id()
+        return None
