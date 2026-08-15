@@ -110,11 +110,11 @@ class TestSupportedLanguage:
         assert SupportedLanguage.get_display_name("unknown") == "unknown"
 
     def test_get_all_languages(self):
-        """Get all languages returns 11 languages."""
+        """Get all languages returns all supported languages."""
         from live_dubbing.config.settings import SupportedLanguage
 
         languages = SupportedLanguage.get_all_languages()
-        assert len(languages) == 11
+        assert len(languages) == 12
 
     def test_get_source_languages(self):
         """Source languages include auto-detect."""
@@ -123,4 +123,4 @@ class TestSupportedLanguage:
         languages = SupportedLanguage.get_source_languages()
         codes = [code for code, name in languages]
         assert "auto" in codes
-        assert len(languages) == 12  # 11 languages + auto
+        assert len(languages) == 13  # 12 languages + auto
