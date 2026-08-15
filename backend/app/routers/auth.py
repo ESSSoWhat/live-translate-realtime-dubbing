@@ -164,7 +164,7 @@ async def store_desktop_handoff(body: DesktopHandoffRequest, request: Request) -
 
     from app.services.desktop_handoff import put_handoff
 
-    put_handoff(session_id, api_key)
+    await put_handoff(session_id, api_key)
     logger.info("Desktop handoff stored", session_prefix=session_id[:8])
     return {"ok": True}
 
@@ -183,7 +183,7 @@ async def poll_desktop_handoff(session_id: str) -> dict:
 
     from app.services.desktop_handoff import take_handoff
 
-    api_key = take_handoff(sid)
+    api_key = await take_handoff(sid)
     if not api_key:
         return {"ready": False}
     return {"ready": True, "api_key": api_key}
@@ -227,6 +227,7 @@ class DesktopSsoCompleteRequest(BaseModel):
     email: str | None = None
     password: str | None = None
     api_key: str | None = None
+    access_token: str | None = None
 
 
 @router.get("/desktop-sso", response_class=HTMLResponse, include_in_schema=False)
@@ -245,7 +246,8 @@ async def desktop_sso_page() -> HTMLResponse:
 
 @router.post("/desktop-sso/complete", status_code=status.HTTP_200_OK)
 async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
-    """Validate credentials / API key, store handoff, return redirect URL."""
+    """Validate credentials / API key / Google JWT, store handoff, return redirect URL."""
+    from app.dependencies import _verify_supabase_jwt
     from app.services.desktop_handoff import put_handoff
 
     session_id = body.session_id.strip()
@@ -257,11 +259,54 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     api_key: str | None = None
 
     pasted = (body.api_key or "").strip()
+    access_token = (body.access_token or "").strip()
     if pasted:
         result = await sb.table("users").select("*").eq("api_key", pasted).maybe_single().execute()
         if not result or not result.data:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
         api_key = pasted
+    elif access_token:
+        try:
+            supabase_uid = _verify_supabase_jwt(access_token)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Google session",
+            ) from exc
+        result = (
+            await sb.table("users")
+            .select("*")
+            .eq("supabase_uid", supabase_uid)
+            .maybe_single()
+            .execute()
+        )
+        if not result or not result.data:
+            # Resolve email from JWT user if needed — create row like OAuth exchange
+            try:
+                user_resp = await sb.auth.get_user(access_token)
+                email = (user_resp.user.email if user_resp and user_resp.user else None) or ""
+            except Exception:
+                email = ""
+            insert = (
+                await sb.table("users")
+                .insert(
+                    {
+                        "supabase_uid": supabase_uid,
+                        "email": email or f"{supabase_uid[:8]}@users.local",
+                        "tier": "free",
+                        "api_key": secrets.token_urlsafe(32),
+                    }
+                )
+                .execute()
+            )
+            if not insert.data:
+                raise HTTPException(status_code=500, detail="Could not create user")
+            user_row = insert.data[0] if isinstance(insert.data, list) else insert.data
+        else:
+            user_row = result.data
+        api_key = await _ensure_user_api_key(sb, user_row)
     elif body.email and body.password:
         try:
             resp = await sb.auth.sign_in_with_password(
@@ -282,7 +327,6 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
             .execute()
         )
         if not result or not result.data:
-            # Match /login auto-create path for web-registered users
             insert = (
                 await sb.table("users")
                 .insert(
@@ -304,10 +348,10 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provide email/password or api_key",
+            detail="Provide email/password, api_key, or access_token",
         )
 
-    put_handoff(session_id, api_key)
+    await put_handoff(session_id, api_key)
     logger.info("Desktop SSO complete", session_prefix=session_id[:8])
 
     out: dict = {"ok": True, "api_key": api_key}

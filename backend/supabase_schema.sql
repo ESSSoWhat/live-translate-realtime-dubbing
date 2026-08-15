@@ -120,6 +120,7 @@ ALTER TABLE user_voices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tier_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE nudge_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE desktop_handoffs ENABLE ROW LEVEL SECURITY;
 
 -- Service role can do everything (RLS is bypassed for service role)
 DROP POLICY IF EXISTS users_select_own ON users;

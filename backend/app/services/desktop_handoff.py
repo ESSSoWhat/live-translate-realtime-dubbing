@@ -1,55 +1,60 @@
-"""Shared-disk store for desktop SSO handoff (Wix → app without localhost redirect)."""
+"""Shared store for desktop SSO handoff (browser → app without localhost).
+
+Uses Postgres via Supabase so all Railway uvicorn workers see the same rows.
+Local SQLite previously broke with ``--workers 2`` (write on one worker, poll on another).
+"""
 
 from __future__ import annotations
 
-import sqlite3
-import tempfile
-import time
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
-_DB_PATH = Path(tempfile.gettempdir()) / "live_translate_desktop_handoffs.sqlite3"
-_TTL_SEC = 600.0  # 10 minutes
+import structlog
 
+from app.services.supabase_client import get_supabase
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_DB_PATH), timeout=15, check_same_thread=False)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS handoffs (
-            session_id TEXT PRIMARY KEY,
-            api_key TEXT NOT NULL,
-            created_at REAL NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    return conn
+logger = structlog.get_logger(__name__)
+
+_TTL = timedelta(minutes=10)
 
 
-def put_handoff(session_id: str, api_key: str) -> None:
+async def put_handoff(session_id: str, api_key: str) -> None:
     """Store api_key for session_id (overwrites existing)."""
-    now = time.time()
-    with _connect() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO handoffs (session_id, api_key, created_at) VALUES (?, ?, ?)",
-            (session_id, api_key, now),
+    sb = await get_supabase()
+    now = datetime.now(timezone.utc)
+    await (
+        sb.table("desktop_handoffs")
+        .upsert(
+            {
+                "session_id": session_id,
+                "api_key": api_key,
+                "created_at": now.isoformat(),
+            }
         )
-        conn.execute("DELETE FROM handoffs WHERE created_at < ?", (now - _TTL_SEC,))
-        conn.commit()
+        .execute()
+    )
+    cutoff = (now - _TTL).isoformat()
+    try:
+        await sb.table("desktop_handoffs").delete().lt("created_at", cutoff).execute()
+    except Exception as exc:
+        logger.debug("Handoff TTL purge skipped", error=str(exc))
 
 
-def take_handoff(session_id: str) -> str | None:
-    """Return api_key once and delete the row. Expired rows are purged."""
-    now = time.time()
-    with _connect() as conn:
-        conn.execute("DELETE FROM handoffs WHERE created_at < ?", (now - _TTL_SEC,))
-        row = conn.execute(
-            "SELECT api_key FROM handoffs WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()
-        if not row:
-            conn.commit()
-            return None
-        conn.execute("DELETE FROM handoffs WHERE session_id = ?", (session_id,))
-        conn.commit()
-        return str(row[0])
+async def take_handoff(session_id: str) -> str | None:
+    """Return api_key once and delete the row. Expired rows are ignored."""
+    sb = await get_supabase()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - _TTL).isoformat()
+    result = (
+        await sb.table("desktop_handoffs")
+        .delete()
+        .eq("session_id", session_id)
+        .gte("created_at", cutoff)
+        .select("api_key")
+        .execute()
+    )
+    if not result.data:
+        # Drop expired row if present
+        await sb.table("desktop_handoffs").delete().eq("session_id", session_id).execute()
+        return None
+    row = result.data[0] if isinstance(result.data, list) else result.data
+    return str(row["api_key"]) if row and row.get("api_key") else None

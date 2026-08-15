@@ -38,7 +38,7 @@
       font-size: 0.95rem;
     }
     input:focus { outline: none; border-color: #6a9; }
-    button {
+    button, .linkbtn {
       width: 100%;
       height: 42px;
       margin-top: 0.9rem;
@@ -47,6 +47,10 @@
       font-size: 0.95rem;
       font-weight: 600;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
     }
     .primary { background: #2d8f6f; color: #fff; }
     .primary:hover { background: #247a5e; }
@@ -71,12 +75,13 @@
     .ok { color: #6c6; }
     details { margin-top: 1rem; color: #888; font-size: 0.85rem; }
     details summary { cursor: pointer; color: #aaa; }
+    #openApp { display: none; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Sign in to Live Translate</h1>
-    <p class="sub">Finish here and we’ll send you back to the desktop app.</p>
+    <p class="sub">Finish here — the desktop app will continue automatically. If the browser does not jump back, use the button below.</p>
 
     <button class="google" type="button" id="googleBtn">Continue with Google</button>
 
@@ -89,6 +94,8 @@
       <input id="password" name="password" type="password" autocomplete="current-password" required />
       <button class="primary" type="submit" id="loginBtn">Sign in &amp; return to app</button>
     </form>
+
+    <a class="linkbtn primary" id="openApp" href="#">Open Live Translate app</a>
 
     <details>
       <summary>Have an API key?</summary>
@@ -108,19 +115,40 @@
   var loginBtn = document.getElementById("loginBtn");
   var googleBtn = document.getElementById("googleBtn");
   var keyBtn = document.getElementById("keyBtn");
+  var openApp = document.getElementById("openApp");
 
   function setMsg(text, ok) {
     msg.textContent = text || "";
     msg.className = ok ? "err ok" : "err";
   }
 
+  function showOpenApp(url) {
+    openApp.href = url;
+    openApp.style.display = "inline-flex";
+  }
+
   function finishLocal(apiKey) {
     if (!redirectUri) {
-      setMsg("Signed in. Return to the Live Translate app.", true);
+      setMsg("Signed in. Return to the Live Translate app — it should continue automatically.", true);
       return;
     }
     var sep = redirectUri.indexOf("?") >= 0 ? "&" : "?";
-    window.location.replace(redirectUri + sep + "api_key=" + encodeURIComponent(apiKey));
+    var finalUrl = redirectUri + sep + "api_key=" + encodeURIComponent(apiKey);
+    setMsg("Signed in. Returning to the app…", true);
+    showOpenApp(finalUrl);
+    // App also polls backend handoff; localhost redirect is best-effort (browsers may block it).
+    setTimeout(function () {
+      window.location.replace(finalUrl);
+    }, 200);
+  }
+
+  function detailMessage(data, status) {
+    if (!data) return "Sign-in failed (" + status + ")";
+    if (typeof data.detail === "string") return data.detail;
+    if (Array.isArray(data.detail) && data.detail[0] && data.detail[0].msg) {
+      return data.detail.map(function (d) { return d.msg; }).join("; ");
+    }
+    return "Sign-in failed (" + status + ")";
   }
 
   async function complete(body) {
@@ -136,13 +164,14 @@
       });
       var data = await res.json().catch(function () { return {}; });
       if (!res.ok) {
-        throw new Error(data.detail || ("Sign-in failed (" + res.status + ")"));
+        throw new Error(detailMessage(data, res.status));
       }
       if (data.api_key) {
         finishLocal(data.api_key);
         return;
       }
       if (data.redirect) {
+        showOpenApp(data.redirect);
         window.location.replace(data.redirect);
         return;
       }
@@ -152,6 +181,20 @@
       loginBtn.disabled = false;
       googleBtn.disabled = false;
       keyBtn.disabled = false;
+    }
+  }
+
+  // Google returns here with tokens in the URL hash (Supabase implicit/PKCE fragment).
+  var hash = window.location.hash ? window.location.hash.substring(1) : "";
+  if (hash) {
+    var hParams = new URLSearchParams(hash);
+    var access = hParams.get("access_token");
+    var err = hParams.get("error");
+    if (err) {
+      setMsg(hParams.get("error_description") || err);
+    } else if (access) {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      complete({ access_token: access });
     }
   }
 
@@ -173,19 +216,24 @@
   });
 
   googleBtn.addEventListener("click", async function () {
-    if (!redirectUri) {
-      setMsg("Missing app callback. Close this tab and try again from the app.");
+    if (!sessionId) {
+      setMsg("Missing session. Close this tab and try again from the app.");
       return;
     }
     setMsg("Opening Google…");
     googleBtn.disabled = true;
     try {
+      // Return to this bridge (not localhost) so we can store handoff even if localhost is blocked.
+      var bridgeUrl =
+        window.location.origin +
+        window.location.pathname +
+        "?session_id=" + encodeURIComponent(sessionId) +
+        (redirectUri ? "&redirect_uri=" + encodeURIComponent(redirectUri) : "");
       var res = await fetch(
-        "/api/v1/auth/oauth/google?redirect_uri=" + encodeURIComponent(redirectUri)
+        "/api/v1/auth/oauth/google?redirect_uri=" + encodeURIComponent(bridgeUrl)
       );
       var data = await res.json();
       if (!res.ok || !data.url) throw new Error(data.detail || "Could not start Google sign-in");
-      // Handoff session still polled by the app; Google returns tokens to localhost.
       window.location.href = data.url;
     } catch (e) {
       setMsg(e.message || "Google sign-in failed");

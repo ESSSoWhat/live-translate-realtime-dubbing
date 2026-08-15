@@ -17,4 +17,4 @@ USER appuser
 
 # Run with uvicorn — Cloud Run/Heroku/Railway inject $PORT; default 8080 (Cloud Run default).
 # Shell form + exec so $PORT expands and uvicorn receives signals as PID 1 (graceful shutdown).
-CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 2
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1
