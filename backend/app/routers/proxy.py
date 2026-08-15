@@ -86,7 +86,48 @@ def _audio_duration_seconds(audio_bytes: bytes, content_type: str | None, fallba
 def _elevenlabs() -> AsyncElevenLabs:
     """Return an async ElevenLabs client using configured API key."""
     cfg = get_settings()
-    return AsyncElevenLabs(api_key=cfg.elevenlabs_api_key, timeout=60.0)
+    key = (cfg.elevenlabs_api_key or "").strip()
+    if not key or key.startswith("your-") or not key.startswith("sk_"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Server ElevenLabs API key is missing or invalid. "
+                "Set Railway ELEVENLABS_API_KEY to a secret key that starts with sk_ "
+                "(not an API key ID)."
+            ),
+        )
+    return AsyncElevenLabs(api_key=key, timeout=60.0)
+
+
+def _elevenlabs_upstream_error(action: str, exc: Exception) -> HTTPException:
+    """Map ElevenLabs failures to a short client-facing detail (avoid dumping headers)."""
+    text = str(exc)
+    lower = text.lower()
+    if "api_key_id_used_as_api_key" in lower or (
+        "invalid_api_key" in lower and "sk_" in lower
+    ):
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"{action} failed: server ELEVENLABS_API_KEY is an API key ID, not a secret. "
+                "Replace it on Railway with a key that starts with sk_."
+            ),
+        )
+    if "quota_exceeded" in lower or "0 credits remaining" in lower:
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"{action} failed: ElevenLabs account has no credits left. "
+                "Top up the LiveTranslate ElevenLabs workspace or use a key with remaining quota."
+            ),
+        )
+    if "authentication_error" in lower or "unauthorized" in lower:
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{action} failed: server ElevenLabs API key rejected. Check Railway ELEVENLABS_API_KEY.",
+        )
+    logger.error("ElevenLabs upstream error", action=action, error=text[:500])
+    return HTTPException(status_code=502, detail=f"{action} failed: upstream error")
 
 
 def _quota_error(exc: QuotaExceededError) -> HTTPException:
@@ -132,9 +173,10 @@ async def transcribe(
             model_id="scribe_v1",
             language_code=None if language == "auto" else language,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.error("ElevenLabs STT error", error=str(exc))
-        raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
+        raise _elevenlabs_upstream_error("Transcription", exc) from exc
 
     return TranscriptionResponse(
         text=result.text,
@@ -173,9 +215,10 @@ async def synthesize(
             ),
         )
         audio_data = b"".join([chunk async for chunk in audio_stream])
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.error("ElevenLabs TTS error", error=str(exc))
-        raise HTTPException(status_code=502, detail=f"Synthesis failed: {exc}") from exc
+        raise _elevenlabs_upstream_error("Synthesis", exc) from exc
 
     # Record dubbing time (usage meter) by output audio duration
     try:
@@ -315,8 +358,10 @@ async def list_voices(user: dict = Depends(get_current_user)) -> list[VoiceItem]
             VoiceItem(voice_id=v.voice_id, name=v.name, category=v.category or "premade")
             for v in result.voices
         ]
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to list voices: {exc}") from exc
+        raise _elevenlabs_upstream_error("List voices", exc) from exc
 
 
 @router.delete("/voices/{voice_id}")
@@ -344,7 +389,7 @@ async def delete_voice(voice_id: str, user: dict = Depends(get_current_user)) ->
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to delete voice: {exc}") from exc
+        raise _elevenlabs_upstream_error("Delete voice", exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -370,8 +415,10 @@ async def clone_voice(
             name=name,
             files=[(audio.filename or "audio.wav", audio_bytes, "audio/wav")],
         )
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Voice cloning failed: {exc}") from exc
+        raise _elevenlabs_upstream_error("Voice cloning", exc) from exc
 
     sb = await get_supabase()
     try:

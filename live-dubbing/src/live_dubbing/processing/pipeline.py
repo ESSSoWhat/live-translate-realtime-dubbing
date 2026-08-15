@@ -986,7 +986,18 @@ class ProcessingPipeline:
                 except Exception as e:
                     from live_dubbing.services.backend_service import AuthExpiredException
                     logger.exception("STT failed", error=str(e))
-                    err_msg = str(e)[:80] if str(e) else "Unknown error"
+                    raw = str(e) if str(e) else "Unknown error"
+                    lower = raw.lower()
+                    if "quota_exceeded" in lower or "credits remaining" in lower:
+                        err_msg = "ElevenLabs account out of credits — top up the API workspace"
+                    elif "502" in lower or "bad gateway" in lower:
+                        err_msg = "ElevenLabs upstream error (often empty credits or bad API key)"
+                    elif "503" in lower or "sk_" in lower or "elevenlabs_api_key" in lower:
+                        err_msg = "Server ElevenLabs key invalid — set Railway ELEVENLABS_API_KEY (sk_…)"
+                    elif "headers:" in lower:
+                        err_msg = "Upstream STT error (check server ElevenLabs key/quota)"
+                    else:
+                        err_msg = raw[:80]
                     self._event_bus.emit(
                         EventType.TRANSCRIPTION_UPDATE,
                         {"text": f"[Transcription failed: {err_msg}]"},

@@ -168,6 +168,32 @@ class BackendProxyService:
         if response.status_code == 401:
             raise AuthExpiredException("Session expired — please log in again")
 
+        if response.status_code >= 500:
+            detail = ""
+            try:
+                body = response.json()
+                raw = body.get("detail", body) if isinstance(body, dict) else body
+                detail = raw if isinstance(raw, str) else json.dumps(raw)
+            except (ValueError, json.JSONDecodeError, TypeError):
+                detail = (response.text or "")[:300]
+            lower = detail.lower()
+            if "quota_exceeded" in lower or "credits remaining" in lower:
+                raise RuntimeError(
+                    "ElevenLabs account out of credits — top up the API workspace"
+                )
+            if "api_key_id_used_as_api_key" in lower or (
+                "invalid_api_key" in lower and "sk_" in lower
+            ):
+                raise RuntimeError(
+                    "Server ElevenLabs key invalid — set Railway ELEVENLABS_API_KEY (sk_…)"
+                )
+            if detail:
+                short = detail.split("\n")[0].strip()
+                if len(short) > 120:
+                    short = short[:117] + "..."
+                raise RuntimeError(short)
+            response.raise_for_status()
+
         response.raise_for_status()
         return response
 
