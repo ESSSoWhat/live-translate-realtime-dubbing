@@ -181,6 +181,10 @@ class BackendProxyService:
                 raise RuntimeError(
                     "ElevenLabs account out of credits — top up the API workspace"
                 )
+            if "voice not found" in lower or "voice_not_found" in lower:
+                raise RuntimeError(
+                    "Voice not found on server ElevenLabs account — re-clone or use default"
+                )
             if "api_key_id_used_as_api_key" in lower or (
                 "invalid_api_key" in lower and "sk_" in lower
             ):

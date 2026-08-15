@@ -61,8 +61,8 @@ class SettingsDialog(QDialog):
         self._prefer_direct_cb = QCheckBox("Use direct API (offline mode)")
         self._prefer_direct_cb.setChecked(self._settings.prefer_direct_api)
         self._prefer_direct_cb.setToolTip(
-            "When enabled, use ELEVENLABS_API_KEY directly instead of the backend. "
-            "Useful when the backend is unreachable. Usage is not tracked."
+            "When enabled, call ElevenLabs with your own key and skip the backend proxy. "
+            "Website subscription package limits will not apply. For offline/dev only."
         )
         layout.addWidget(self._prefer_direct_cb)
 

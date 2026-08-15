@@ -351,6 +351,19 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
             detail="Provide email/password, api_key, or access_token",
         )
 
+    # Sync website Pricing Plan → users.tier so desktop usage matches Wix package.
+    try:
+        from app.services.wix_plans import refresh_user_tier_from_wix
+
+        if pasted:
+            user_for_refresh = result.data  # type: ignore[name-defined]
+        else:
+            user_for_refresh = user_row  # type: ignore[name-defined]
+        if isinstance(user_for_refresh, dict):
+            await refresh_user_tier_from_wix(user_for_refresh, force=True)
+    except Exception as exc:
+        logger.warning("Desktop SSO Wix tier refresh skipped", error=str(exc))
+
     await put_handoff(session_id, api_key)
     logger.info("Desktop SSO complete", session_prefix=session_id[:8])
 

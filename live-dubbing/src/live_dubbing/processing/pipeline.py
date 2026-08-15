@@ -62,9 +62,18 @@ def _tts_error_message(exc: BaseException, short: bool = False) -> str:
             402: "Quota or payment required",
             429: "Rate limit exceeded",
             500: "Server error — try again later",
+            502: "Voice unavailable — try the default voice",
+            503: "TTS service unavailable",
         }.get(status_code)
         if msg:
             return msg if short else f"TTS failed: {msg}"
+    lower = s.lower()
+    if "voice not found" in lower or "voice_not_found" in lower:
+        msg = "Selected voice missing on server — use default or re-clone"
+        return msg if short else f"TTS failed: {msg}"
+    if "upstream error" in lower or "synthesis failed" in lower:
+        msg = "Selected voice failed (often a stale clone after API key change)"
+        return msg if short else f"TTS failed: {msg}"
     # Avoid dumping raw response (e.g. "headers: {...}")
     if "headers:" in s or "headers':" in s:
         return "TTS API error (check API key and quota)" if short else "TTS failed: API error. Check API key and quota."
@@ -1046,12 +1055,56 @@ class ProcessingPipeline:
                 try:
                     self._event_bus.emit(EventType.TTS_STARTED, {"text": text})
 
-                    audio_bytes = await self._service.synthesize(
-                        text=text,
-                        voice_id=self._cloned_voice.voice_id,
-                        stability=self._config.voice_stability,
-                        similarity_boost=self._config.voice_similarity,
-                    )
+                    try:
+                        audio_bytes = await self._service.synthesize(
+                            text=text,
+                            voice_id=self._cloned_voice.voice_id,
+                            stability=self._config.voice_stability,
+                            similarity_boost=self._config.voice_similarity,
+                        )
+                    except Exception as synth_err:
+                        # Stale saved clones (e.g. after ElevenLabs API key change) break TTS.
+                        fallback_id = "21m00Tcm4TlvDq8ikWAM"
+                        active_id = self._cloned_voice.voice_id if self._cloned_voice else ""
+                        err_l = str(synth_err).lower()
+                        can_fallback = (
+                            active_id
+                            and active_id != fallback_id
+                            and any(
+                                m in err_l
+                                for m in (
+                                    "upstream",
+                                    "voice not found",
+                                    "voice_not_found",
+                                    "synthesis failed",
+                                    "502",
+                                    "503",
+                                )
+                            )
+                        )
+                        if not can_fallback:
+                            raise
+                        logger.warning(
+                            "TTS failed for active voice; falling back to default",
+                            failed_voice=active_id,
+                            error=str(synth_err)[:120],
+                        )
+                        self._cloned_voice = ClonedVoice(
+                            voice_id=fallback_id,
+                            name="Default (fallback)",
+                            is_dynamic=False,
+                        )
+                        self._event_bus.emit_warning(
+                            "Selected voice is unavailable on the server ElevenLabs account. "
+                            "Switched to the default voice — re-clone or pick a listed voice.",
+                            {"failed_voice": active_id},
+                        )
+                        audio_bytes = await self._service.synthesize(
+                            text=text,
+                            voice_id=fallback_id,
+                            stability=self._config.voice_stability,
+                            similarity_boost=self._config.voice_similarity,
+                        )
 
                     # Report TTS and dub usage when using direct API
                     if self._config.usage_reporter:
@@ -1079,6 +1132,7 @@ class ProcessingPipeline:
                     from live_dubbing.services.backend_service import AuthExpiredException
                     logger.exception("TTS failed", error=str(e))
                     user_msg = _tts_error_message(e)
+                    short_msg = _tts_error_message(e, short=True)
                     self._event_bus.emit_warning(
                         user_msg,
                         {"error": redact_secrets(str(e))},

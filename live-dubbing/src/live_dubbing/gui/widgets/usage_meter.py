@@ -216,10 +216,15 @@ class UsageMeterWidget(QFrame):
 
     def set_tier(self, tier: str) -> None:
         """Set the displayed tier label and show/hide upgrade button."""
-        tier_names = {"free": "Free tier", "starter": "Starter", "pro": "Pro"}
-        self._tier_label.setText(tier_names.get(tier, tier.title()))
-        # Hide upgrade button for Pro users
-        self._upgrade_btn.setVisible(tier != "pro")
+        tier_names = {
+            "free": "Free trial",
+            "starter": "Hobby",
+            "pro": "Pro",
+            "early_adopters": "Early Adopters",
+        }
+        self._tier_label.setText(tier_names.get(tier, tier.replace("_", " ").title()))
+        # Hide upgrade for top packages (matches Wix Pricing Plans)
+        self._upgrade_btn.setVisible(tier not in ("pro", "early_adopters"))
 
     def set_checkout_url(self, url: str) -> None:
         """Set the upgrade/checkout URL used when quota is exceeded."""

@@ -37,6 +37,11 @@ class Settings(BaseSettings):  # pylint: disable=too-few-public-methods
         default="",
         validation_alias=AliasChoices("LT_SYNC_SECRET", "WIX_SYNC_SECRET"),
     )
+    # Account API key used by backend to refresh member plans on desktop SSO /usage.
+    wix_api_key: str = ""
+    wix_account_id: str = ""
+    # Optional; when empty the first site on the account is discovered and cached.
+    wix_site_id: str = ""
 
     # PayPal (optional — additional payment path; one-time + subscriptions)
     paypal_env: str = "live"  # "live" or "sandbox"

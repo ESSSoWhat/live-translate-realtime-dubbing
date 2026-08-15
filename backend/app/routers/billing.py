@@ -25,6 +25,7 @@ from app.dependencies import get_current_user
 from app.models.requests import CheckoutRequest, WixSyncRequest
 from app.models.responses import CheckoutResponse, PlanInfo, PortalResponse
 from app.services.supabase_client import get_supabase
+from app.services.wix_tier_map import active_wix_tier_mapping, wix_plan_to_tier as _wix_plan_to_tier
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -326,79 +327,6 @@ def _qonversion_product_to_tier(product_id: str | None) -> str:
     return "free"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Wix Pricing Plan → backend tier mapping.
-#
-# EDIT THIS to match your real Wix plans (Wix Dashboard → Pricing Plans).
-# Matching is checked in order:
-#   1. Exact Wix plan ID (GUID) — most stable, preferred. Add "<plan-id>": "<tier>".
-#   2. Exact plan name (case-insensitive).
-#   3. Keyword-in-name fallback (case-insensitive substring).
-# First match wins. Anything unmatched → "free".
-#
-# Tier caps (see supabase_schema.sql / WIX_SYNC.md):
-#   free 30 min • starter (Hobby) 5 hr • pro 15 hr • early_adopters unlimited
-# ─────────────────────────────────────────────────────────────────────────────
-
-# 1. Stable plan-ID → tier (Wix plan GUIDs; recommended, names can change).
-_WIX_PLAN_ID_TO_TIER: dict[str, str] = {
-    "146fe70b-7ba2-4ec4-b9cc-72c77c645aac": "pro",
-    "fe160051-2f9a-4a28-929a-053ece47dcc7": "starter",
-    "954bf0a7-cb41-4726-ace1-c61c7a75425c": "early_adopters",
-    "5f9d4418-240c-4dcf-8748-c006011eff2f": "free",
-}
-
-# 2. Exact plan name (lowercased) → tier.
-_WIX_PLAN_NAME_TO_TIER: dict[str, str] = {
-    "early adopters life time access": "early_adopters",
-    "early adopters lifetime access": "early_adopters",
-    "monthly language unlocked - pro tier": "pro",
-    "monthly language unlocked - hobby tier": "starter",
-    "free trial": "free",
-}
-
-# 3. Keyword substrings (checked in order) → tier. Broad fallback.
-_WIX_KEYWORD_TO_TIER: tuple[tuple[str, str], ...] = (
-    ("early adopters", "early_adopters"),
-    ("lifetime", "early_adopters"),
-    ("pro tier", "pro"),
-    ("pro", "pro"),
-    ("hobby", "starter"),
-    ("starter", "starter"),
-    ("free trial", "free"),
-)
-
-
-def _wix_plan_to_tier(plan_id: str | None, plan_name: str | None) -> str:
-    """Map a Wix plan id/name to a backend tier (free/starter/pro/early_adopters)."""
-    # 1. Match on stable plan ID first.
-    if plan_id and plan_id.strip() in _WIX_PLAN_ID_TO_TIER:
-        return _WIX_PLAN_ID_TO_TIER[plan_id.strip()]
-
-    name = (plan_name or "").strip().lower()
-    if not name:
-        return "free"
-
-    # 2. Exact name match.
-    if name in _WIX_PLAN_NAME_TO_TIER:
-        return _WIX_PLAN_NAME_TO_TIER[name]
-
-    # 3. Keyword fallback.
-    for keyword, tier in _WIX_KEYWORD_TO_TIER:
-        if keyword in name:
-            return tier
-    return "free"
-
-
-def active_wix_tier_mapping() -> dict:
-    """Return a summary of the active Wix plan->tier mapping (for startup logging)."""
-    return {
-        "plan_ids": dict(_WIX_PLAN_ID_TO_TIER),
-        "plan_names": dict(_WIX_PLAN_NAME_TO_TIER),
-        "keywords": [f"{k}->{t}" for k, t in _WIX_KEYWORD_TO_TIER],
-    }
-
-
 async def provision_or_update_user(
     email: str,
     tier: str,
@@ -524,7 +452,9 @@ async def wix_sync(body: WixSyncRequest, request: Request) -> dict:
 
     user_id = existing_data[0]["id"]
     current_tier = (existing_data[0].get("tier") or "free").strip().lower()
-    new_tier = _max_tier(current_tier, tier)
+    # Wix is source of truth for this endpoint — set the mapped tier absolutely
+    # (including cancel/expired → free). Do not keep a higher paid tier via _max_tier.
+    new_tier = tier
     has_api_key = bool(existing_data[0].get("api_key"))
 
     if not has_api_key:
@@ -540,7 +470,13 @@ async def wix_sync(body: WixSyncRequest, request: Request) -> dict:
             "tier": new_tier,
             "subscription_status": subscription_status,
         }).eq("id", user_id).execute()
-        logger.info("Wix sync: tier updated", user_id=user_id, email=body.email, tier=new_tier)
+        logger.info(
+            "Wix sync: tier updated",
+            user_id=user_id,
+            email=body.email,
+            tier=new_tier,
+            previous_tier=current_tier,
+        )
     return {"received": True, "updated": True, "tier": new_tier}
 
 

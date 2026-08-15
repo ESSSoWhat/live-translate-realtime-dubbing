@@ -198,7 +198,7 @@ class AppSettings(BaseModel):
     max_latency_warning_ms: int = Field(default=2000, ge=500, le=10000)
     # When True, use direct ElevenLabs API even when signed in (for offline / flaky network).
     # Usage is not tracked when this is enabled.
-    prefer_direct_api: bool = True
+    prefer_direct_api: bool = False
 
     # Backend URL (can be overridden by LIVE_TRANSLATE_BACKEND_URL env var)
     backend_base_url: str = "https://livetranslatedubtool-production.up.railway.app"

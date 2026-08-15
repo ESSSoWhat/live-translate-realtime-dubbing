@@ -7,6 +7,7 @@ from app.dependencies import get_current_user
 from app.models.requests import UsageReportRequest
 from app.models.responses import UserProfile, UsageSnapshot, UsageWithTier
 from app.services.usage import get_usage_snapshot, record_usage
+from app.services.wix_plans import refresh_user_tier_from_wix
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/user", tags=["user"])
@@ -26,6 +27,7 @@ async def report_usage(
 
 @router.get("/me", response_model=UserProfile)
 async def get_me(user: dict = Depends(get_current_user)) -> UserProfile:
+    user = await refresh_user_tier_from_wix(user)
     user_id = str(user["id"])
     usage_data = await _usage_or_default(user_id, user["tier"])
     return UserProfile(
@@ -39,6 +41,7 @@ async def get_me(user: dict = Depends(get_current_user)) -> UserProfile:
 
 @router.get("/usage", response_model=UsageWithTier)
 async def get_usage(user: dict = Depends(get_current_user)) -> UsageWithTier:
+    user = await refresh_user_tier_from_wix(user)
     user_id = str(user["id"])
     usage_data = await _usage_or_default(user_id, user["tier"])
     return UsageWithTier(tier=user["tier"], **usage_data)

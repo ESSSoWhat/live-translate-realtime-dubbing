@@ -25,7 +25,7 @@ from app.models.responses import (
     VoiceItem,
 )
 from app.services.supabase_client import get_supabase
-from app.services.usage import QuotaExceededError, check_and_record_quota, record_usage
+from app.services.usage import QuotaExceededError, check_and_record_quota, check_quota
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/proxy", tags=["proxy"])
@@ -121,12 +121,41 @@ def _elevenlabs_upstream_error(action: str, exc: Exception) -> HTTPException:
                 "Top up the LiveTranslate ElevenLabs workspace or use a key with remaining quota."
             ),
         )
+    if "voice_not_found" in lower or "voice does not exist" in lower:
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                f"{action} failed: voice not found on the server ElevenLabs account. "
+                "Re-clone the voice after changing API keys."
+            ),
+        )
     if "authentication_error" in lower or "unauthorized" in lower:
         return HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"{action} failed: server ElevenLabs API key rejected. Check Railway ELEVENLABS_API_KEY.",
         )
+    # Prefer ElevenLabs' own message when present in the SDK exception text.
+    message = ""
+    for marker in ("'message': '", '"message": "'):
+        start = text.find(marker)
+        if start >= 0:
+            start += len(marker)
+            end = text.find("'", start) if marker.endswith("'") else text.find('"', start)
+            if end > start:
+                message = text[start:end]
+                break
+    if not message:
+        for marker in ("'code': '", '"code": "'):
+            start = text.find(marker)
+            if start >= 0:
+                start += len(marker)
+                end = text.find("'", start) if marker.endswith("'") else text.find('"', start)
+                if end > start:
+                    message = text[start:end]
+                    break
     logger.error("ElevenLabs upstream error", action=action, error=text[:500])
+    if message:
+        return HTTPException(status_code=502, detail=f"{action} failed: {message[:180]}")
     return HTTPException(status_code=502, detail=f"{action} failed: upstream error")
 
 
@@ -197,9 +226,16 @@ async def synthesize(
     if not text:
         raise HTTPException(status_code=400, detail="Text must not be empty")
     char_count = len(text)
+    # ~14 chars/sec spoken English — aligns sold dubbing minutes with TTS output.
+    estimated_dub_sec = max(1, int(round(char_count / 14.0)))
 
     try:
         await check_and_record_quota(user["id"], "tts", char_count)
+    except QuotaExceededError as exc:
+        raise _quota_error(exc) from exc
+
+    try:
+        await check_and_record_quota(user["id"], "dub", estimated_dub_sec)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
 
@@ -220,12 +256,21 @@ async def synthesize(
     except Exception as exc:
         raise _elevenlabs_upstream_error("Synthesis", exc) from exc
 
-    # Record dubbing time (usage meter) by output audio duration
+    # Reconcile dubbing seconds if actual audio is longer than the estimate.
     try:
         duration_sec = _audio_duration_seconds(audio_data, "audio/mpeg", 44100)
-        await record_usage(user["id"], "dub", max(1, int(round(duration_sec))))
+        actual = max(1, int(round(duration_sec)))
+        extra = actual - estimated_dub_sec
+        if extra > 0:
+            await check_and_record_quota(user["id"], "dub", extra)
+    except QuotaExceededError:
+        logger.info(
+            "Dubbing overage after estimate not recorded (quota hit)",
+            user_id=user["id"],
+            estimated=estimated_dub_sec,
+        )
     except Exception as exc:
-        logger.warning("Failed to record dubbing usage", error=str(exc))
+        logger.warning("Failed to reconcile dubbing usage", error=str(exc))
 
     return StreamingResponse(io.BytesIO(audio_data), media_type="audio/mpeg")
 
@@ -267,20 +312,22 @@ async def synthesize_stream(
     user: dict = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     """Stream TTS audio chunks from ElevenLabs."""
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text must not be empty")
+    estimated_dub_sec = max(1, int(round(len(text) / 14.0)))
     try:
-        await check_and_record_quota(user["id"], "tts", len(body.text))
+        await check_and_record_quota(user["id"], "tts", len(text))
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
-    # Record dubbing time by estimated duration (~15 chars/sec speech)
     try:
-        dub_sec = max(1, len(body.text) // 15)
-        await record_usage(user["id"], "dub", dub_sec)
-    except Exception as exc:
-        logger.warning("Failed to record dubbing usage (stream)", error=str(exc))
+        await check_and_record_quota(user["id"], "dub", estimated_dub_sec)
+    except QuotaExceededError as exc:
+        raise _quota_error(exc) from exc
     return StreamingResponse(
         _stream_tts_chunks(
             body.voice_id,
-            body.text,
+            text,
             body.model_id,
             body.stability,
             body.similarity_boost,
@@ -402,8 +449,10 @@ async def clone_voice(
     user: dict = Depends(get_current_user),  # noqa: B008
 ) -> CloneVoiceResponse:
     """Create a new cloned voice from uploaded audio and record ownership."""
+    # Check first; only record usage after ElevenLabs + ownership succeed so
+    # failed clones (or API key migrations) do not burn the free-tier slot.
     try:
-        await check_and_record_quota(user["id"], "clone", 1)
+        await check_quota(user["id"], "clone", 1)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
 
@@ -440,5 +489,23 @@ async def clone_voice(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Voice created but failed to record ownership; please try again or contact support.",
         ) from exc
+
+    try:
+        await check_and_record_quota(user["id"], "clone", 1)
+    except QuotaExceededError as exc:
+        # Race: another clone consumed the slot after our pre-check.
+        try:
+            await sb.table("user_voices").delete().eq("voice_id", voice.voice_id).eq(
+                "user_id", user["id"]
+            ).execute()
+            await client.voices.delete(voice.voice_id)
+        except Exception as cleanup_exc:
+            logger.warning(
+                "Clone quota race cleanup failed",
+                voice_id=voice.voice_id,
+                user_id=user["id"],
+                cleanup_error=str(cleanup_exc),
+            )
+        raise _quota_error(exc) from exc
 
     return CloneVoiceResponse(voice_id=voice.voice_id, name=voice.name)
