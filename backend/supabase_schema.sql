@@ -106,6 +106,14 @@ CREATE TABLE IF NOT EXISTS nudge_events (
 );
 CREATE INDEX IF NOT EXISTS idx_nudge_events_variant ON nudge_events(variant, action);
 
+-- Desktop browser SSO handoff (shared across API workers; service role only)
+CREATE TABLE IF NOT EXISTS desktop_handoffs (
+    session_id TEXT PRIMARY KEY,
+    api_key TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS desktop_handoffs_created_at_idx ON desktop_handoffs (created_at);
+
 DROP TRIGGER IF EXISTS update_usage_records_updated_at ON usage_records;
 CREATE TRIGGER update_usage_records_updated_at
     BEFORE UPDATE ON usage_records
