@@ -457,13 +457,50 @@ async def clone_voice(
         raise _quota_error(exc) from exc
 
     audio_bytes = await audio.read()
-    client = _elevenlabs()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio file is empty")
+
+    cfg = get_settings()
+    key = (cfg.elevenlabs_api_key or "").strip()
+    if not key or key.startswith("your-") or not key.startswith("sk_"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Server ElevenLabs API key is missing or invalid. "
+                "Set Railway ELEVENLABS_API_KEY to a secret key that starts with sk_."
+            ),
+        )
+
+    # Use raw multipart — the SDK has sent labels incorrectly on some builds
+    # ("Labels must be serialized dictionary object").
+    form_data: dict[str, str] = {
+        "name": name.strip() or "cloned_voice",
+        "labels": "{}",
+    }
+    desc = (description or "").strip()
+    if desc:
+        form_data["description"] = desc
 
     try:
-        voice = await client.voices.ivc.create(
-            name=name,
-            files=[(audio.filename or "audio.wav", audio_bytes, "audio/wav")],
-        )
+        async with httpx.AsyncClient(timeout=120.0) as http:
+            resp = await http.post(
+                "https://api.elevenlabs.io/v1/voices/add",
+                headers={"xi-api-key": key},
+                data=form_data,
+                files={
+                    "files": (audio.filename or "audio.wav", audio_bytes, "audio/wav"),
+                },
+            )
+        if resp.status_code >= 400:
+            raise _elevenlabs_upstream_error(
+                "Voice cloning",
+                Exception(f"status_code: {resp.status_code}, body: {resp.text[:800]}"),
+            )
+        payload = resp.json()
+        voice_id = str(payload.get("voice_id") or "").strip()
+        voice_name = str(payload.get("name") or name).strip() or name
+        if not voice_id:
+            raise HTTPException(status_code=502, detail="Voice cloning failed: no voice_id returned")
     except HTTPException:
         raise
     except Exception as exc:
@@ -472,16 +509,17 @@ async def clone_voice(
     sb = await get_supabase()
     try:
         await sb.table("user_voices").insert({
-            "voice_id": voice.voice_id,
+            "voice_id": voice_id,
             "user_id": user["id"],
         }).execute()
     except Exception as exc:
         try:
-            await client.voices.delete(voice.voice_id)
+            client = _elevenlabs()
+            await client.voices.delete(voice_id)
         except Exception as cleanup_exc:
             logger.warning(
                 "Orphaned ElevenLabs voice after Supabase insert failure; cleanup delete failed",
-                voice_id=voice.voice_id,
+                voice_id=voice_id,
                 user_id=user["id"],
                 cleanup_error=str(cleanup_exc),
             )
@@ -495,17 +533,18 @@ async def clone_voice(
     except QuotaExceededError as exc:
         # Race: another clone consumed the slot after our pre-check.
         try:
-            await sb.table("user_voices").delete().eq("voice_id", voice.voice_id).eq(
+            await sb.table("user_voices").delete().eq("voice_id", voice_id).eq(
                 "user_id", user["id"]
             ).execute()
-            await client.voices.delete(voice.voice_id)
+            client = _elevenlabs()
+            await client.voices.delete(voice_id)
         except Exception as cleanup_exc:
             logger.warning(
                 "Clone quota race cleanup failed",
-                voice_id=voice.voice_id,
+                voice_id=voice_id,
                 user_id=user["id"],
                 cleanup_error=str(cleanup_exc),
             )
         raise _quota_error(exc) from exc
 
-    return CloneVoiceResponse(voice_id=voice.voice_id, name=voice.name)
+    return CloneVoiceResponse(voice_id=voice_id, name=voice_name)
