@@ -305,23 +305,31 @@ class AppSettings(BaseModel):
             return None
 
     def get_refresh_token(self) -> str | None:
-        """Get JWT refresh token from in-memory cache or keyring."""
-        if self._refresh_token:
-            return self._refresh_token
+        """Get JWT refresh token from in-memory cache or keyring.
+
+        Once ``set_auth_tokens`` has run this session, an empty refresh means API-key
+        auth (do not fall back to a stale refresh token still in keyring).
+        """
+        if self._access_token is not None:
+            return self._refresh_token or None
         try:
             import keyring
-            return keyring.get_password("LiveDubbing", "refresh_token")
+            return keyring.get_password("LiveDubbing", "refresh_token") or None
         except Exception:
             return None
 
     def set_auth_tokens(self, access_token: str, refresh_token: str) -> None:
         """Store both JWT tokens in memory and Windows Credential Manager."""
         self._access_token = access_token
-        self._refresh_token = refresh_token
+        self._refresh_token = refresh_token or ""
         try:
             import keyring
             keyring.set_password("LiveDubbing", "access_token", access_token)
-            keyring.set_password("LiveDubbing", "refresh_token", refresh_token)
+            if refresh_token:
+                keyring.set_password("LiveDubbing", "refresh_token", refresh_token)
+            else:
+                with contextlib.suppress(Exception):
+                    keyring.delete_password("LiveDubbing", "refresh_token")
         except Exception as e:
             logger.warning("Failed to store auth tokens in keyring", error=redact_secrets(str(e)))
 

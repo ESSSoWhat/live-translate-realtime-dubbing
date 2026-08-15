@@ -167,7 +167,46 @@ class Application:
                 _auth_response.get("tier", "free"),
             )
         else:
-            _auth_response = self._settings.get_cached_auth_response()
+            # Stale API keys / revoked JWTs still look "valid" locally — probe backend.
+            token = self._settings.get_access_token() or ""
+            try:
+                import httpx
+
+                with httpx.Client(timeout=10.0) as client:
+                    probe = client.get(
+                        f"{self._settings.get_backend_url().rstrip('/')}/api/v1/user/me",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                if probe.status_code != 200:
+                    logger.info("Stored credentials rejected by backend; showing login")
+                    self._settings.clear_auth_tokens()
+                    _login = LoginDialog(self._settings, parent=None)
+                    if _login.exec() != QDialog.DialogCode.Accepted:
+                        logger.info("Login cancelled; exiting")
+                        return 0
+                    _auth_response = getattr(_login, "auth_response", {})
+                    self._settings.set_cached_user_info(
+                        _auth_response.get("user_id", ""),
+                        _auth_response.get("tier", "free"),
+                    )
+                else:
+                    _auth_response = self._settings.get_cached_auth_response()
+                    me = probe.json()
+                    if me.get("user_id") or me.get("tier"):
+                        _auth_response = {
+                            **_auth_response,
+                            "user_id": me.get("user_id", _auth_response.get("user_id", "")),
+                            "tier": me.get("tier", _auth_response.get("tier", "free")),
+                            "email": me.get("email", ""),
+                            "usage": me.get("usage"),
+                        }
+                        self._settings.set_cached_user_info(
+                            str(_auth_response.get("user_id", "")),
+                            str(_auth_response.get("tier", "free")),
+                        )
+            except Exception as exc:
+                logger.warning("Auth probe failed; continuing with stored token", error=str(exc))
+                _auth_response = self._settings.get_cached_auth_response()
 
         def _log_user_id(val: str) -> str:
             if not val:

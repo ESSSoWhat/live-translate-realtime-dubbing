@@ -1917,6 +1917,9 @@ class MainWindow(QMainWindow):
             return
         self._auth_expired_showing = True
         try:
+            # Stop capture so STT stops hammering 401s while the user signs in
+            if self._is_running and self._async_worker:
+                self._async_worker.run_coroutine(self._orchestrator.stop_translation())
             msg = event.data.get("message", "Session expired — please sign in again.")
             reply = QMessageBox.warning(
                 self,
@@ -1938,6 +1941,7 @@ class MainWindow(QMainWindow):
                         self._async_worker.run_coroutine(
                             self._orchestrator.reinit_elevenlabs()
                         )
+                    self._usage_meter.refresh()
                     self._status_bar.set_app_state(AppState.READY)
                     logger.info("Re-authenticated after session expiry")
                 else:

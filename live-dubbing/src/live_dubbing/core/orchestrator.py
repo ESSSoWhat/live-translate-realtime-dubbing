@@ -199,7 +199,27 @@ class Orchestrator:
         logger.warning("No ElevenLabs API key or auth token configured")
 
     async def reinit_elevenlabs(self) -> None:
-        """Re-read API keys from settings and recreate the ElevenLabs service."""
+        """Re-read API keys from settings and update or recreate the ElevenLabs service.
+
+        When already using BackendProxyService, only swap credentials so a running
+        pipeline keeps working after re-login (recreating the pipeline while RUNNING
+        left the old STT tasks on the expired token).
+        """
+        from live_dubbing.services.backend_service import BackendProxyService
+
+        access = self._settings.get_access_token() or ""
+        refresh = self._settings.get_refresh_token() or ""
+        if (
+            isinstance(self._elevenlabs_service, BackendProxyService)
+            and self._settings.is_token_valid()
+            and access
+        ):
+            self._elevenlabs_service.update_tokens(access, refresh)
+            if self._usage_reporter is not None:
+                self._usage_reporter = None  # recreated below only for direct-API mode
+            logger.info("Backend proxy credentials updated after re-login")
+            return
+
         await self._init_elevenlabs()
         # Re-create pipeline so it uses the new service instance
         await self._init_pipeline()

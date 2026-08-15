@@ -74,6 +74,11 @@ class BackendProxyService:
             headers={"User-Agent": "LiveTranslate-Desktop/1.0"},
         )
 
+    def update_tokens(self, access_token: str, refresh_token: str = "") -> None:
+        """Replace credentials after re-login without recreating the HTTP client."""
+        self._access_token = access_token
+        self._refresh_token = refresh_token or ""
+
     # ── OAuth helpers (no auth required — called before login) ───────────────
 
     @staticmethod
@@ -265,6 +270,8 @@ class BackendProxyService:
                 headers=self._auth_headers(),
             ) as response:
                 if response.status_code == 401:
+                    if not (self._refresh_token or "").strip():
+                        raise AuthExpiredException("Session expired — please log in again")
                     await self._refresh_access_token()
                     async with self._client.stream(
                         "POST",
