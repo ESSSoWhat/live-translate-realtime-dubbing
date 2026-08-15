@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Translate — Sign in</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #eee;
+      background: radial-gradient(1200px 600px at 20% -10%, #1a3a4a 0%, transparent 55%),
+                  radial-gradient(900px 500px at 100% 100%, #2a2218 0%, transparent 50%),
+                  #111;
+    }
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 14px;
+      padding: 36px 40px;
+      width: min(420px, 92vw);
+    }
+    h1 { font-size: 1.45rem; margin-bottom: 0.35rem; }
+    .sub { color: #9a9a9a; font-size: 0.95rem; margin-bottom: 1.4rem; line-height: 1.4; }
+    label { display: block; font-size: 0.8rem; color: #aaa; margin: 0.7rem 0 0.3rem; }
+    input {
+      width: 100%;
+      height: 40px;
+      border-radius: 8px;
+      border: 1px solid #444;
+      background: #111;
+      color: #eee;
+      padding: 0 12px;
+      font-size: 0.95rem;
+    }
+    input:focus { outline: none; border-color: #6a9; }
+    button {
+      width: 100%;
+      height: 42px;
+      margin-top: 0.9rem;
+      border: 0;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .primary { background: #2d8f6f; color: #fff; }
+    .primary:hover { background: #247a5e; }
+    .primary:disabled { opacity: 0.55; cursor: default; }
+    .google { background: #fff; color: #222; margin-top: 0.4rem; }
+    .google:hover { background: #eee; }
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #666;
+      font-size: 0.8rem;
+      margin: 1.1rem 0;
+    }
+    .divider::before, .divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: #333;
+    }
+    .err { color: #e06666; font-size: 0.88rem; margin-top: 0.75rem; min-height: 1.2em; }
+    .ok { color: #6c6; }
+    details { margin-top: 1rem; color: #888; font-size: 0.85rem; }
+    details summary { cursor: pointer; color: #aaa; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Sign in to Live Translate</h1>
+    <p class="sub">Finish here and we’ll send you back to the desktop app.</p>
+
+    <button class="google" type="button" id="googleBtn">Continue with Google</button>
+
+    <div class="divider">or email</div>
+
+    <form id="loginForm">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" required />
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+      <button class="primary" type="submit" id="loginBtn">Sign in &amp; return to app</button>
+    </form>
+
+    <details>
+      <summary>Have an API key?</summary>
+      <label for="apiKey">API key</label>
+      <input id="apiKey" type="text" autocomplete="off" spellcheck="false" />
+      <button class="primary" type="button" id="keyBtn">Use API key</button>
+    </details>
+
+    <p class="err" id="msg"></p>
+  </div>
+  <script>
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  var sessionId = params.get("session_id") || "";
+  var redirectUri = params.get("redirect_uri") || "";
+  var msg = document.getElementById("msg");
+  var loginBtn = document.getElementById("loginBtn");
+  var googleBtn = document.getElementById("googleBtn");
+  var keyBtn = document.getElementById("keyBtn");
+
+  function setMsg(text, ok) {
+    msg.textContent = text || "";
+    msg.className = ok ? "err ok" : "err";
+  }
+
+  function finishLocal(apiKey) {
+    if (!redirectUri) {
+      setMsg("Signed in. Return to the Live Translate app.", true);
+      return;
+    }
+    var sep = redirectUri.indexOf("?") >= 0 ? "&" : "?";
+    window.location.replace(redirectUri + sep + "api_key=" + encodeURIComponent(apiKey));
+  }
+
+  async function complete(body) {
+    setMsg("Signing you in…");
+    loginBtn.disabled = true;
+    googleBtn.disabled = true;
+    keyBtn.disabled = true;
+    try {
+      var res = await fetch("/api/v1/auth/desktop-sso/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.assign({ session_id: sessionId, redirect_uri: redirectUri }, body)),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        throw new Error(data.detail || ("Sign-in failed (" + res.status + ")"));
+      }
+      if (data.api_key) {
+        finishLocal(data.api_key);
+        return;
+      }
+      if (data.redirect) {
+        window.location.replace(data.redirect);
+        return;
+      }
+      setMsg("Signed in. Return to the Live Translate app.", true);
+    } catch (e) {
+      setMsg(e.message || "Sign-in failed");
+      loginBtn.disabled = false;
+      googleBtn.disabled = false;
+      keyBtn.disabled = false;
+    }
+  }
+
+  document.getElementById("loginForm").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    complete({
+      email: document.getElementById("email").value.trim(),
+      password: document.getElementById("password").value,
+    });
+  });
+
+  keyBtn.addEventListener("click", function () {
+    var apiKey = document.getElementById("apiKey").value.trim();
+    if (!apiKey) {
+      setMsg("Paste your API key first.");
+      return;
+    }
+    complete({ api_key: apiKey });
+  });
+
+  googleBtn.addEventListener("click", async function () {
+    if (!redirectUri) {
+      setMsg("Missing app callback. Close this tab and try again from the app.");
+      return;
+    }
+    setMsg("Opening Google…");
+    googleBtn.disabled = true;
+    try {
+      var res = await fetch(
+        "/api/v1/auth/oauth/google?redirect_uri=" + encodeURIComponent(redirectUri)
+      );
+      var data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.detail || "Could not start Google sign-in");
+      // Handoff session still polled by the app; Google returns tokens to localhost.
+      window.location.href = data.url;
+    } catch (e) {
+      setMsg(e.message || "Google sign-in failed");
+      googleBtn.disabled = false;
+    }
+  });
+
+  if (!sessionId || sessionId.length < 16) {
+    setMsg("Open this page from the Live Translate app (Sign in with livetranslate.net).");
+    loginBtn.disabled = true;
+    googleBtn.disabled = true;
+    keyBtn.disabled = true;
+  }
+})();
+  </script>
+</body>
+</html>

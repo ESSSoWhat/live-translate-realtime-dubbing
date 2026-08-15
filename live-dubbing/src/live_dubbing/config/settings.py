@@ -249,24 +249,31 @@ class AppSettings(BaseModel):
     def get_wix_sso_entry_url(
         self, redirect_uri: str, desktop_session: str | None = None
     ) -> str:
-        """Return URL to open for Wix SSO.
+        """Return URL to open for browser SSO from the desktop app.
 
-        Default: ``/app-auth?redirect_uri=...&session_id=...`` (public page → ``/api-key``).
+        Default: backend ``/api/v1/auth/desktop-sso`` (completes handoff + redirects to
+        localhost). Production Wix ``/app-auth`` is a static page and does not run Velo
+        SSO code; Git ``wix publish`` currently targets a different site.
 
-        ``desktop_session`` is sent as query ``session_id`` so the Wix page can POST the
-        API key to the backend handoff endpoint for the desktop app to poll.
+        Set ``LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN=app-auth`` to use the website path when
+        Velo on www.livetranslate.net is fixed.
         """
         import urllib.parse
+
+        params: dict[str, str] = {"redirect_uri": redirect_uri}
+        if desktop_session:
+            params["session_id"] = desktop_session
+        qs = urllib.parse.urlencode(params)
+
+        mode = os.environ.get("LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN", "backend").strip().lower()
+        if mode in ("backend", "bridge", "desktop-sso", ""):
+            return f"{self.get_backend_url().rstrip('/')}/api/v1/auth/desktop-sso?{qs}"
 
         base = self.get_website_url()
         api_key_path = os.environ.get("LIVE_TRANSLATE_WIX_API_KEY_PATH", "/api-key").strip()
         if not api_key_path.startswith("/"):
             api_key_path = "/" + api_key_path
-        params: dict[str, str] = {"redirect_uri": redirect_uri}
-        if desktop_session:
-            params["session_id"] = desktop_session
-        destination = f"{api_key_path}?{urllib.parse.urlencode(params)}"
-        mode = os.environ.get("LIVE_TRANSLATE_WIX_SSO_VIA_LOGIN", "app-auth").strip().lower()
+        destination = f"{api_key_path}?{qs}"
 
         if mode in ("1", "true", "yes", "login"):
             return_url = urllib.parse.quote(destination, safe="")
@@ -280,8 +287,8 @@ class AppSettings(BaseModel):
         if not app_auth_path.startswith("/"):
             app_auth_path = "/" + app_auth_path
         if app_auth_path:
-            return f"{base}{app_auth_path}?{urllib.parse.urlencode(params)}"
-        return f"{base}{api_key_path}?{urllib.parse.urlencode(params)}"
+            return f"{base}{app_auth_path}?{qs}"
+        return f"{base}{api_key_path}?{qs}"
 
     def get_download_url(self) -> str:
         """Return app download page URL on the website."""

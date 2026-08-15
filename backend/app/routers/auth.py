@@ -9,8 +9,10 @@ import urllib.parse
 import structlog  # pylint: disable=import-error
 from fastapi import APIRouter, HTTPException, Query, Request, status  # pylint: disable=import-error
 from postgrest.exceptions import APIError as PostgrestAPIError  # pylint: disable=import-error
-from fastapi.responses import JSONResponse, Response  # pylint: disable=import-error
-from pydantic import BaseModel  # pylint: disable=import-error
+from pathlib import Path
+
+from fastapi.responses import HTMLResponse, JSONResponse, Response  # pylint: disable=import-error
+from pydantic import BaseModel, Field  # pylint: disable=import-error
 
 from app.config import get_settings
 from app.models.requests import ApiKeyRequest, ForgotPasswordRequest, LoginRequest, RefreshRequest, RegisterRequest
@@ -21,12 +23,25 @@ from app.services.usage import get_usage_snapshot
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+_DESKTOP_SSO_HTML_PATH = Path(__file__).resolve().parent.parent / "templates" / "desktop_sso.html"
+
 
 @router.get("/", include_in_schema=False)
 async def auth_info() -> dict:
     """Auth module info; use POST /login, /register, /api-key, etc."""
-    return {"auth": "ok", "endpoints": ["login", "register", "api-key", "desktop-handoff", "refresh", "oauth/google", "oauth/apple"]}
-
+    return {
+        "auth": "ok",
+        "endpoints": [
+            "login",
+            "register",
+            "api-key",
+            "desktop-handoff",
+            "desktop-sso",
+            "refresh",
+            "oauth/google",
+            "oauth/apple",
+        ],
+    }
 
 def _default_usage(tier: str = "free") -> dict:
     """Return default usage snapshot when DB is unavailable."""
@@ -172,6 +187,134 @@ async def poll_desktop_handoff(session_id: str) -> dict:
     if not api_key:
         return {"ready": False}
     return {"ready": True, "api_key": api_key}
+
+
+def _is_valid_desktop_redirect(uri: str) -> bool:
+    """Allow localhost callbacks and Live Translate https hosts only."""
+    try:
+        parsed = urllib.parse.urlparse(uri)
+        host = (parsed.hostname or "").lower()
+        if host in ("localhost", "127.0.0.1"):
+            return parsed.scheme == "http"
+        if parsed.scheme != "https":
+            return False
+        trusted = (
+            "livetranslate.app",
+            "www.livetranslate.app",
+            "livetranslate.net",
+            "www.livetranslate.net",
+        )
+        return host in trusted or any(host.endswith("." + t) for t in trusted)
+    except Exception:
+        return False
+
+
+async def _ensure_user_api_key(sb, user_row: dict) -> str:
+    """Return existing users.api_key or provision one."""
+    existing = (user_row.get("api_key") or "").strip()
+    if existing:
+        return existing
+    api_key = secrets.token_urlsafe(32)
+    await sb.table("users").update({"api_key": api_key}).eq("id", user_row["id"]).execute()
+    return api_key
+
+
+class DesktopSsoCompleteRequest(BaseModel):
+    """Complete desktop browser sign-in without relying on Wix page code."""
+
+    session_id: str = Field(min_length=16)
+    redirect_uri: str | None = None
+    email: str | None = None
+    password: str | None = None
+    api_key: str | None = None
+
+
+@router.get("/desktop-sso", response_class=HTMLResponse, include_in_schema=False)
+async def desktop_sso_page() -> HTMLResponse:
+    """
+    Browser sign-in bridge for the desktop app.
+
+    Wix ``/app-auth`` on production is a static marketing page (Git publish targets a
+    different site), so the app opens this backend page instead. On success the page
+    redirects to ``redirect_uri?api_key=...`` and stores a handoff for polling.
+    """
+    if not _DESKTOP_SSO_HTML_PATH.is_file():
+        raise HTTPException(status_code=500, detail="desktop_sso template missing")
+    return HTMLResponse(_DESKTOP_SSO_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@router.post("/desktop-sso/complete", status_code=status.HTTP_200_OK)
+async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
+    """Validate credentials / API key, store handoff, return redirect URL."""
+    from app.services.desktop_handoff import put_handoff
+
+    session_id = body.session_id.strip()
+    redirect_uri = (body.redirect_uri or "").strip()
+    if redirect_uri and not _is_valid_desktop_redirect(redirect_uri):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid redirect_uri")
+
+    sb = await get_supabase()
+    api_key: str | None = None
+
+    pasted = (body.api_key or "").strip()
+    if pasted:
+        result = await sb.table("users").select("*").eq("api_key", pasted).maybe_single().execute()
+        if not result or not result.data:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        api_key = pasted
+    elif body.email and body.password:
+        try:
+            resp = await sb.auth.sign_in_with_password(
+                {"email": body.email.strip(), "password": body.password}
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password",
+            ) from exc
+        if resp.user is None or resp.session is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login failed")
+        result = (
+            await sb.table("users")
+            .select("*")
+            .eq("supabase_uid", resp.user.id)
+            .maybe_single()
+            .execute()
+        )
+        if not result or not result.data:
+            # Match /login auto-create path for web-registered users
+            insert = (
+                await sb.table("users")
+                .insert(
+                    {
+                        "supabase_uid": resp.user.id,
+                        "email": body.email.strip(),
+                        "tier": "free",
+                        "api_key": secrets.token_urlsafe(32),
+                    }
+                )
+                .execute()
+            )
+            if not insert.data:
+                raise HTTPException(status_code=500, detail="Could not create user")
+            user_row = insert.data[0] if isinstance(insert.data, list) else insert.data
+        else:
+            user_row = result.data
+        api_key = await _ensure_user_api_key(sb, user_row)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide email/password or api_key",
+        )
+
+    put_handoff(session_id, api_key)
+    logger.info("Desktop SSO complete", session_prefix=session_id[:8])
+
+    out: dict = {"ok": True, "api_key": api_key}
+    if redirect_uri:
+        sep = "&" if "?" in redirect_uri else "?"
+        out["redirect"] = f"{redirect_uri}{sep}api_key={urllib.parse.quote(api_key, safe='')}"
+    return out
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)

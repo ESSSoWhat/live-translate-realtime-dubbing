@@ -695,7 +695,7 @@ class _WixSsoWorker(QThread):
         sso_url = self._settings.get_wix_sso_entry_url(
             redirect_uri, desktop_session=desktop_session
         )
-        logger.info("Opening livetranslate.net login", url_preview=sso_url[:120])
+        logger.info("Opening desktop SSO bridge", url_preview=sso_url[:120])
 
         try:
             webbrowser.open(sso_url)
@@ -707,26 +707,31 @@ class _WixSsoWorker(QThread):
         logger.info("Waiting for Wix SSO (handoff poll + localhost callback)…")
         result = None
         remaining = 300.0
-        while remaining > 0 and not self.isInterruptionRequested():
-            # Preferred: backend handoff (Wix posts key; no localhost redirect required)
-            try:
-                with httpx.Client(timeout=5.0) as client:
+        # Prefer short non-blocking polls. wait_for_token must not starve handoff checks —
+        # Wix cannot redirect to localhost, so backend handoff is the real path.
+        with httpx.Client(timeout=5.0) as client:
+            while remaining > 0 and not self.isInterruptionRequested():
+                try:
                     r = client.get(
                         f"{self._base_url}/api/v1/auth/desktop-handoff/{desktop_session}"
                     )
-                if r.status_code == 200:
-                    payload = r.json()
-                    if payload.get("ready") and payload.get("api_key"):
-                        result = {"api_key": payload["api_key"]}
-                        break
-            except Exception as exc:
-                logger.debug("Handoff poll error", error=str(exc))
+                    if r.status_code == 200:
+                        payload = r.json()
+                        if payload.get("ready") and payload.get("api_key"):
+                            result = {"api_key": payload["api_key"]}
+                            logger.info(
+                                "Wix SSO handoff received",
+                                session_prefix=desktop_session[:8],
+                            )
+                            break
+                except Exception as exc:
+                    logger.debug("Handoff poll error", error=str(exc))
 
-            # Fallback: localhost redirect from browser
-            result = server.wait_for_token(timeout=min(1.0, remaining))
-            if result is not None:
-                break
-            remaining -= 1.0
+                # Fallback: localhost redirect (often blocked by Wix)
+                result = server.wait_for_token(timeout=0.5)
+                if result is not None:
+                    break
+                remaining -= 0.5
         server.stop()
 
         if not result:
@@ -1007,14 +1012,20 @@ class LoginDialog(QDialog):
     def _on_wix_sso_finished(self) -> None:
         if self._cancel_wait_btn is not None:
             self._cancel_wait_btn.hide()
+        # Always clear busy if the dialog is still open (error/cancel/timeout).
+        # Success calls accept() which closes the dialog.
+        if self.isVisible():
+            self._set_busy(False)
 
     def _on_wix_sso_success(self, data: dict) -> None:
         """Handle successful Wix SSO sign-in."""
         if self._cancel_wait_btn is not None:
             self._cancel_wait_btn.hide()
         api_key = data.get("_api_key", "")
-        if api_key:
-            self._settings.set_auth_tokens(api_key, "")
+        if not api_key:
+            self._show_error("No API key received from the website. Please try again.")
+            return
+        self._settings.set_auth_tokens(api_key, "")
         user_id = str(data.get("user_id", ""))
         tier = str(data.get("tier", "free"))
         self._settings.set_cached_user_info(user_id, tier)
@@ -1024,7 +1035,11 @@ class LoginDialog(QDialog):
             "email": data.get("email", ""),
             "tier": tier,
             "usage": usage,
+            "access_token": api_key,
+            "refresh_token": "",
         }
+        logger.info("Wix SSO login accepted", user_id=user_id or "(unknown)", tier=tier)
+        self._set_busy(False)
         self.accept()
 
     def _on_wix_sso_error(self, message: str) -> None:
