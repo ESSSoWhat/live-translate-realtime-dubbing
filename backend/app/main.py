@@ -131,7 +131,8 @@ def create_app() -> FastAPI:
 
     @application.get("/health")
     async def health() -> dict:
-        return {"status": "ok"}
+        # build marker — bump when verifying Railway has the latest image
+        return {"status": "ok", "build": "clone-multipart-v2"}
 
     return application
 
