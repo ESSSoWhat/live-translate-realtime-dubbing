@@ -80,29 +80,40 @@ $w.onReady(async function () {
         if (storedSession) {
             try { sessionStorage.removeItem('live_translate_session_id'); } catch (e) { /* ignore */ }
         }
-        if (sessionForPost) {
-            setStatus('Signing you in to the app...');
-            const handoffResult = await storeDesktopHandoff(sessionForPost, apiKey);
-            if (handoffResult && handoffResult.stored) {
-                setStatus('✓ Signed in! You can return to the Live Translate app — it will continue automatically.');
-            } else {
-                setStatus('Could not sign in automatically. Copy your API key below and paste it into the app.');
-                showKey(apiKey);
-                try {
-                    $w('#copyButton').onClick(() => {
-                        wixWindowFrontend.copyToClipboard(apiKey);
-                        setStatus('API key copied!');
-                    });
-                } catch (e) { /* ignore */ }
-            }
-            return;
-        }
-
         const storedUri = (typeof sessionStorage !== 'undefined') ? sessionStorage.getItem('live_translate_redirect_uri') : null;
         const uriForRedirect = query.redirect_uri || storedUri;
         if (storedUri) {
             try { sessionStorage.removeItem('live_translate_redirect_uri'); } catch (e) { /* ignore */ }
         }
+
+        // Prefer backend handoff (Wix often blocks navigation to localhost).
+        // Still attempt localhost redirect afterward so the browser "returns" when allowed.
+        if (sessionForPost) {
+            setStatus('Signing you in to the app...');
+            const handoffResult = await storeDesktopHandoff(sessionForPost, apiKey);
+            if (handoffResult && handoffResult.stored) {
+                setStatus('✓ Signed in! Returning to the Live Translate app…');
+                if (uriForRedirect && isValidRedirectUri(uriForRedirect)) {
+                    const separator = uriForRedirect.includes('?') ? '&' : '?';
+                    const finalUrl = `${uriForRedirect}${separator}api_key=${encodeURIComponent(apiKey)}`;
+                    setTimeout(() => {
+                        wixLocationFrontend.to(finalUrl);
+                        setTimeout(() => showCompleteSignInFallback(finalUrl), 1500);
+                    }, 300);
+                }
+                return;
+            }
+            setStatus('Could not sign in automatically. Copy your API key below and paste it into the app.');
+            showKey(apiKey);
+            try {
+                $w('#copyButton').onClick(() => {
+                    wixWindowFrontend.copyToClipboard(apiKey);
+                    setStatus('API key copied!');
+                });
+            } catch (e) { /* ignore */ }
+            return;
+        }
+
         if (uriForRedirect && isValidRedirectUri(uriForRedirect)) {
             const separator = uriForRedirect.includes('?') ? '&' : '?';
             const finalUrl = `${uriForRedirect}${separator}api_key=${encodeURIComponent(apiKey)}`;

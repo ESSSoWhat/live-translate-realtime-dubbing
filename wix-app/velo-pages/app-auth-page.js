@@ -1,7 +1,8 @@
 /**
  * Wix Velo Page Code for /app-auth (PUBLIC — not Members Only)
  *
- * Desktop SSO entry: forwards redirect_uri + session_id to /api-key.
+ * Desktop SSO entry: persist session_id + redirect_uri across Wix login
+ * (query params are often stripped), then forward to /api-key.
  */
 
 import wixLocationFrontend from 'wix-location-frontend';
@@ -24,7 +25,15 @@ $w.onReady(function () {
     const query = wixLocationFrontend.query;
     const redirectUri = query.redirect_uri;
     const sessionId = query.session_id;
-    const apiKeyPath = '/api-key'; // Must match your api-key page slug
+    const apiKeyPath = '/api-key';
+
+    // Survive Members login redirect (query string is often dropped)
+    if (sessionId && typeof sessionId === 'string') {
+        try { sessionStorage.setItem('live_translate_session_id', sessionId); } catch (e) { /* ignore */ }
+    }
+    if (redirectUri && isValidRedirectUri(redirectUri)) {
+        try { sessionStorage.setItem('live_translate_redirect_uri', redirectUri); } catch (e) { /* ignore */ }
+    }
 
     const params = [];
     if (sessionId) params.push('session_id=' + encodeURIComponent(sessionId));
