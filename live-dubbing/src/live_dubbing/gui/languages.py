@@ -16,6 +16,7 @@ SUPPORTED_LANGUAGES = [
     ("hi", "Hindi"),
     ("vi", "Vietnamese"),
     ("tl", "Filipino (Tagalog)"),
+    ("kk", "Kazakh"),
 ]
 
 # Source languages include auto-detect

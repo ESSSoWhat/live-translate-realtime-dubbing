@@ -57,12 +57,14 @@ class TestLanguages:
         assert not is_language_supported("xx")
 
     def test_all_supported_languages(self):
-        """Verify all 11 languages are supported."""
+        """Verify all supported languages are listed."""
         from live_dubbing.gui.languages import SUPPORTED_LANGUAGES
 
-        expected_codes = ["en", "es", "ja", "ko", "zh", "id", "th", "ru", "hi", "vi", "tl"]
+        expected_codes = [
+            "en", "es", "ja", "ko", "zh", "id", "th", "ru", "hi", "vi", "tl", "kk",
+        ]
         actual_codes = [code for code, name in SUPPORTED_LANGUAGES]
 
-        assert len(SUPPORTED_LANGUAGES) == 11
+        assert len(SUPPORTED_LANGUAGES) == 12
         for code in expected_codes:
             assert code in actual_codes

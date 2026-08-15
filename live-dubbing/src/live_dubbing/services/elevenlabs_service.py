@@ -82,6 +82,7 @@ class ElevenLabsService:
     # Supported languages
     SUPPORTED_LANGUAGES = {
         "en": "English",
+        "es": "Spanish",
         "ja": "Japanese",
         "ko": "Korean",
         "zh": "Chinese",
@@ -91,6 +92,7 @@ class ElevenLabsService:
         "hi": "Hindi",
         "vi": "Vietnamese",
         "tl": "Filipino",
+        "kk": "Kazakh",
     }
 
     def __init__(self, api_key: str, openai_api_key: str | None = None) -> None:
@@ -282,6 +284,7 @@ class ElevenLabsService:
     # Map our language codes to Google Translate codes
     _GOOGLE_LANG_MAP: dict[str, str] = {
         "en": "en",
+        "es": "es",
         "ja": "ja",
         "ko": "ko",
         "zh": "zh-CN",
@@ -291,6 +294,7 @@ class ElevenLabsService:
         "hi": "hi",
         "vi": "vi",
         "tl": "tl",
+        "kk": "kk",
     }
 
     async def translate_text(self, text: str, target_language: str) -> str:

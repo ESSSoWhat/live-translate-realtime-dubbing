@@ -95,6 +95,7 @@ class SupportedLanguage(Enum):
     HINDI = "hi"
     VIETNAMESE = "vi"
     FILIPINO = "tl"
+    KAZAKH = "kk"
 
     @classmethod
     def get_display_name(cls, code: str) -> str:
@@ -111,6 +112,7 @@ class SupportedLanguage(Enum):
             "hi": "Hindi",
             "vi": "Vietnamese",
             "tl": "Filipino (Tagalog)",
+            "kk": "Kazakh",
             "auto": "Auto-detect",
         }
         return names.get(code, code)

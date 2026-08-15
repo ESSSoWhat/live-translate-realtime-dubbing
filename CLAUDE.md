@@ -133,7 +133,7 @@ AsyncWorker (QThread) runs the orchestrator's async loop. GUI communicates via `
 
 ## Supported Languages
 
-en, ja, ko, zh (Mandarin), id, th, ru, hi, vi, tl (Filipino/Tagalog)
+en, ja, ko, zh (Mandarin), id, th, ru, hi, vi, tl (Filipino/Tagalog), kk (Kazakh), es (Spanish)
 
 ## Environment Variables
 
