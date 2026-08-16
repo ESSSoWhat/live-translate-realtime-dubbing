@@ -7,6 +7,10 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 class ApiConfig {
   ApiConfig._();
 
+  /// Web OAuth client (Google Cloud). Used as serverClientId for Android ID tokens.
+  static const String defaultGoogleWebClientId =
+      '683320997088-mi3jnr3lm66ftt0ccurqgnkvmf2fvv9v.apps.googleusercontent.com';
+
   static String? _baseUrl;
   static String? _qonversionProjectKey;
   static String? _googleWebClientId;
@@ -31,11 +35,9 @@ class ApiConfig {
       'QONVERSION_PROJECT_KEY',
       defaultValue: '',
     );
-    final webId = const String.fromEnvironment(
+    const webId = String.fromEnvironment(
       'GOOGLE_WEB_CLIENT_ID',
-      // Default Web OAuth client for Live Translate (same project as Android OAuth).
-      defaultValue:
-          '683320997088-mi3jnr3lm66ftt0ccurqgnkvmf2fvv9v.apps.googleusercontent.com',
+      defaultValue: defaultGoogleWebClientId,
     );
     String resolved = webId;
     if (resolved.isEmpty) {
@@ -46,7 +48,10 @@ class ApiConfig {
         // Platform not available (e.g. web)
       }
     }
-    _googleWebClientId = resolved.isEmpty ? null : resolved;
+    if (resolved.isEmpty) {
+      resolved = defaultGoogleWebClientId;
+    }
+    _googleWebClientId = resolved;
     _agoraAppId = const String.fromEnvironment('AGORA_APP_ID', defaultValue: '');
   }
 
@@ -66,6 +71,10 @@ class ApiConfig {
           ? _qonversionProjectKey
           : null;
 
-  /// Web client ID for Google Sign-In (required on Android for Supabase ID token verification).
-  static String? get googleWebClientId => _googleWebClientId;
+  /// Web client ID for Google Sign-In (required on Android for ID token verification).
+  static String get googleWebClientId {
+    final id = _googleWebClientId;
+    if (id != null && id.isNotEmpty) return id;
+    return defaultGoogleWebClientId;
+  }
 }

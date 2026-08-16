@@ -21,10 +21,7 @@ class SsoService {
 
   GoogleSignIn get _googleSignIn {
     final serverClientId = ApiConfig.googleWebClientId;
-    if (serverClientId != null && serverClientId.isNotEmpty) {
-      return GoogleSignIn(scopes: ['email', 'openid'], serverClientId: serverClientId);
-    }
-    return GoogleSignIn(scopes: ['email', 'openid']);
+    return GoogleSignIn(scopes: ['email', 'openid'], serverClientId: serverClientId);
   }
 
   String _generateNonce([int length = 32]) {
@@ -42,23 +39,16 @@ class SsoService {
   }
 
   Future<Map<String, dynamic>> signInWithGoogle() async {
-    if (Platform.isAndroid &&
-        (ApiConfig.googleWebClientId == null || ApiConfig.googleWebClientId!.isEmpty)) {
-      throw SsoException(
-        'Google Sign-In is not configured. Set GOOGLE_WEB_CLIENT_ID to your Web client ID '
-        'from Google Cloud, and add your app SHA-1/SHA-256 to the OAuth client.',
-      );
-    }
-    final account = await _googleSignIn.signIn();
-    if (account == null) {
-      throw SsoException('Google sign-in cancelled', cancelled: true);
-    }
-    final googleAuth = await account.authentication;
-    final idToken = googleAuth.idToken;
-    if (idToken == null) {
-      throw SsoException('Failed to get Google ID token');
-    }
     try {
+      final account = await _googleSignIn.signIn();
+      if (account == null) {
+        throw SsoException('Google sign-in cancelled', cancelled: true);
+      }
+      final googleAuth = await account.authentication;
+      final idToken = googleAuth.idToken;
+      if (idToken == null) {
+        throw SsoException('Failed to get Google ID token');
+      }
       final body = await _api.loginWithGoogleIdToken(idToken);
       await _auth.saveFromAuthResponse(body);
       if (QonversionService.isAvailable) {
@@ -66,15 +56,20 @@ class SsoService {
         if (userId != null) await QonversionService.identify(userId);
       }
       return body;
+    } on SsoException {
+      rethrow;
     } on PlatformException catch (e) {
       if (e.code == 'sign_in_failed' &&
           (e.message?.contains('ApiException: 10') ?? false)) {
         throw SsoException(
-          'Google Sign-In is misconfigured. Add your app SHA-1 to the Android OAuth '
-          'client in Google Cloud Console. See android/README.md.',
+          'Google Sign-In is misconfigured (error 10). In Google Cloud Console, '
+          'add an Android OAuth client for package '
+          'app.livetranslate.live_translate_mobile with SHA-1 '
+          '9D:CE:CE:66:A3:E1:5D:46:07:08:75:16:51:20:AB:1C:99:4D:5E:B1 '
+          '(see mobile/docs/GOOGLE_SIGNIN_ANDROID.md).',
         );
       }
-      rethrow;
+      throw SsoException(e.message ?? 'Google sign-in failed');
     } catch (e) {
       throw _wrapSsoError(e, 'Google');
     }
