@@ -15,6 +15,13 @@ class AppSettings {
   static const _kCaptionOpacity = 'caption_opacity';
   static const _kAutoClone = 'auto_clone_on_start';
   static const _kAutoCloneSeconds = 'auto_clone_seconds';
+  static const _kTranslateMode = 'translate_mode';
+
+  /// In-app mic captions only (no floating bubble).
+  static const String modeMic = 'mic';
+
+  /// Mic + floating overlay over other apps (Android).
+  static const String modeLive = 'live';
 
   static SharedPreferences? _prefs;
 
@@ -102,5 +109,17 @@ class AppSettings {
 
   static Future<void> setAutoCloneSeconds(int value) async {
     await _p.setInt(_kAutoCloneSeconds, value.clamp(3, 15));
+  }
+
+  /// [modeMic] or [modeLive].
+  static String get translateMode {
+    final v = _p.getString(_kTranslateMode);
+    if (v == modeLive) return modeLive;
+    return modeMic;
+  }
+
+  static Future<void> setTranslateMode(String mode) async {
+    if (mode != modeMic && mode != modeLive) return;
+    await _p.setString(_kTranslateMode, mode);
   }
 }

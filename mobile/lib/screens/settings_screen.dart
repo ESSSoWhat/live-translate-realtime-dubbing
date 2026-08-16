@@ -167,11 +167,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Padding(
             padding: EdgeInsets.all(16),
             child: Text(
-              'Android mic mode matches the desktop Microphone experience '
-              '(languages, voices, captions, overlay). System/app audio capture '
-              'and “play as microphone” (VB-Cable) are Windows desktop only. '
-              'YouTube/app playback capture is planned via MediaProjection '
-              '(see docs/MEDIA_PROJECTION_PHASE2.md).',
+              'Modes: Mic Translate (in-app captions) and Live Translate '
+              '(mic + overlay bubble over other apps). '
+              'System/app audio capture and “play as microphone” (VB-Cable) are '
+              'Windows desktop only. YouTube/app playback capture is planned via '
+              'MediaProjection (see docs/MEDIA_PROJECTION_PHASE2.md).',
               style: TextStyle(fontSize: 13),
             ),
           ),

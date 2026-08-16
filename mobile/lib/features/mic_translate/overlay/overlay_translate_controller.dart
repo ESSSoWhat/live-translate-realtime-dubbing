@@ -47,9 +47,9 @@ class OverlayTranslateController {
   static bool get _android =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
-  Future<OverlayStartResult> start() async {
+  Future<OverlayStartResult> start({bool showOverlay = true}) async {
     if (_active) {
-      if (!_overlayShown && _android) {
+      if (showOverlay && !_overlayShown && _android) {
         final shown = await _tryShowOverlay();
         return OverlayStartResult(started: true, overlayShown: shown);
       }
@@ -74,7 +74,7 @@ class OverlayTranslateController {
     _ensureMainBridge();
 
     var overlayShown = false;
-    if (_android) {
+    if (showOverlay && _android) {
       overlayShown = await _tryShowOverlay();
     }
 

@@ -37,9 +37,10 @@ Without `--dart-define=API_BASE_URL=...`, the app targets **localhost** (see abo
 
 Android aims to match the desktop **Microphone / Mic Translate** experience:
 
+- **Mic Translate** — microphone → captions in-app
+- **Live Translate** — same mic pipeline + floating overlay over other apps
 - From / To languages, voice select / clone / import / rename / delete
-- Live Source + Translation panes, mute TTS, settings (volume, caption style, auto-clone)
-- Android overlay captions bubble
+- Mute TTS, settings (volume, caption style, auto-clone)
 
 **Not on Android:** system/app loopback, VB-Cable play-as-mic. **Planned separately:** MediaProjection media-audio capture — [docs/MEDIA_PROJECTION_PHASE2.md](docs/MEDIA_PROJECTION_PHASE2.md).
 
@@ -49,7 +50,7 @@ The Android app is standalone: it uses the Live Translate backend for translatio
 
 ## Overlay captions (Android)
 
-Starting translation can show a bubble over other apps (status, captions, mute, stop). See [docs/OVERLAY_TRANSLATE.md](docs/OVERLAY_TRANSLATE.md) for permission setup, the mic-only limitation (no YouTube media capture), and the required background notification.
+**Live Translate** mode shows a bubble over other apps (status, captions, mute, stop). **Mic Translate** keeps captions in the app only. See [docs/OVERLAY_TRANSLATE.md](docs/OVERLAY_TRANSLATE.md) for permission setup, the mic-only audio limitation (no YouTube media capture), and the required background notification.
 
 ## Google Sign-In (SSO)
 

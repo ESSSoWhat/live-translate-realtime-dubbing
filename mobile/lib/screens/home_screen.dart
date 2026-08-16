@@ -44,11 +44,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   StreamSubscription<void>? _paywallSub;
   StreamSubscription<bool>? _activeSub;
   bool _isToggling = false;
+  /// [AppSettings.modeMic] or [AppSettings.modeLive].
+  String _mode = AppSettings.modeMic;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _mode = AppSettings.translateMode;
     _sourceLanguage = AppSettings.sourceLanguage;
     _targetLanguage = AppSettings.targetLanguage;
     if (!kSourceLanguages.any((l) => l.code == _sourceLanguage)) {
@@ -121,9 +124,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _translating) {
+    if (state == AppLifecycleState.resumed &&
+        _translating &&
+        _mode == AppSettings.modeLive) {
       unawaited(_overlayController.retryOverlayIfNeeded());
     }
+  }
+
+  void _setMode(String mode) {
+    if (_translating || (mode != AppSettings.modeMic && mode != AppSettings.modeLive)) {
+      return;
+    }
+    setState(() => _mode = mode);
+    unawaited(AppSettings.setTranslateMode(mode));
   }
 
   void _showPaywall() {
@@ -241,7 +254,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await _maybeAutoClone();
       if (!mounted) return;
       if (mounted) setState(() => _status = 'Starting…');
-      final result = await _overlayController.start();
+      final useOverlay = _mode == AppSettings.modeLive && Platform.isAndroid;
+      final result = await _overlayController.start(showOverlay: useOverlay);
       if (!mounted) return;
       setState(() {
         _translating = result.started;
@@ -249,12 +263,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _status = 'Could not start — check microphone permission';
         }
       });
-      if (result.started && !result.overlayShown && Platform.isAndroid) {
+      if (result.started &&
+          useOverlay &&
+          !result.overlayShown &&
+          Platform.isAndroid) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Translation started. Enable “Display over other apps” for Live Translate '
-              'to show the caption bubble over other apps.',
+              'Live Translate is running. Enable “Display over other apps” '
+              'to show the caption bubble on top of other apps.',
             ),
             duration: Duration(seconds: 5),
           ),
@@ -386,6 +403,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             children: [
               const UsageCard(),
               const SizedBox(height: 12),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment<String>(
+                    value: AppSettings.modeMic,
+                    label: Text('Mic Translate'),
+                    icon: Icon(Icons.mic, size: 18),
+                  ),
+                  ButtonSegment<String>(
+                    value: AppSettings.modeLive,
+                    label: Text('Live Translate'),
+                    icon: Icon(Icons.picture_in_picture_alt, size: 18),
+                  ),
+                ],
+                selected: {_mode},
+                onSelectionChanged: _translating
+                    ? null
+                    : (next) {
+                        if (next.isEmpty) return;
+                        _setMode(next.first);
+                      },
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _mode == AppSettings.modeLive
+                    ? 'Live: mic + overlay bubble while you use other apps'
+                    : 'Mic: capture your microphone; captions stay in this app',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   _languageDropdown(
@@ -460,7 +508,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const SizedBox(height: 12),
               FilledButton(
                 onPressed: _toggleTranslate,
-                child: Text(_translating ? 'Stop' : 'Start translation'),
+                child: Text(
+                  _translating
+                      ? 'Stop'
+                      : (_mode == AppSettings.modeLive
+                          ? 'Start Live Translate'
+                          : 'Start Mic Translate'),
+                ),
               ),
               const SizedBox(height: 8),
               TextButton(
