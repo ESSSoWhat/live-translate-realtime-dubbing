@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
 /// Separate Flutter entry point for the Android overlay bubble.
-@pragma('vm:entry-point')
-void overlayMain() {
+/// Prefer calling [overlayMain] from `main.dart` so the VM entry-point is linked.
+void runOverlayTranslateApp() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const OverlayTranslateApp());
 }
@@ -87,9 +87,17 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     final next = !_expanded;
     setState(() => _expanded = next);
     if (next) {
-      await FlutterOverlayWindow.resizeOverlay(_expandedWidth, _expandedHeight);
+      await FlutterOverlayWindow.resizeOverlay(
+        _expandedWidth,
+        _expandedHeight,
+        true,
+      );
     } else {
-      await FlutterOverlayWindow.resizeOverlay(_collapsedSize, _collapsedSize);
+      await FlutterOverlayWindow.resizeOverlay(
+        _collapsedSize,
+        _collapsedSize,
+        true,
+      );
     }
   }
 
