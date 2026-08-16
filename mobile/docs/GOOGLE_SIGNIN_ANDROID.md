@@ -9,7 +9,19 @@ ApiException **10** = **DEVELOPER_ERROR**: Google does not recognize your app. F
 | **Package name** | `app.livetranslate.live_translate_mobile` |
 | **SHA-1 (debug)** | `9D:CE:CE:66:A3:E1:5D:46:07:08:75:16:51:20:AB:1C:99:4D:5E:B1` |
 | **SHA-1 (no colons)** | `9DCECE66A3E15D46070875165120AB1C994D5EB1` (use if Console rejects colons) |
-| **Web client ID** | `683320997088-mi3jnr3lm66ftt0ccurqgnkvmf2fvv9v.apps.googleusercontent.com` |
+| **Web client ID** | `683320997088-51usimqmqv6uki2531hoq2l9m900ar7l.apps.googleusercontent.com` (from `google-services.json`) |
+| **Android OAuth client** | Must exist in project `livetranslate-488616` with package + SHA-1 below |
+
+## Preferred fix via Firebase (recommended)
+
+1. Open [Firebase Console](https://console.firebase.google.com/) → project **livetranslate-488616**.
+2. Project settings (gear) → Your apps → Android app `app.livetranslate.live_translate_mobile`.
+3. **Add fingerprint** → paste SHA-1:  
+   `9D:CE:CE:66:A3:E1:5D:46:07:08:75:16:51:20:AB:1C:99:4D:5E:B1`
+4. Download the new `google-services.json` and replace `mobile/android/app/google-services.json`.
+5. Wait 5–10 minutes, uninstall the app, rebuild/reinstall.
+
+Your current `google-services.json` has **no Android OAuth client** (`client_type: 1`) — only a Web client. Adding the SHA-1 in Firebase creates that link and clears error 10.
 
 ## Steps in Google Cloud Console
 
@@ -33,7 +45,7 @@ ApiException **10** = **DEVELOPER_ERROR**: Google does not recognize your app. F
    - Wait 5–10 minutes for changes to propagate.
    - Force‑stop the app (or uninstall and reinstall), then run again with:
      ```bash
-     flutter run -d <device> --dart-define=GOOGLE_WEB_CLIENT_ID=683320997088-mi3jnr3lm66ftt0ccurqgnkvmf2fvv9v.apps.googleusercontent.com
+     flutter run -d <device> --dart-define=GOOGLE_WEB_CLIENT_ID=683320997088-51usimqmqv6uki2531hoq2l9m900ar7l.apps.googleusercontent.com
      ```
 
 ## Verify

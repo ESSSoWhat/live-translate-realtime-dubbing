@@ -66,7 +66,9 @@ class SsoService {
           'add an Android OAuth client for package '
           'app.livetranslate.live_translate_mobile with SHA-1 '
           '9D:CE:CE:66:A3:E1:5D:46:07:08:75:16:51:20:AB:1C:99:4D:5E:B1 '
-          '(see mobile/docs/GOOGLE_SIGNIN_ANDROID.md).',
+          'in Firebase project livetranslate-488616 '
+          '(Project settings → Your apps → Add fingerprint). '
+          'See mobile/docs/GOOGLE_SIGNIN_ANDROID.md.',
         );
       }
       throw SsoException(e.message ?? 'Google sign-in failed');

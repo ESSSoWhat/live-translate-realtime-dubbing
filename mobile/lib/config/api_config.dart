@@ -7,9 +7,9 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 class ApiConfig {
   ApiConfig._();
 
-  /// Web OAuth client (Google Cloud). Used as serverClientId for Android ID tokens.
+  /// Web OAuth client from Firebase `google-services.json` (client_type 3).
   static const String defaultGoogleWebClientId =
-      '683320997088-mi3jnr3lm66ftt0ccurqgnkvmf2fvv9v.apps.googleusercontent.com';
+      '683320997088-51usimqmqv6uki2531hoq2l9m900ar7l.apps.googleusercontent.com';
 
   static String? _baseUrl;
   static String? _qonversionProjectKey;

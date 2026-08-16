@@ -72,14 +72,14 @@ jobs:
           cd mobile
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://livetranslatedubtool-production.up.railway.app/ \
-            --dart-define=GOOGLE_WEB_CLIENT_ID=683320997088-mi3jnr3lm66ftt0ccurqgnkvmf2fvv9v.apps.googleusercontent.com
+            --dart-define=GOOGLE_WEB_CLIENT_ID=683320997088-51usimqmqv6uki2531hoq2l9m900ar7l.apps.googleusercontent.com
 
       - name: Build App Bundle
         run: |
           cd mobile
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://livetranslatedubtool-production.up.railway.app/ \
-            --dart-define=GOOGLE_WEB_CLIENT_ID=683320997088-mi3jnr3lm66ftt0ccurqgnkvmf2fvv9v.apps.googleusercontent.com
+            --dart-define=GOOGLE_WEB_CLIENT_ID=683320997088-51usimqmqv6uki2531hoq2l9m900ar7l.apps.googleusercontent.com
 
       - name: Upload APK and AAB to GitHub Release
         uses: softprops/action-gh-release@v2
