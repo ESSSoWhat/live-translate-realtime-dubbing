@@ -300,8 +300,8 @@ class _VoicePickerBarState extends State<VoicePickerBar> {
           children: [
             Expanded(
               child: DropdownButtonFormField<String>(
-                key: ValueKey(selected),
-                initialValue: _voices.isEmpty ? null : selected,
+                // ignore: deprecated_member_use
+                value: _voices.isEmpty ? null : selected,
                 isExpanded: true,
                 decoration: const InputDecoration(
                   labelText: 'Voice',

@@ -195,6 +195,11 @@ async def transcribe(
         await check_and_record_quota(user["id"], "stt", int(round(duration_seconds)))
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("STT quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     client = _elevenlabs()
     try:
@@ -209,8 +214,8 @@ async def transcribe(
         raise _elevenlabs_upstream_error("Transcription", exc) from exc
 
     return TranscriptionResponse(
-        text=result.text,
-        language_code=result.language_code or language,
+        text=(getattr(result, "text", None) or "").strip(),
+        language_code=(getattr(result, "language_code", None) or language or "auto"),
     )
 
 
@@ -234,11 +239,21 @@ async def synthesize(
         await check_and_record_quota(user["id"], "tts", char_count)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("TTS quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     try:
         await check_and_record_quota(user["id"], "dub", estimated_dub_sec)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Dubbing quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     client = _elevenlabs()
     try:
@@ -321,10 +336,20 @@ async def synthesize_stream(
         await check_and_record_quota(user["id"], "tts", len(text))
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("TTS stream quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
     try:
         await check_and_record_quota(user["id"], "dub", estimated_dub_sec)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Dubbing stream quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
     return StreamingResponse(
         _stream_tts_chunks(
             body.voice_id,
@@ -352,6 +377,11 @@ async def translate(
         await check_and_record_quota(user["id"], "translate", char_count)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Translate quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     cfg = get_settings()
     translated = body.text
@@ -384,14 +414,21 @@ async def translate(
         # Google Translate fallback (e.g. when OpenAI not configured or failed)
         try:
             from deep_translator import GoogleTranslator
+
+            target = body.target_language.strip().lower()
+            # Align app language codes with Google Translate ids.
+            target = {"zh": "zh-CN", "fil": "tl", "iw": "he"}.get(target, target)
             translated = await asyncio.to_thread(
-                GoogleTranslator(source="auto", target=body.target_language.strip().lower()).translate,
+                GoogleTranslator(source="auto", target=target).translate,
                 body.text,
             )
         except Exception as exc:
             logger.error("Google Translate fallback failed", error=str(exc))
 
-    return TranslationResponse(translated_text=translated, source_language=source_lang)
+    return TranslationResponse(
+        translated_text=(translated or "").strip() or body.text,
+        source_language=source_lang or "auto",
+    )
 
 
 # ── Voice Management ─────────────────────────────────────────────────────────

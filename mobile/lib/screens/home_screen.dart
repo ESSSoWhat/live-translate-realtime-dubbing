@@ -51,6 +51,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _sourceLanguage = AppSettings.sourceLanguage;
     _targetLanguage = AppSettings.targetLanguage;
+    if (!kSourceLanguages.any((l) => l.code == _sourceLanguage)) {
+      _sourceLanguage = 'auto';
+    }
+    if (!kSupportedLanguages.any((l) => l.code == _targetLanguage)) {
+      _targetLanguage = 'es';
+    }
     _voiceId = AppSettings.voiceId;
     _muted = AppSettings.muteTtsDefault;
     _translateService = MicTranslateService(
@@ -287,8 +293,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }) {
     return Expanded(
       child: DropdownButtonFormField<String>(
-        key: ValueKey('$label-$value'),
-        initialValue: value,
+        // Controlled selection — `value` keeps swap/settings updates stable.
+        // ignore: deprecated_member_use
+        value: value,
         isExpanded: true,
         decoration: InputDecoration(
           labelText: label,

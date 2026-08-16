@@ -179,7 +179,7 @@ class MicTranslateService {
             _statusController.add('Upgrade required');
             _paywallController.add(null);
           } else {
-            _statusController.add('Error: $e');
+            _statusController.add(_formatPipelineError(e));
           }
         }
         await Future<void>.delayed(_backoff);
@@ -268,6 +268,28 @@ class MicTranslateService {
   }
 }
 
+String _formatPipelineError(Object e) {
+  if (e is DioException) {
+    final code = e.response?.statusCode;
+    final data = e.response?.data;
+    String? detail;
+    if (data is Map && data['detail'] != null) {
+      final d = data['detail'];
+      detail = d is Map ? (d['error']?.toString() ?? d.toString()) : d.toString();
+    } else if (data is String && data.isNotEmpty) {
+      detail = data.length > 160 ? '${data.substring(0, 160)}…' : data;
+    }
+    if (code != null && detail != null) return 'Error $code: $detail';
+    if (code != null) return 'Error $code from API';
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.receiveTimeout ||
+        e.type == DioExceptionType.connectionError) {
+      return 'Network error — check connection / API';
+    }
+  }
+  return 'Error: $e';
+}
+
 /// Remove ASR non-speech markers so TTS only speaks actual words.
 /// Mirrors desktop [strip_non_verbal] (brackets, parenthetical markers, music symbols).
 String stripNonVerbal(String text) {
@@ -278,8 +300,12 @@ String stripNonVerbal(String text) {
   result = result.replaceAll(_asteriskMarkerRe, '');
   result = result.replaceAll(_musicSymbolsRe, '');
   result = result.replaceAll(_anyBracketRe, '');
+  result = result.replaceAll(_emptyBracketRe, '');
   result = result.replaceAll(_ellipsisRe, '');
   result = result.replaceAll(_whitespaceRe, ' ').trim();
+  if (result.isNotEmpty && !_speechRe.hasMatch(result)) {
+    return '';
+  }
   return result;
 }
 
@@ -295,8 +321,7 @@ const _markerBody =
     r'|singing|humming|whistling'
     r'|playing|instrumental'
     r'|intro|outro|transition'
-    r'|video\s*playing|audio\s*playing'
-    r'|♪|♫|🎵|🎶';
+    r'|video\s*playing|audio\s*playing';
 
 final _bracketMarkerRe =
     RegExp(r'\[' + _markerBody + r'\]', caseSensitive: false);
@@ -307,7 +332,9 @@ final _asteriskMarkerRe = RegExp(
   r'|crying|singing|humming|whistling|gasps?|laughs?|sighs?|coughs?)\*',
   caseSensitive: false,
 );
-final _musicSymbolsRe = RegExp(r'[♪♫🎵🎶🎤🎸🎹🎺🎻]+');
-final _anyBracketRe = RegExp(r'\[[^\]]{1,50}\]');
+final _musicSymbolsRe = RegExp(r'[♪♫]+');
+final _anyBracketRe = RegExp(r'\[[^\]]{0,50}\]');
+final _emptyBracketRe = RegExp(r'\[\s*\]|\(\s*\)');
 final _ellipsisRe = RegExp(r'\.{3,}');
 final _whitespaceRe = RegExp(r'\s{2,}');
+final _speechRe = RegExp(r'[0-9A-Za-z\u00C0-\u024F\u0400-\u04FF\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]');
