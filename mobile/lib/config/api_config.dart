@@ -21,12 +21,12 @@ class ApiConfig {
     final String u;
     if (envUrl.isNotEmpty) {
       u = envUrl;
-    } else if (kReleaseMode) {
-      // Store / release builds must hit production (not emulator localhost).
+    } else if (kReleaseMode || Platform.isAndroid) {
+      // Android (debug + release) and all release builds hit production by default.
+      // Google Sign-In otherwise hangs on a dead localhost after the account picker.
+      // Local backend: --dart-define=API_BASE_URL=http://10.0.2.2:8000/ (emulator)
+      // or http://127.0.0.1:8000/ (desktop/iOS simulator).
       u = 'https://livetranslatedubtool-production.up.railway.app';
-    } else if (Platform.isAndroid) {
-      // Android emulator → host machine via 10.0.2.2
-      u = 'http://10.0.2.2:8000';
     } else {
       u = 'http://127.0.0.1:8000';
     }

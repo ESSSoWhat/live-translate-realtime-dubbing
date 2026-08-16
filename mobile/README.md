@@ -11,9 +11,10 @@ Android app for real-time mic translation using the Live Translate backend. Tran
    flutter create . --project-name live_translate_mobile   # if platform folders are missing
    ```
 3. **API base URL** (if you omit `--dart-define=API_BASE_URL=...`):
-   - **Windows / macOS / Linux / iOS simulator:** `http://127.0.0.1:8000`
-   - **Android emulator:** `http://10.0.2.2:8000` (reaches your PC’s localhost)
-   - **Physical phone or production API:** you must pass `--dart-define=API_BASE_URL=http://YOUR_LAN_IP:8000/` or your deployed `https://...` URL.  
+   - **Android (debug + release):** production Railway API (so Google Sign-In works without a local backend)
+   - **Windows / macOS / Linux / iOS simulator (debug):** `http://127.0.0.1:8000`
+   - **Local backend on Android emulator:** `--dart-define=API_BASE_URL=http://10.0.2.2:8000/`
+   - **Physical phone → LAN backend:** `--dart-define=API_BASE_URL=http://YOUR_LAN_IP:8000/`  
    Start the backend: `cd ../backend` → `python -m uvicorn app.main:app --reload`.
 
 ## Run

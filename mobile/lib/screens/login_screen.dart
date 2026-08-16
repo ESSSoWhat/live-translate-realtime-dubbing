@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -44,7 +45,7 @@ class _LoginScreenState extends State<LoginScreen> {
       await _auth.saveFromAuthResponse(body);
       if (QonversionService.isAvailable) {
         final userId = body['user_id'] as String?;
-        if (userId != null) await QonversionService.identify(userId);
+        if (userId != null) unawaited(QonversionService.identify(userId));
       }
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
@@ -54,8 +55,9 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
       setState(() {
         _error = _friendlyAuthError(e);
-        _loading = false;
       });
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -97,15 +99,15 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       if (!mounted) return;
       if (e is SsoException && e.cancelled) {
-        setState(() => _loading = false);
         return;
       }
       setState(() {
         _error = e is SsoException
             ? e.message
             : e.toString().replaceFirst(RegExp(r'^Exception: '), '');
-        _loading = false;
       });
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -123,15 +125,15 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       if (!mounted) return;
       if (e is SsoException && e.cancelled) {
-        setState(() => _loading = false);
         return;
       }
       setState(() {
         _error = e is SsoException
             ? e.message
             : e.toString().replaceFirst(RegExp(r'^Exception: '), '');
-        _loading = false;
       });
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 

@@ -21,7 +21,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final _auth = AuthService();
   final _api = ApiClient();
   final _translateService = MicTranslateService();
@@ -35,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _overlayController = OverlayTranslateController(service: _translateService);
     _statusSub = _translateService.statusStream.listen((s) {
       if (mounted) setState(() => _status = s);
@@ -53,6 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _statusSub?.cancel();
     _paywallSub?.cancel();
     _activeSub?.cancel();
@@ -62,6 +64,13 @@ class _HomeScreenState extends State<HomeScreen> {
     _overlayController.dispose();
     _translateService.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _translating) {
+      unawaited(_overlayController.retryOverlayIfNeeded());
+    }
   }
 
   void _showPaywall() {
@@ -108,27 +117,45 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         return;
       }
+      if (mounted) setState(() => _status = 'Checking access…');
       if (!await _hasPremiumAccess()) {
         if (!mounted) return;
+        setState(() => _status = null);
         _showPaywall();
         return;
       }
+      if (mounted) setState(() => _status = 'Starting…');
       final result = await _overlayController.start();
       if (!mounted) return;
-      setState(() => _translating = result.started);
+      setState(() {
+        _translating = result.started;
+        if (!result.started) {
+          _status = 'Could not start — check microphone permission';
+        }
+      });
       if (result.started && !result.overlayShown) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Overlay unavailable — grant “Display over other apps” to show captions while using other apps.',
+              'Translation started. Enable “Display over other apps” for Live Translate '
+              'to show the caption bubble over other apps.',
             ),
+            duration: Duration(seconds: 5),
           ),
         );
       }
     } catch (e) {
-      if (mounted) setState(() => _translating = false);
+      if (mounted) {
+        setState(() {
+          _translating = false;
+          _status = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start translation: $e')),
+        );
+      }
     } finally {
-      if (mounted) _isToggling = false;
+      _isToggling = false;
     }
   }
 

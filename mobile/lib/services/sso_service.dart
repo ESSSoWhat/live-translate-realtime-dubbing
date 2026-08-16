@@ -19,9 +19,14 @@ class SsoService {
   final _api = ApiClient();
   final _auth = AuthService();
 
-  GoogleSignIn get _googleSignIn {
-    final serverClientId = ApiConfig.googleWebClientId;
-    return GoogleSignIn(scopes: ['email', 'openid'], serverClientId: serverClientId);
+  /// Reuse one client — creating a new [GoogleSignIn] per tap can hang on Android.
+  GoogleSignIn? _googleSignIn;
+
+  GoogleSignIn get _google {
+    return _googleSignIn ??= GoogleSignIn(
+      scopes: const ['email', 'openid'],
+      serverClientId: ApiConfig.googleWebClientId,
+    );
   }
 
   String _generateNonce([int length = 32]) {
@@ -40,11 +45,20 @@ class SsoService {
 
   Future<Map<String, dynamic>> signInWithGoogle() async {
     try {
-      final account = await _googleSignIn.signIn();
+      final account = await _google.signIn().timeout(
+        const Duration(minutes: 2),
+        onTimeout: () => throw SsoException(
+          'Google sign-in timed out. Try again, or check that a Google account '
+          'is signed in on the device.',
+        ),
+      );
       if (account == null) {
         throw SsoException('Google sign-in cancelled', cancelled: true);
       }
-      final googleAuth = await account.authentication;
+      final googleAuth = await account.authentication.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw SsoException('Failed to get Google credentials'),
+      );
       final idToken = googleAuth.idToken;
       if (idToken == null) {
         throw SsoException('Failed to get Google ID token');
@@ -53,11 +67,16 @@ class SsoService {
       await _auth.saveFromAuthResponse(body);
       if (QonversionService.isAvailable) {
         final userId = body['user_id'] as String?;
-        if (userId != null) await QonversionService.identify(userId);
+        // Never block sign-in on billing SDK latency.
+        if (userId != null) {
+          unawaited(QonversionService.identify(userId));
+        }
       }
       return body;
     } on SsoException {
       rethrow;
+    } on TimeoutException catch (e) {
+      throw SsoException(e.message ?? 'Google sign-in timed out');
     } on PlatformException catch (e) {
       if (e.code == 'sign_in_failed' &&
           (e.message?.contains('ApiException: 10') ?? false)) {

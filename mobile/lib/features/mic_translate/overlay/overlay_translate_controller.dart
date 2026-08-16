@@ -47,21 +47,16 @@ class OverlayTranslateController {
 
   Future<OverlayStartResult> start() async {
     if (_active) {
+      if (!_overlayShown && _android) {
+        final shown = await _tryShowOverlay();
+        return OverlayStartResult(started: true, overlayShown: shown);
+      }
       return OverlayStartResult(started: true, overlayShown: _overlayShown);
     }
 
-    var overlayOk = false;
+    // Start capture first so the button never appears to do nothing while
+    // waiting on overlay settings / Play services.
     if (_android) {
-      try {
-        final granted = await FlutterOverlayWindow.isPermissionGranted();
-        if (granted) {
-          overlayOk = true;
-        } else {
-          overlayOk = await FlutterOverlayWindow.requestPermission() ?? false;
-        }
-      } catch (_) {
-        overlayOk = false;
-      }
       await MicForegroundService.start();
     }
 
@@ -75,27 +70,49 @@ class OverlayTranslateController {
     _activeController.add(true);
     _bindServiceStreams();
 
-    if (overlayOk) {
-      try {
-        await FlutterOverlayWindow.showOverlay(
-          height: 72,
-          width: 72,
-          alignment: OverlayAlignment.centerRight,
-          enableDrag: true,
-          overlayTitle: 'Live Translate',
-          overlayContent: 'Translation is running',
-          flag: OverlayFlag.defaultFlag,
-          positionGravity: PositionGravity.auto,
-        );
-        _overlayShown = true;
-        _listenOverlayCommands();
-        await _pushUpdate();
-      } catch (_) {
-        _overlayShown = false;
-      }
+    var overlayShown = false;
+    if (_android) {
+      overlayShown = await _tryShowOverlay();
     }
 
-    return OverlayStartResult(started: true, overlayShown: _overlayShown);
+    return OverlayStartResult(started: true, overlayShown: overlayShown);
+  }
+
+  /// Call when the app resumes so a newly granted overlay permission can attach.
+  Future<bool> retryOverlayIfNeeded() async {
+    if (!_active || _overlayShown || !_android) return _overlayShown;
+    return _tryShowOverlay();
+  }
+
+  /// Shows the bubble if already allowed; otherwise opens the system settings
+  /// page without blocking translation (requestPermission can hang until grant).
+  Future<bool> _tryShowOverlay() async {
+    try {
+      final granted = await FlutterOverlayWindow.isPermissionGranted();
+      if (!granted) {
+        // Open settings; do not await — the Future often never completes until
+        // the user grants permission, which froze Home "Start translation".
+        unawaited(FlutterOverlayWindow.requestPermission());
+        return false;
+      }
+      await FlutterOverlayWindow.showOverlay(
+        height: 72,
+        width: 72,
+        alignment: OverlayAlignment.centerRight,
+        enableDrag: true,
+        overlayTitle: 'Live Translate',
+        overlayContent: 'Translation is running',
+        flag: OverlayFlag.defaultFlag,
+        positionGravity: PositionGravity.auto,
+      );
+      _overlayShown = true;
+      _listenOverlayCommands();
+      await _pushUpdate();
+      return true;
+    } catch (_) {
+      _overlayShown = false;
+      return false;
+    }
   }
 
   Future<void> stop() async {
