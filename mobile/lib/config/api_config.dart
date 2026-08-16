@@ -7,7 +7,7 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 class ApiConfig {
   ApiConfig._();
 
-  /// Web OAuth client from Firebase `google-services.json` (client_type 3).
+  /// Web OAuth client ID (Google Cloud → Credentials → Web application).
   static const String defaultGoogleWebClientId =
       '683320997088-51usimqmqv6uki2531hoq2l9m900ar7l.apps.googleusercontent.com';
 
