@@ -3,7 +3,7 @@
 
 #define MyAppName "Live Translate"
 #ifndef MyAppVersion
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.2.1"
 #endif
 #define MyAppPublisher "Live Translate Team"
 #define MyAppURL "https://github.com/live-translate"
