@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QDockWidget,
 )
 
+from live_dubbing import __version__
 from live_dubbing.audio.playback import get_output_devices
 from live_dubbing.audio.session import AudioSessionInfo
 from live_dubbing.config.settings import AppSettings, ConfigManager
@@ -1115,7 +1116,7 @@ class MainWindow(QMainWindow):
             self,
             "About Live Translate",
             "<h2>Live Translate</h2>"
-            "<p>Version 0.1.0</p>"
+            f"<p>Version {__version__}</p>"
             "<p>Real-time audio translation and voice-cloned dubbing "
             "for Windows applications.</p>"
             "<p>Official website: "
