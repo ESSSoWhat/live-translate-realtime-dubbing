@@ -6,8 +6,8 @@ Real-time audio translation and voice-cloned dubbing. Capture audio, translate w
 
 ## Download
 
-- **Windows:** [Download for Windows](https://github.com/ESSSoWhat/live-translate-realtime-dubbing/releases/latest) (always latest — `LiveTranslate-<version>-Setup.exe`)
-- **Android:** [Download APK](https://github.com/ESSSoWhat/live-translate-realtime-dubbing/releases/latest) (always latest — `app-release.apk`)
+- **Windows:** [Download for Windows](https://github.com/ESSSoWhat/live-translate-realtime-dubbing/releases/latest) (latest release — `LiveTranslate-<version>-Setup.exe`)
+- **Android:** [Download APK](https://github.com/ESSSoWhat/live-translate-realtime-dubbing/releases) (pick the newest release with an `app-release.apk`)
 - **All versions:** [Releases](https://github.com/ESSSoWhat/live-translate-realtime-dubbing/releases)
 
 ## Repository structure
