@@ -87,6 +87,14 @@ class _AuthGateState extends State<AuthGate> {
             ),
           );
         }
+        // Optional: --dart-define=SCREENSHOT=login|home for store listing captures
+        const screenshot = String.fromEnvironment('SCREENSHOT');
+        if (screenshot == 'login') {
+          return const LoginScreen();
+        }
+        if (screenshot == 'home') {
+          return const HomeScreen();
+        }
         if (snapshot.data == true) {
           return const HomeScreen();
         }

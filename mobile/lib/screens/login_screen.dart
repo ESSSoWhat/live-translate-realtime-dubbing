@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -77,7 +78,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString().replaceFirst(RegExp(r'^Exception: '), '');
+        _error = _friendlyAuthError(e);
         _loading = false;
       });
     }
@@ -111,10 +112,30 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString().replaceFirst(RegExp(r'^Exception: '), '');
+        _error = _friendlyAuthError(e);
         _loading = false;
       });
     }
+  }
+
+  String _friendlyAuthError(Object e) {
+    if (e is DioException) {
+      if (e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        return 'Cannot reach the Live Translate API. '
+            'Check your internet connection, or for local testing start the backend '
+            'and use --dart-define=API_BASE_URL=...';
+      }
+      final detail = e.response?.data;
+      if (detail is Map && detail['detail'] != null) {
+        return detail['detail'].toString();
+      }
+      if (e.response?.statusCode == 401) {
+        return 'Invalid API key or credentials. Get a fresh key at www.livetranslate.net/api-key';
+      }
+    }
+    return e.toString().replaceFirst(RegExp(r'^Exception: '), '');
   }
 
   Future<void> _signInWithGoogle() async {

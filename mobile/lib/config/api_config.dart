@@ -2,6 +2,8 @@
 library;
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kReleaseMode;
+
 class ApiConfig {
   ApiConfig._();
 
@@ -15,16 +17,14 @@ class ApiConfig {
     final String u;
     if (envUrl.isNotEmpty) {
       u = envUrl;
+    } else if (kReleaseMode) {
+      // Store / release builds must hit production (not emulator localhost).
+      u = 'https://livetranslatedubtool-production.up.railway.app';
+    } else if (Platform.isAndroid) {
+      // Android emulator → host machine via 10.0.2.2
+      u = 'http://10.0.2.2:8000';
     } else {
-      // Local FastAPI (`cd backend && uvicorn app.main:app --reload` on port 8000).
-      // Production API host: `https://livetranslatedubtool-production.up.railway.app/` (Railway).
-      // Android emulator → host machine via 10.0.2.2; iOS simulator & desktop → 127.0.0.1.
-      // Physical phones & production store builds: pass `--dart-define=API_BASE_URL=https://.../`.
-      if (Platform.isAndroid) {
-        u = 'http://10.0.2.2:8000';
-      } else {
-        u = 'http://127.0.0.1:8000';
-      }
+      u = 'http://127.0.0.1:8000';
     }
     _baseUrl = u.endsWith('/') ? u : '$u/';
     _qonversionProjectKey = const String.fromEnvironment(
@@ -33,7 +33,9 @@ class ApiConfig {
     );
     final webId = const String.fromEnvironment(
       'GOOGLE_WEB_CLIENT_ID',
-      defaultValue: '',
+      // Default Web OAuth client for Live Translate (same project as Android OAuth).
+      defaultValue:
+          '683320997088-mi3jnr3lm66ftt0ccurqgnkvmf2fvv9v.apps.googleusercontent.com',
     );
     String resolved = webId;
     if (resolved.isEmpty) {
