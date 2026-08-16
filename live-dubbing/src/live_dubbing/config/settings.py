@@ -295,8 +295,16 @@ class AppSettings(BaseModel):
         return f"{base}{api_key_path}?{qs}"
 
     def get_download_url(self) -> str:
-        """Return app download page URL on the website."""
-        return f"{self.get_website_url()}/download"
+        """Return the app download URL.
+
+        Defaults to the GitHub Releases "latest" page, which is always current and
+        reachable. Override via LIVE_TRANSLATE_DOWNLOAD_URL to point back at the
+        website once its /download page is live.
+        """
+        return os.environ.get(
+            "LIVE_TRANSLATE_DOWNLOAD_URL",
+            "https://github.com/ESSSoWhat/live-translate-realtime-dubbing/releases/latest",
+        )
 
     def get_access_token(self) -> str | None:
         """Get JWT access token from in-memory cache or keyring."""
