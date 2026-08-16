@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
+import 'overlay_bridge.dart';
+
 /// Separate Flutter entry point for the Android overlay bubble.
 /// Prefer calling [overlayMain] from `main.dart` so the VM entry-point is linked.
 void runOverlayTranslateApp() {
@@ -36,22 +38,28 @@ class _OverlayBubbleState extends State<OverlayBubble> {
   static const _expandedWidth = 280;
   static const _expandedHeight = 220;
 
-  StreamSubscription<dynamic>? _sub;
+  StreamSubscription<dynamic>? _shareSub;
   bool _expanded = false;
   bool _muted = false;
   String _status = 'Listening…';
   String _source = '';
   String _translated = '';
+  double _fontSize = 14;
+  double _opacity = 1;
 
   @override
   void initState() {
     super.initState();
-    _sub = FlutterOverlayWindow.overlayListener.listen(_onEvent);
+    OverlayBridge.listenOnOverlay(_onEvent);
+    // Secondary path if IsolateNameServer isn't ready yet.
+    _shareSub = FlutterOverlayWindow.overlayListener.listen(_onEvent);
+    OverlayBridge.sendToMain(jsonEncode({'type': 'ready'}));
   }
 
   @override
   void dispose() {
-    _sub?.cancel();
+    _shareSub?.cancel();
+    OverlayBridge.disposeOverlay();
     super.dispose();
   }
 
@@ -76,11 +84,17 @@ class _OverlayBubbleState extends State<OverlayBubble> {
       _source = (map['source'] as String?) ?? _source;
       _translated = (map['translated'] as String?) ?? _translated;
       _muted = (map['muted'] as bool?) ?? _muted;
+      final fs = map['fontSize'];
+      if (fs is num) _fontSize = fs.toDouble();
+      final op = map['opacity'];
+      if (op is num) _opacity = op.toDouble();
     });
   }
 
-  Future<void> _send(Map<String, dynamic> payload) async {
-    await FlutterOverlayWindow.shareData(jsonEncode(payload));
+  void _send(Map<String, dynamic> payload) {
+    final encoded = jsonEncode(payload);
+    OverlayBridge.sendToMain(encoded);
+    unawaited(FlutterOverlayWindow.shareData(encoded));
   }
 
   Future<void> _toggleExpand() async {
@@ -101,12 +115,12 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     }
   }
 
-  Future<void> _toggleMute() async {
-    await _send({'type': 'toggleMute'});
+  void _toggleMute() {
+    _send({'type': 'toggleMute'});
   }
 
-  Future<void> _stop() async {
-    await _send({'type': 'stop'});
+  void _stop() {
+    _send({'type': 'stop'});
   }
 
   @override
@@ -180,7 +194,13 @@ class _OverlayBubbleState extends State<OverlayBubble> {
                               color: scheme.onSurfaceVariant,
                             ),
                       ),
-                      Text(_source, style: Theme.of(context).textTheme.bodySmall),
+                      Text(
+                        _source,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontSize: _fontSize,
+                              color: scheme.onSurface.withValues(alpha: _opacity),
+                            ),
+                      ),
                       const SizedBox(height: 8),
                     ],
                     if (_translated.isNotEmpty) ...[
@@ -193,7 +213,9 @@ class _OverlayBubbleState extends State<OverlayBubble> {
                       Text(
                         _translated,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              fontSize: _fontSize,
                               fontWeight: FontWeight.w600,
+                              color: scheme.onSurface.withValues(alpha: _opacity),
                             ),
                       ),
                     ],

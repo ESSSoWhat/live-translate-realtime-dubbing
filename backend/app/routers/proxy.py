@@ -440,6 +440,59 @@ async def delete_voice(voice_id: str, user: dict = Depends(get_current_user)) ->
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.patch("/voices/{voice_id}", response_model=CloneVoiceResponse)
+async def rename_voice(
+    voice_id: str,
+    user: dict = Depends(get_current_user),  # noqa: B008
+    name: str = Form(...),  # noqa: B008
+) -> CloneVoiceResponse:
+    """Rename a user-owned cloned voice on ElevenLabs."""
+    new_name = (name or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name must not be empty")
+
+    client = _elevenlabs()
+    try:
+        all_voices = await client.voices.get_all()
+        voice_meta = next((v for v in all_voices.voices if v.voice_id == voice_id), None)
+        if voice_meta is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice not found")
+        if getattr(voice_meta, "category", None) == "premade":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot rename premade voices")
+
+        sb = await get_supabase()
+        owned = (
+            await sb.table("user_voices")
+            .select("voice_id")
+            .eq("voice_id", voice_id)
+            .eq("user_id", user["id"])
+            .maybe_single()
+            .execute()
+        )
+        if not owned.data:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to rename this voice")
+
+        key = get_settings().elevenlabs_api_key
+        if not key:
+            raise HTTPException(status_code=503, detail="ElevenLabs API key not configured")
+        async with httpx.AsyncClient(timeout=60.0) as http:
+            resp = await http.post(
+                f"https://api.elevenlabs.io/v1/voices/{voice_id}/edit",
+                headers={"xi-api-key": key},
+                data={"name": new_name},
+            )
+        if resp.status_code >= 400:
+            raise _elevenlabs_upstream_error(
+                "Rename voice",
+                Exception(f"status_code: {resp.status_code}, body: {resp.text[:800]}"),
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _elevenlabs_upstream_error("Rename voice", exc) from exc
+    return CloneVoiceResponse(voice_id=voice_id, name=new_name)
+
+
 @router.post("/clone-voice", response_model=CloneVoiceResponse)
 async def clone_voice(
     background_tasks: BackgroundTasks,

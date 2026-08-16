@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:http_parser/http_parser.dart';
 
 import '../config/api_config.dart';
 import 'auth_service.dart';
@@ -97,13 +98,16 @@ class ApiClient {
   Future<Map<String, dynamic>> transcribe(
     List<int> audioBytes, {
     String language = 'auto',
+    int sampleRate = 16000,
   }) async {
     final formData = FormData.fromMap({
       'audio': MultipartFile.fromBytes(
         audioBytes,
-        filename: 'audio.raw',
+        filename: 'audio.wav',
+        contentType: MediaType('audio', 'wav'),
       ),
       'language': language,
+      'sample_rate': sampleRate.toString(),
     });
     final r = await _dio.post('/proxy/transcribe', data: formData);
     final data = r.data;
@@ -159,6 +163,61 @@ class ApiClient {
     final r = await _dio.get('/proxy/voices');
     final list = r.data as List<dynamic>? ?? [];
     return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  /// DELETE /proxy/voices/{voiceId}
+  Future<void> deleteVoice(String voiceId) async {
+    await _dio.delete('/proxy/voices/$voiceId');
+  }
+
+  /// PATCH /proxy/voices/{voiceId} — rename cloned voice.
+  Future<Map<String, dynamic>> renameVoice({
+    required String voiceId,
+    required String name,
+  }) async {
+    final formData = FormData.fromMap({'name': name.trim()});
+    final r = await _dio.patch(
+      '/proxy/voices/$voiceId',
+      data: formData,
+    );
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// POST /proxy/clone-voice — multipart audio → { voice_id, name }.
+  Future<Map<String, dynamic>> cloneVoice({
+    required List<int> audioBytes,
+    required String name,
+    String description = '',
+    String filename = 'audio.wav',
+  }) async {
+    final formData = FormData.fromMap({
+      'audio': MultipartFile.fromBytes(
+        audioBytes,
+        filename: filename,
+        contentType: MediaType('audio', 'wav'),
+      ),
+      'name': name.trim().isEmpty ? 'cloned_voice' : name.trim(),
+      'description': description,
+    });
+    final r = await _dio.post(
+      '/proxy/clone-voice',
+      data: formData,
+      options: Options(
+        sendTimeout: const Duration(seconds: 60),
+        receiveTimeout: const Duration(seconds: 120),
+      ),
+    );
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
   }
 
   /// GET /user/me — returns user profile with tier, subscription_status, usage.

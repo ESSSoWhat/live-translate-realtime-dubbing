@@ -12,12 +12,32 @@ import '../../services/auth_service.dart';
 /// Captures mic in chunks, sends to backend (transcribe → translate → synthesize), plays result.
 class MicTranslateService {
   MicTranslateService({
-    this.targetLanguage = 'es',
-    this.voiceId = '21m00Tcm4TlvDq8ikWAM',
-  });
+    String targetLanguage = 'es',
+    String sourceLanguage = 'auto',
+    String voiceId = defaultVoiceId,
+  })  : _targetLanguage = targetLanguage,
+        _sourceLanguage = sourceLanguage,
+        _voiceId = voiceId;
 
-  final String targetLanguage;
-  final String voiceId;
+  /// Default ElevenLabs premade voice (Rachel).
+  static const String defaultVoiceId = '21m00Tcm4TlvDq8ikWAM';
+
+  String _targetLanguage;
+  String _sourceLanguage;
+  String _voiceId;
+
+  String get targetLanguage => _targetLanguage;
+  set targetLanguage(String value) => _targetLanguage = value;
+
+  /// STT language hint (`auto` = detect).
+  String get sourceLanguage => _sourceLanguage;
+  set sourceLanguage(String value) => _sourceLanguage = value;
+
+  /// ElevenLabs voice used for TTS / dubbing.
+  String get voiceId => _voiceId;
+  set voiceId(String value) {
+    if (value.isNotEmpty) _voiceId = value;
+  }
 
   final _api = ApiClient();
   final _auth = AuthService();
@@ -41,6 +61,8 @@ class MicTranslateService {
 
   bool _running = false;
   bool _muted = false;
+  bool _playbackActive = false;
+  double _volume = 1.0;
 
   /// When true, capture/translate continue but TTS is skipped.
   bool get muted => _muted;
@@ -52,8 +74,18 @@ class MicTranslateService {
     }
   }
 
+  /// TTS output volume 0.0–1.0.
+  double get volume => _volume;
+
+  set volume(double value) {
+    _volume = value.clamp(0.0, 1.0);
+    unawaited(_player.setVolume(_volume));
+  }
+
   static const int chunkSeconds = 3;
   static const _backoff = Duration(seconds: 1);
+  /// Let speaker audio die out so the next mic chunk does not re-hear TTS.
+  static const _postTtsCooldown = Duration(milliseconds: 500);
 
   Future<bool> start() async {
     if (_running) return true;
@@ -72,6 +104,7 @@ class MicTranslateService {
 
   Future<void> stop() async {
     _running = false;
+    _playbackActive = false;
     await _record.stop();
     await _player.stop();
   }
@@ -89,6 +122,12 @@ class MicTranslateService {
     while (_running) {
       String? path;
       try {
+        // Never capture while TTS is on the speaker (feedback loop).
+        while (_running && _playbackActive) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        if (!_running) break;
+
         _statusController.add('Listening…');
         path = await _recordToFile();
         if (!_running || path == null) {
@@ -99,12 +138,18 @@ class MicTranslateService {
         try {
           final bytes = await _readFileBytes(pathToDelete);
           if (bytes.isEmpty) {
+            _statusController.add('No audio captured');
             await Future<void>.delayed(_backoff);
             continue;
           }
           _statusController.add('Transcribing…');
           final text = await _transcribe(bytes);
-          if (text.isEmpty || !_running) {
+          if (!_running) {
+            await Future<void>.delayed(_backoff);
+            continue;
+          }
+          if (text.isEmpty) {
+            _statusController.add('No speech detected — speak near the mic');
             await Future<void>.delayed(_backoff);
             continue;
           }
@@ -144,19 +189,28 @@ class MicTranslateService {
   Future<String?> _recordToFile() async {
     try {
       final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/mic_chunk_${DateTime.now().millisecondsSinceEpoch}.pcm';
+      // WAV (PCM16 + headers) — ElevenLabs STT rejects bare .pcm / audio.raw.
+      final path =
+          '${dir.path}/mic_chunk_${DateTime.now().millisecondsSinceEpoch}.wav';
       await _record.start(
         const RecordConfig(
-          encoder: AudioEncoder.pcm16bits,
+          encoder: AudioEncoder.wav,
           sampleRate: 16000,
           numChannels: 1,
+          // Reduce speaker→mic feedback when TTS plays through the device.
+          echoCancel: true,
+          noiseSuppress: true,
+          autoGain: true,
         ),
         path: path,
       );
       await Future<void>.delayed(Duration(seconds: chunkSeconds));
       await _record.stop();
       return path;
-    } catch (_) {
+    } catch (e) {
+      if (_running) {
+        _statusController.add('Mic error: $e');
+      }
       return null;
     }
   }
@@ -168,35 +222,44 @@ class MicTranslateService {
   }
 
   Future<String> _transcribe(List<int> bytes) async {
-    final r = await _api.transcribe(bytes, language: 'auto');
+    final r = await _api.transcribe(bytes, language: _sourceLanguage);
     return (r['text'] as String?)?.trim() ?? '';
   }
 
   Future<String> _translate(String text) async {
     final r = await _api.translate(
       text: text,
-      targetLanguage: targetLanguage,
-      sourceLanguage: 'auto',
+      targetLanguage: _targetLanguage,
+      sourceLanguage: _sourceLanguage,
     );
     return (r['translated_text'] as String?)?.trim() ?? '';
   }
 
   Future<void> _synthesizeAndPlay(String text) async {
     if (_muted || !_running) return;
-    final bytes = await _api.synthesize(text: text, voiceId: voiceId);
+    final bytes = await _api.synthesize(text: text, voiceId: _voiceId);
     if (bytes.isEmpty || !_running || _muted) return;
     final dir = await getTemporaryDirectory();
     final path = '${dir.path}/tts_${DateTime.now().millisecondsSinceEpoch}.mp3';
     final file = File(path);
     await file.writeAsBytes(bytes);
+    _playbackActive = true;
     try {
+      // Ensure mic is not open while speaker TTS is playing.
+      try {
+        await _record.stop();
+      } catch (_) {}
       await _player.setFilePath(path);
+      await _player.setVolume(_volume);
       await _player.play();
-      await _player.playerStateStream
-          .firstWhere((s) =>
-              s.processingState == ProcessingState.completed ||
-              s.processingState == ProcessingState.idle);
+      await _player.playerStateStream.firstWhere((s) =>
+          s.processingState == ProcessingState.completed ||
+          s.processingState == ProcessingState.idle);
+      if (_running) {
+        await Future<void>.delayed(_postTtsCooldown);
+      }
     } finally {
+      _playbackActive = false;
       try {
         await file.delete();
       } catch (_) {}

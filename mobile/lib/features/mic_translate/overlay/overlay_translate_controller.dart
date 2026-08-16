@@ -4,8 +4,10 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
+import '../../../services/app_settings.dart';
 import '../mic_translate_service.dart';
 import 'mic_foreground_service.dart';
+import 'overlay_bridge.dart';
 
 /// Result of [OverlayTranslateController.start].
 class OverlayStartResult {
@@ -28,13 +30,13 @@ class OverlayTranslateController {
   StreamSubscription<String>? _statusSub;
   StreamSubscription<String>? _sourceSub;
   StreamSubscription<String>? _translatedSub;
-  StreamSubscription<dynamic>? _overlayCmdSub;
 
   String _status = '';
   String _source = '';
   String _translated = '';
   bool _active = false;
   bool _overlayShown = false;
+  bool _mainBridgeReady = false;
 
   bool get isActive => _active;
   bool get overlayShown => _overlayShown;
@@ -69,6 +71,7 @@ class OverlayTranslateController {
     _active = true;
     _activeController.add(true);
     _bindServiceStreams();
+    _ensureMainBridge();
 
     var overlayShown = false;
     if (_android) {
@@ -95,6 +98,7 @@ class OverlayTranslateController {
         unawaited(FlutterOverlayWindow.requestPermission());
         return false;
       }
+      _ensureMainBridge();
       await FlutterOverlayWindow.showOverlay(
         height: 72,
         width: 72,
@@ -106,8 +110,11 @@ class OverlayTranslateController {
         positionGravity: PositionGravity.auto,
       );
       _overlayShown = true;
-      _listenOverlayCommands();
-      await _pushUpdate();
+      // Overlay isolate registers its port asynchronously — push a few times.
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration(milliseconds: 200 * (i + 1)));
+        await _pushUpdate();
+      }
       return true;
     } catch (_) {
       _overlayShown = false;
@@ -139,13 +146,45 @@ class OverlayTranslateController {
     _statusSub?.cancel();
     _sourceSub?.cancel();
     _translatedSub?.cancel();
-    _overlayCmdSub?.cancel();
     _statusSub = null;
     _sourceSub = null;
     _translatedSub = null;
-    _overlayCmdSub = null;
+    OverlayBridge.dispose();
+    _mainBridgeReady = false;
     if (!_activeController.isClosed) {
       _activeController.close();
+    }
+  }
+
+  void _ensureMainBridge() {
+    if (_mainBridgeReady) return;
+    OverlayBridge.listenOnMain(_onOverlayMessage);
+    _mainBridgeReady = true;
+  }
+
+  void _onOverlayMessage(dynamic event) {
+    Map<String, dynamic>? map;
+    if (event is Map) {
+      map = Map<String, dynamic>.from(event);
+    } else if (event is String) {
+      try {
+        final decoded = jsonDecode(event);
+        if (decoded is Map) {
+          map = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {
+        return;
+      }
+    }
+    if (map == null) return;
+    final type = map['type'];
+    if (type == 'stop') {
+      unawaited(stop());
+    } else if (type == 'toggleMute') {
+      service.muted = !service.muted;
+      unawaited(_pushUpdate());
+    } else if (type == 'ready') {
+      unawaited(_pushUpdate());
     }
   }
 
@@ -167,59 +206,31 @@ class OverlayTranslateController {
     });
   }
 
-  void _listenOverlayCommands() {
-    _overlayCmdSub?.cancel();
-    _overlayCmdSub = FlutterOverlayWindow.overlayListener.listen((event) {
-      Map<String, dynamic>? map;
-      if (event is Map) {
-        map = Map<String, dynamic>.from(event);
-      } else if (event is String) {
-        try {
-          final decoded = jsonDecode(event);
-          if (decoded is Map) {
-            map = Map<String, dynamic>.from(decoded);
-          }
-        } catch (_) {
-          return;
-        }
-      }
-      if (map == null) return;
-      final type = map['type'];
-      if (type == 'stop') {
-        unawaited(stop());
-      } else if (type == 'toggleMute') {
-        service.muted = !service.muted;
-        unawaited(_pushUpdate());
-      }
-    });
-  }
-
   Future<void> _pushUpdate() async {
     if (!_overlayShown) return;
+    final payload = jsonEncode({
+      'type': 'update',
+      'status': _status,
+      'source': _source,
+      'translated': _translated,
+      'muted': service.muted,
+      'fontSize': AppSettings.captionFontSize,
+      'opacity': AppSettings.captionOpacity,
+    });
+    OverlayBridge.sendToOverlay(payload);
+    // Keep shareData as a secondary path for older plugin builds.
     try {
-      await FlutterOverlayWindow.shareData(
-        jsonEncode({
-          'type': 'update',
-          'status': _status,
-          'source': _source,
-          'translated': _translated,
-          'muted': service.muted,
-        }),
-      );
-    } catch (_) {
-      // Overlay may already be closed.
-    }
+      await FlutterOverlayWindow.shareData(payload);
+    } catch (_) {}
   }
 
   Future<void> _tearDownOverlay() async {
     _statusSub?.cancel();
     _sourceSub?.cancel();
     _translatedSub?.cancel();
-    _overlayCmdSub?.cancel();
     _statusSub = null;
     _sourceSub = null;
     _translatedSub = null;
-    _overlayCmdSub = null;
     if (_overlayShown) {
       try {
         await FlutterOverlayWindow.closeOverlay();
