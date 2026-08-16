@@ -8,6 +8,7 @@ import 'login_screen.dart';
 import 'paywall_screen.dart';
 import 'settings_screen.dart';
 import '../features/mic_translate/mic_translate_service.dart';
+import '../features/mic_translate/overlay/overlay_translate_controller.dart';
 import '../features/translated_call/phone_call_screen.dart';
 import '../features/translated_call/translated_call_screen.dart';
 import '../services/qonversion_service.dart';
@@ -24,19 +25,29 @@ class _HomeScreenState extends State<HomeScreen> {
   final _auth = AuthService();
   final _api = ApiClient();
   final _translateService = MicTranslateService();
+  late final OverlayTranslateController _overlayController;
   bool _translating = false;
   String? _status;
   StreamSubscription<String>? _statusSub;
   StreamSubscription<void>? _paywallSub;
+  StreamSubscription<bool>? _activeSub;
 
   @override
   void initState() {
     super.initState();
+    _overlayController = OverlayTranslateController(service: _translateService);
     _statusSub = _translateService.statusStream.listen((s) {
       if (mounted) setState(() => _status = s);
     });
     _paywallSub = _translateService.paywallRequiredStream.listen((_) {
       if (mounted) _showPaywall();
+    });
+    _activeSub = _overlayController.activeStream.listen((active) {
+      if (!mounted) return;
+      setState(() {
+        _translating = active;
+        if (!active) _status = null;
+      });
     });
   }
 
@@ -44,6 +55,11 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _statusSub?.cancel();
     _paywallSub?.cancel();
+    _activeSub?.cancel();
+    // Tear down overlay + FGS when leaving Home (e.g. logout navigation).
+    // Do not dispose merely because the app is paused — pause does not call dispose.
+    unawaited(_overlayController.stop());
+    _overlayController.dispose();
     _translateService.dispose();
     super.dispose();
   }
@@ -83,7 +99,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _isToggling = true;
     try {
       if (_translating) {
-        await _translateService.stop();
+        await _overlayController.stop();
         if (mounted) {
           setState(() {
             _translating = false;
@@ -95,11 +111,20 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!await _hasPremiumAccess()) {
         if (!mounted) return;
         _showPaywall();
-        _isToggling = false;
         return;
       }
-      final started = await _translateService.start();
-      if (mounted) setState(() => _translating = started);
+      final result = await _overlayController.start();
+      if (!mounted) return;
+      setState(() => _translating = result.started);
+      if (result.started && !result.overlayShown) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Overlay unavailable — grant “Display over other apps” to show captions while using other apps.',
+            ),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) setState(() => _translating = false);
     } finally {
@@ -108,7 +133,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _logout() async {
-    await _translateService.stop();
+    await _overlayController.stop();
     await _auth.clear();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
@@ -141,7 +166,8 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               const SizedBox(height: 24),
               Text(
-                'Mic translation plays through your device speaker.',
+                'Mic translation plays through your device speaker. '
+                'On Android, a bubble can stay on screen over other apps.',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),

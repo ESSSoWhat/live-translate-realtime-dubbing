@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 
 import 'package:live_translate_mobile/app.dart';
 import 'package:live_translate_mobile/config/api_config.dart';
+// Registers the Android overlay VM entry-point (overlayMain).
+import 'package:live_translate_mobile/features/mic_translate/overlay/overlay_entry.dart';
 import 'package:live_translate_mobile/services/qonversion_service.dart';
 
 void main() async {

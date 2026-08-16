@@ -25,13 +25,33 @@ class MicTranslateService {
   final _player = AudioPlayer();
   final _statusController = StreamController<String>.broadcast();
   final _paywallController = StreamController<void>.broadcast();
+  final _sourceTextController = StreamController<String>.broadcast();
+  final _translatedTextController = StreamController<String>.broadcast();
 
   Stream<String> get statusStream => _statusController.stream;
+
+  /// Latest transcribed source text after each successful STT chunk.
+  Stream<String> get sourceTextStream => _sourceTextController.stream;
+
+  /// Latest translated text after each successful translate chunk.
+  Stream<String> get translatedTextStream => _translatedTextController.stream;
 
   /// Emits when API returns 402; show paywall.
   Stream<void> get paywallRequiredStream => _paywallController.stream;
 
   bool _running = false;
+  bool _muted = false;
+
+  /// When true, capture/translate continue but TTS is skipped.
+  bool get muted => _muted;
+
+  set muted(bool value) {
+    _muted = value;
+    if (value) {
+      unawaited(_player.stop());
+    }
+  }
+
   static const int chunkSeconds = 3;
   static const _backoff = Duration(seconds: 1);
 
@@ -61,6 +81,8 @@ class MicTranslateService {
     _player.dispose();
     _statusController.close();
     _paywallController.close();
+    _sourceTextController.close();
+    _translatedTextController.close();
   }
 
   Future<void> _runLoop() async {
@@ -86,10 +108,16 @@ class MicTranslateService {
             await Future<void>.delayed(_backoff);
             continue;
           }
+          _sourceTextController.add(text);
           _statusController.add('Translating…');
           final translated = await _translate(text);
           if (translated.isEmpty || !_running) {
             await Future<void>.delayed(_backoff);
+            continue;
+          }
+          _translatedTextController.add(translated);
+          if (_muted) {
+            _statusController.add('Muted');
             continue;
           }
           _statusController.add('Speaking…');
@@ -154,8 +182,9 @@ class MicTranslateService {
   }
 
   Future<void> _synthesizeAndPlay(String text) async {
+    if (_muted || !_running) return;
     final bytes = await _api.synthesize(text: text, voiceId: voiceId);
-    if (bytes.isEmpty || !_running) return;
+    if (bytes.isEmpty || !_running || _muted) return;
     final dir = await getTemporaryDirectory();
     final path = '${dir.path}/tts_${DateTime.now().millisecondsSinceEpoch}.mp3';
     final file = File(path);

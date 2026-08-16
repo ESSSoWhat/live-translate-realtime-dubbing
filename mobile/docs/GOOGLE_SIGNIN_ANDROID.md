@@ -11,7 +11,7 @@ Fix it in **Google Cloud Console** (Firebase is not required).
 | **SHA-1 (debug)** | `9D:CE:CE:66:A3:E1:5D:46:07:08:75:16:51:20:AB:1C:99:4D:5E:B1` |
 | **SHA-1 (no colons)** | `9DCECE66A3E15D46070875165120AB1C994D5EB1` |
 | **Android client ID** (Cloud Console only — do **not** put in the app) | `683320997088-im2noi5nr7274jciu23l2gp9t4np5jl3.apps.googleusercontent.com` |
-| **Web client ID** (used in app as `serverClientId`) | `683320997088-51usimqmqv6uki2531hoq2l9m900ar7l.apps.googleusercontent.com` |
+| **Web client ID** (used in app as `serverClientId`) | `683320997088-nbqaieaucd9rnpgn1ha2fvsjhqqh47m0.apps.googleusercontent.com` |
 
 ## Steps in Google Cloud Console
 
@@ -39,7 +39,7 @@ Fix it in **Google Cloud Console** (Firebase is not required).
    ```
    Then wait 5–10 minutes, uninstall the app, rebuild/reinstall, and try again:
    ```bash
-   flutter run -d <device> --dart-define=GOOGLE_WEB_CLIENT_ID=683320997088-51usimqmqv6uki2531hoq2l9m900ar7l.apps.googleusercontent.com
+   flutter run -d <device> --dart-define=GOOGLE_WEB_CLIENT_ID=683320997088-nbqaieaucd9rnpgn1ha2fvsjhqqh47m0.apps.googleusercontent.com
    ```
 
 ## Verify

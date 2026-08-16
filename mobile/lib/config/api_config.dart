@@ -9,7 +9,7 @@ class ApiConfig {
 
   /// Web OAuth client ID (Google Cloud → Credentials → Web application).
   static const String defaultGoogleWebClientId =
-      '683320997088-51usimqmqv6uki2531hoq2l9m900ar7l.apps.googleusercontent.com';
+      '683320997088-nbqaieaucd9rnpgn1ha2fvsjhqqh47m0.apps.googleusercontent.com';
 
   static String? _baseUrl;
   static String? _qonversionProjectKey;

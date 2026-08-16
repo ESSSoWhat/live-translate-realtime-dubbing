@@ -36,6 +36,10 @@ Without `--dart-define=API_BASE_URL=...`, the app targets **localhost** (see abo
 
 The Android app is standalone: it uses the Live Translate backend for translation but does not require the Windows desktop app. Translated audio is played to the device's speaker/earpiece. Other apps on the same device cannot use this as a "microphone" input—that is an Android/platform limitation; there is no in-app workaround for routing translated audio as a system mic on device. For virtual mic routing into Discord, Zoom, etc., use the **Windows desktop app** with **VB-Cable** (a virtual audio cable): set the desktop app's output to CABLE Input and set Discord/Zoom input to CABLE Output. See [VB-Audio Cable](https://vb-audio.com/Cable/) for setup.
 
+## Overlay captions (Android)
+
+Starting translation can show a bubble over other apps (status, captions, mute, stop). See [docs/OVERLAY_TRANSLATE.md](docs/OVERLAY_TRANSLATE.md) for permission setup, the mic-only limitation (no YouTube media capture), and the required background notification.
+
 ## Google Sign-In (SSO)
 
 For "Continue with Google" to work:
