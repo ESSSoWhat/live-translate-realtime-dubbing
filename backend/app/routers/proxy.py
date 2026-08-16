@@ -25,6 +25,7 @@ from app.models.responses import (
     VoiceItem,
 )
 from app.services.supabase_client import get_supabase
+from app.services.text_filter import strip_non_verbal
 from app.services.usage import QuotaExceededError, check_and_record_quota, check_quota
 
 logger = structlog.get_logger(__name__)
@@ -222,7 +223,7 @@ async def synthesize(
     user: dict = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     """Synthesize text to MP3 via ElevenLabs TTS; record usage by character count."""
-    text = (body.text or "").strip()
+    text = strip_non_verbal(body.text or "")
     if not text:
         raise HTTPException(status_code=400, detail="Text must not be empty")
     char_count = len(text)
@@ -312,7 +313,7 @@ async def synthesize_stream(
     user: dict = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     """Stream TTS audio chunks from ElevenLabs."""
-    text = (body.text or "").strip()
+    text = strip_non_verbal(body.text or "")
     if not text:
         raise HTTPException(status_code=400, detail="Text must not be empty")
     estimated_dub_sec = max(1, int(round(len(text) / 14.0)))

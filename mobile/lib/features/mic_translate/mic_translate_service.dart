@@ -143,7 +143,8 @@ class MicTranslateService {
             continue;
           }
           _statusController.add('Transcribing…');
-          final text = await _transcribe(bytes);
+          // Strip [MUSIC], (laughter), etc. — TTS speaks speech only.
+          final text = stripNonVerbal(await _transcribe(bytes));
           if (!_running) {
             await Future<void>.delayed(_backoff);
             continue;
@@ -155,7 +156,7 @@ class MicTranslateService {
           }
           _sourceTextController.add(text);
           _statusController.add('Translating…');
-          final translated = await _translate(text);
+          final translated = stripNonVerbal(await _translate(text));
           if (translated.isEmpty || !_running) {
             await Future<void>.delayed(_backoff);
             continue;
@@ -266,3 +267,47 @@ class MicTranslateService {
     }
   }
 }
+
+/// Remove ASR non-speech markers so TTS only speaks actual words.
+/// Mirrors desktop [strip_non_verbal] (brackets, parenthetical markers, music symbols).
+String stripNonVerbal(String text) {
+  if (text.isEmpty) return '';
+  var result = text;
+  result = result.replaceAll(_bracketMarkerRe, '');
+  result = result.replaceAll(_parenMarkerRe, '');
+  result = result.replaceAll(_asteriskMarkerRe, '');
+  result = result.replaceAll(_musicSymbolsRe, '');
+  result = result.replaceAll(_anyBracketRe, '');
+  result = result.replaceAll(_ellipsisRe, '');
+  result = result.replaceAll(_whitespaceRe, ' ').trim();
+  return result;
+}
+
+const _markerBody =
+    r'music|pause|laughter|laughing|applause|silence|inaudible|crosstalk'
+    r'|background\s*noise|noise|sigh|sighing|cough|coughing|gasp|gasping'
+    r'|crying|sobbing|sniffing|clearing\s*throat|breathing|exhale|inhale'
+    r'|foreign|foreign\s*language|unintelligible|indiscernible'
+    r'|blank_audio|no\s*speech|beep|bleep|censored'
+    r'|phone\s*ringing|doorbell|alarm|static'
+    r'|sound\s*effect|sfx|fx'
+    r'|crowd|cheering|booing|clapping'
+    r'|singing|humming|whistling'
+    r'|playing|instrumental'
+    r'|intro|outro|transition'
+    r'|video\s*playing|audio\s*playing'
+    r'|♪|♫|🎵|🎶';
+
+final _bracketMarkerRe =
+    RegExp(r'\[' + _markerBody + r'\]', caseSensitive: false);
+final _parenMarkerRe =
+    RegExp(r'\(' + _markerBody + r'\)', caseSensitive: false);
+final _asteriskMarkerRe = RegExp(
+  r'\*(?:music|pause|laughter|laughing|applause|silence|sigh|cough'
+  r'|crying|singing|humming|whistling|gasps?|laughs?|sighs?|coughs?)\*',
+  caseSensitive: false,
+);
+final _musicSymbolsRe = RegExp(r'[♪♫🎵🎶🎤🎸🎹🎺🎻]+');
+final _anyBracketRe = RegExp(r'\[[^\]]{1,50}\]');
+final _ellipsisRe = RegExp(r'\.{3,}');
+final _whitespaceRe = RegExp(r'\s{2,}');
