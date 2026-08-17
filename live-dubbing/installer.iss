@@ -3,7 +3,7 @@
 
 #define MyAppName "Live Translate"
 #ifndef MyAppVersion
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.2"
 #endif
 #define MyAppPublisher "Live Translate Team"
 #define MyAppURL "https://github.com/live-translate"
@@ -26,7 +26,9 @@ OutputBaseFilename=LiveTranslate-{#MyAppVersion}-Setup
 SetupIconFile=src\live_dubbing\gui\assets\logo.ico
 Compression=lzma2/ultra64
 SolidCompression=no
-DiskSpanning=yes
+; Produce a single self-contained Setup .exe (no split .bin files) so the
+; downloadable installer is one file that matches the CI upload glob.
+DiskSpanning=no
 WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible

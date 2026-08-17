@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "live-dubbing"
-version = "0.1.0"
+version = "0.2.2"
 description = "Real-time audio translation and voice-cloned dubbing for Windows applications"
 readme = "README.md"
 license = {text = "MIT"}

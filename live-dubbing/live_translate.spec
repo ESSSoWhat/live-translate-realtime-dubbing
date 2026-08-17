@@ -172,9 +172,10 @@ a = Analysis(
         "ruff",
         "black",
         "pip",
-        # NOTE: Do NOT exclude setuptools — pkg_resources (and PyInstaller's
-        # pyi_rth_pkgres runtime hook) depend on it and jaraco.* at runtime.
-        "wheel",
+        # NOTE: Do NOT exclude setuptools or wheel — pkg_resources (and
+        # PyInstaller's pyi_rth_pkgres / setuptools hooks) depend on them at
+        # runtime. Excluding "wheel" makes PyInstaller's setuptools hook fail with
+        # ValueError: Target module "wheel" already imported as ExcludedModule.
         # NOTE: Do NOT exclude any torch.* submodules — torch needs its
         # internal stubs (cuda, distributed, testing, etc.) to initialise.
         # Excluding them causes "No module named ..." errors at runtime.

@@ -13,6 +13,7 @@ from PyQt6.QtCore import QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
+from live_dubbing import __version__
 from live_dubbing.config.settings import AppSettings, ConfigManager
 from live_dubbing.core.events import EventBus
 from live_dubbing.core.orchestrator import Orchestrator
@@ -140,7 +141,7 @@ class Application:
         # Create Qt application
         self._qt_app = QApplication(sys.argv)
         self._qt_app.setApplicationName("Live Translate")
-        self._qt_app.setApplicationVersion("0.1.0")
+        self._qt_app.setApplicationVersion(__version__)
 
         # Set application icon
         import pathlib
