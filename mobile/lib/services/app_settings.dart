@@ -16,12 +16,19 @@ class AppSettings {
   static const _kAutoClone = 'auto_clone_on_start';
   static const _kAutoCloneSeconds = 'auto_clone_seconds';
   static const _kTranslateMode = 'translate_mode';
+  static const _kLiveCaptureMode = 'live_capture_mode';
 
   /// In-app mic captions only (no floating bubble).
   static const String modeMic = 'mic';
 
-  /// Mic + floating overlay over other apps (Android).
+  /// Live Translate: app audio or screen OCR + floating overlay (Android).
   static const String modeLive = 'live';
+
+  /// Live input: MediaProjection app/system playback → STT.
+  static const String liveCaptureAudio = 'audio';
+
+  /// Live input: MediaProjection screen frames → on-device OCR.
+  static const String liveCaptureScreen = 'screen';
 
   static SharedPreferences? _prefs;
 
@@ -121,5 +128,17 @@ class AppSettings {
   static Future<void> setTranslateMode(String mode) async {
     if (mode != modeMic && mode != modeLive) return;
     await _p.setString(_kTranslateMode, mode);
+  }
+
+  /// [liveCaptureAudio] or [liveCaptureScreen] (Live Translate only).
+  static String get liveCaptureMode {
+    final v = _p.getString(_kLiveCaptureMode);
+    if (v == liveCaptureScreen) return liveCaptureScreen;
+    return liveCaptureAudio;
+  }
+
+  static Future<void> setLiveCaptureMode(String mode) async {
+    if (mode != liveCaptureAudio && mode != liveCaptureScreen) return;
+    await _p.setString(_kLiveCaptureMode, mode);
   }
 }

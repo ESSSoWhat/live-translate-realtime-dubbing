@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:dio/dio.dart';
@@ -9,8 +10,22 @@ import 'package:record/record.dart';
 
 import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
+import 'playback_capture.dart';
+import 'screen_ocr.dart';
 
-/// Captures mic in chunks, sends to backend (transcribe → translate → synthesize), plays result.
+/// Where Live Translate / Mic Translate pulls input from.
+enum CaptureSource {
+  /// Device microphone (Mic Translate).
+  microphone,
+
+  /// Other apps' playback via MediaProjection (Live → App audio).
+  playback,
+
+  /// On-screen text via MediaProjection frames + OCR (Live → Screen text).
+  screen,
+}
+
+/// Captures mic or app playback in chunks, sends to backend, plays TTS.
 class MicTranslateService {
   MicTranslateService({
     String targetLanguage = 'es',
@@ -50,6 +65,13 @@ class MicTranslateService {
   final _sourceTextController = StreamController<String>.broadcast();
   final _translatedTextController = StreamController<String>.broadcast();
   bool _audioSessionReady = false;
+  CaptureSource _captureSource = CaptureSource.microphone;
+  StreamSubscription<Uint8List>? _playbackSub;
+  ScreenOcr? _screenOcr;
+  String _lastOcrNormalized = '';
+  DateTime? _lastOcrEmittedAt;
+
+  CaptureSource get captureSource => _captureSource;
 
   Stream<String> get statusStream => _statusController.stream;
 
@@ -89,13 +111,46 @@ class MicTranslateService {
   static const _backoff = Duration(seconds: 1);
   /// Let speaker audio die out so the next mic chunk does not re-hear TTS.
   static const _postTtsCooldown = Duration(milliseconds: 500);
+  static const _ocrDedupeWindow = Duration(seconds: 2);
 
-  Future<bool> start() async {
+  Future<bool> start({
+    CaptureSource source = CaptureSource.microphone,
+  }) async {
     if (_running) return true;
     if (!await _auth.hasTokens()) return false;
-    if (!await _record.hasPermission()) {
-      _statusController.add('Microphone permission denied');
-      return false;
+    _captureSource = source;
+    if (source == CaptureSource.microphone) {
+      if (!await _record.hasPermission()) {
+        _statusController.add('Microphone permission denied');
+        return false;
+      }
+    } else {
+      if (!await PlaybackCapture.isSupported()) {
+        _statusController.add('Live capture needs Android 10+');
+        return false;
+      }
+      final consented = await PlaybackCapture.requestConsent();
+      if (!consented) {
+        _statusController.add('Screen/audio capture permission denied');
+        return false;
+      }
+      final mode = source == CaptureSource.screen
+          ? PlaybackCaptureMode.screen
+          : PlaybackCaptureMode.audio;
+      final started = await PlaybackCapture.start(mode: mode);
+      if (!started) {
+        _statusController.add(
+          source == CaptureSource.screen
+              ? 'Could not start screen capture'
+              : 'Could not start app audio capture',
+        );
+        return false;
+      }
+      if (source == CaptureSource.screen) {
+        _screenOcr = ScreenOcr(sourceLanguage: _sourceLanguage);
+        _lastOcrNormalized = '';
+        _lastOcrEmittedAt = null;
+      }
     }
     await _ensureAudioSession();
     _running = true;
@@ -140,12 +195,36 @@ class MicTranslateService {
   Future<void> stop() async {
     _running = false;
     _playbackActive = false;
-    await _record.stop();
+    await _playbackSub?.cancel();
+    _playbackSub = null;
+    if (_captureSource == CaptureSource.playback ||
+        _captureSource == CaptureSource.screen) {
+      await PlaybackCapture.stop();
+    }
+    final ocr = _screenOcr;
+    _screenOcr = null;
+    if (ocr != null) {
+      await ocr.close();
+    }
+    try {
+      await _record.stop();
+    } catch (_) {}
     await _player.stop();
   }
 
   void dispose() {
-    _record.dispose();
+    _running = false;
+    unawaited(_playbackSub?.cancel());
+    _playbackSub = null;
+    unawaited(PlaybackCapture.stop());
+    final ocr = _screenOcr;
+    _screenOcr = null;
+    if (ocr != null) {
+      unawaited(ocr.close());
+    }
+    try {
+      _record.dispose();
+    } catch (_) {}
     _player.dispose();
     _statusController.close();
     _paywallController.close();
@@ -154,6 +233,112 @@ class MicTranslateService {
   }
 
   Future<void> _runLoop() async {
+    switch (_captureSource) {
+      case CaptureSource.playback:
+        await _runPlaybackLoop();
+      case CaptureSource.screen:
+        await _runScreenLoop();
+      case CaptureSource.microphone:
+        await _runMicLoop();
+    }
+  }
+
+  Future<void> _runPlaybackLoop() async {
+    final queue = StreamController<List<int>>();
+    _playbackSub = PlaybackCapture.audioStream.listen(
+      queue.add,
+      onError: (Object e) {
+        if (_running) {
+          _statusController.add('Capture error: $e');
+        }
+      },
+    );
+    _statusController.add('Listening to app audio…');
+    try {
+      await for (final bytes in queue.stream) {
+        if (!_running) break;
+        while (_running && _playbackActive) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        if (!_running) break;
+        await _processWavBytes(
+          bytes,
+          emptySpeechMessage: 'No speech in app audio — play media with dialogue',
+        );
+      }
+    } finally {
+      await queue.close();
+      await _playbackSub?.cancel();
+      _playbackSub = null;
+    }
+  }
+
+  Future<void> _runScreenLoop() async {
+    final ocr = _screenOcr;
+    if (ocr == null) return;
+    final queue = StreamController<Uint8List>();
+    _playbackSub = PlaybackCapture.frameStream.listen(
+      queue.add,
+      onError: (Object e) {
+        if (_running) {
+          _statusController.add('Capture error: $e');
+        }
+      },
+    );
+    _statusController.add('Reading on-screen text…');
+    try {
+      await for (final jpeg in queue.stream) {
+        if (!_running) break;
+        while (_running && _playbackActive) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        if (!_running) break;
+        try {
+          _statusController.add('Reading screen…');
+          final raw = await ocr.recognizeJpeg(jpeg);
+          if (!_running) break;
+          final text = stripNonVerbal(raw);
+          if (text.isEmpty) {
+            _statusController.add('No text on screen');
+            continue;
+          }
+          final normalized = _normalizeOcrText(text);
+          final now = DateTime.now();
+          final lastAt = _lastOcrEmittedAt;
+          if (normalized == _lastOcrNormalized &&
+              lastAt != null &&
+              now.difference(lastAt) < _ocrDedupeWindow) {
+            continue;
+          }
+          if (normalized == _lastOcrNormalized) {
+            // Same text after window — skip re-speaking identical caption.
+            continue;
+          }
+          _lastOcrNormalized = normalized;
+          _lastOcrEmittedAt = now;
+          await _processSourceText(text);
+        } catch (e) {
+          if (_running) {
+            if (e is DioException && e.error is QuotaExceededException) {
+              _statusController.add('Upgrade required');
+              _paywallController.add(null);
+            } else {
+              _statusController.add(_formatPipelineError(e));
+            }
+          }
+        }
+      }
+    } finally {
+      await queue.close();
+      await _playbackSub?.cancel();
+      _playbackSub = null;
+    }
+  }
+
+  String _normalizeOcrText(String text) =>
+      text.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  Future<void> _runMicLoop() async {
     while (_running) {
       String? path;
       try {
@@ -177,32 +362,10 @@ class MicTranslateService {
             await Future<void>.delayed(_backoff);
             continue;
           }
-          _statusController.add('Transcribing…');
-          // Strip [MUSIC], (laughter), etc. — TTS speaks speech only.
-          final text = stripNonVerbal(await _transcribe(bytes));
-          if (!_running) {
-            await Future<void>.delayed(_backoff);
-            continue;
-          }
-          if (text.isEmpty) {
-            _statusController.add('No speech detected — speak near the mic');
-            await Future<void>.delayed(_backoff);
-            continue;
-          }
-          _sourceTextController.add(text);
-          _statusController.add('Translating…');
-          final translated = stripNonVerbal(await _translate(text));
-          if (translated.isEmpty || !_running) {
-            await Future<void>.delayed(_backoff);
-            continue;
-          }
-          _translatedTextController.add(translated);
-          if (_muted) {
-            _statusController.add('Muted');
-            continue;
-          }
-          _statusController.add('Speaking…');
-          await _synthesizeAndPlay(translated);
+          await _processWavBytes(
+            bytes,
+            emptySpeechMessage: 'No speech detected — speak near the mic',
+          );
         } finally {
           try {
             await File(pathToDelete).delete();
@@ -218,6 +381,54 @@ class MicTranslateService {
           }
         }
         await Future<void>.delayed(_backoff);
+      }
+    }
+  }
+
+  Future<void> _processWavBytes(
+    List<int> bytes, {
+    required String emptySpeechMessage,
+  }) async {
+    try {
+      _statusController.add('Transcribing…');
+      final text = stripNonVerbal(await _transcribe(bytes));
+      if (!_running) return;
+      if (text.isEmpty) {
+        _statusController.add(emptySpeechMessage);
+        return;
+      }
+      await _processSourceText(text);
+    } catch (e) {
+      if (!_running) return;
+      if (e is DioException && e.error is QuotaExceededException) {
+        _statusController.add('Upgrade required');
+        _paywallController.add(null);
+      } else {
+        _statusController.add(_formatPipelineError(e));
+      }
+    }
+  }
+
+  Future<void> _processSourceText(String text) async {
+    try {
+      _sourceTextController.add(text);
+      _statusController.add('Translating…');
+      final translated = stripNonVerbal(await _translate(text));
+      if (translated.isEmpty || !_running) return;
+      _translatedTextController.add(translated);
+      if (_muted) {
+        _statusController.add('Muted');
+        return;
+      }
+      _statusController.add('Speaking…');
+      await _synthesizeAndPlay(translated);
+    } catch (e) {
+      if (!_running) return;
+      if (e is DioException && e.error is QuotaExceededException) {
+        _statusController.add('Upgrade required');
+        _paywallController.add(null);
+      } else {
+        _statusController.add(_formatPipelineError(e));
       }
     }
   }

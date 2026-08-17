@@ -1,29 +1,36 @@
-# MediaProjection phase 2 (app / system audio)
+# MediaProjection — Live Translate
 
-Desktop Live Translate can capture **other apps’ playback** (WASAPI / process loopback). Android has no equivalent without user consent.
+Live Translate on Android uses the system **MediaProjection** consent dialog. Under Live mode you choose:
 
-## Goal
+| Input | Pipeline |
+|-------|----------|
+| **App audio** | `AudioPlaybackCapture` → STT → translate → TTS |
+| **Screen text** | Screen frames (VirtualDisplay) → on-device ML Kit OCR → translate → TTS |
 
-Approximate desktop “App Audio” mode:
+## User flow
 
-1. User starts translation and chooses **Capture media audio**.
-2. Android shows the system **MediaProjection** / screen-capture consent dialog.
-3. App uses `AudioPlaybackCaptureConfiguration` (API 29+) to capture mixed playback PCM.
-4. Feed PCM into the existing STT → translate → TTS pipeline (same as mic chunks).
+1. Choose **Live Translate** on Home.
+2. Select **App audio** or **Screen text**.
+3. Tap **Start Live Translate**.
+4. Allow the **screen/audio capture** permission when prompted.
+5. Optionally enable **Display over other apps** for the caption bubble.
+6. **App audio:** play media with speech. **Screen text:** open an app with visible text (subtitles, chat, games).
 
-## Out of scope (permanent)
+**Mic Translate** still uses the device microphone only (no MediaProjection).
 
-- **Play TTS as another app’s microphone** (VB-Cable / virtual mic) — not available on Android.
-- True per-app isolation like Windows process loopback — MediaProjection captures mixed playback (with optional UID allow/deny lists where OEM supports it).
+## Limits
 
-## Implementation sketch (future PR)
+- Requires **Android 10+**.
+- App audio is mixed playback, not true per-app isolation like Windows process loopback.
+- Some apps set `ALLOW_CAPTURE_BY_NONE` and **cannot** be captured for audio.
+- Screen OCR uses a scaled frame (~720px long edge) about every 1.5s; heavy on CPU/battery vs audio mode.
+- OCR script follows the Home **From** language (latin / CJK / Devanagari); `auto` uses latin.
+- TTS uses accessibility audio usage so it is less likely to be re-captured into the audio pipeline.
+- Virtual mic / “play as Zoom mic” remains unavailable on Android.
 
-- Native `MediaProjection` permission Activity + foreground service type `mediaProjection`.
-- Dart `MethodChannel` to start/stop capture and stream PCM frames.
-- Reuse `MicTranslateService` ingest path (or shared chunk processor) with WAV framing at 16 kHz mono.
-- UI toggle on Home: Mic vs Media audio (mutually exclusive).
-- Document Play Store policy: declare `FOREGROUND_SERVICE_MEDIA_PROJECTION` and justify screen capture.
+## Implementation
 
-## Status
-
-Not implemented in the mic-mode parity release. Track as a separate PR after Home captions / voices / settings land.
+- Native: `PlaybackCaptureService` (`EXTRA_MODE` = `audio` \| `screen`) + MainActivity channels.
+- Dart: `playback_capture.dart` (`PlaybackCaptureMode`) → `MicTranslateService` (`CaptureSource.playback` \| `screen`).
+- OCR: `screen_ocr.dart` + `google_mlkit_text_recognition`.
+- Overlay: same bubble when Live mode is on.

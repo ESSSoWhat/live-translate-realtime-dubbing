@@ -27,6 +27,7 @@ dependencies:
   shared_preferences: ^2.3.3
   file_picker: ^8.1.7
   audio_session: ^0.1.25
+  google_mlkit_text_recognition: ^0.15.0
 
 dev_dependencies:
   flutter_test:

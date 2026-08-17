@@ -47,7 +47,10 @@ class OverlayTranslateController {
   static bool get _android =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
-  Future<OverlayStartResult> start({bool showOverlay = true}) async {
+  Future<OverlayStartResult> start({
+    bool showOverlay = true,
+    CaptureSource captureSource = CaptureSource.microphone,
+  }) async {
     if (_active) {
       if (showOverlay && !_overlayShown && _android) {
         final shown = await _tryShowOverlay();
@@ -56,15 +59,17 @@ class OverlayTranslateController {
       return OverlayStartResult(started: true, overlayShown: _overlayShown);
     }
 
-    // Start capture first so the button never appears to do nothing while
-    // waiting on overlay settings / Play services.
-    if (_android) {
+    // Mic mode: microphone FGS. Live audio/screen: MediaProjection FGS is
+    // started inside [MicTranslateService.start] after consent.
+    if (_android && captureSource == CaptureSource.microphone) {
       await MicForegroundService.start();
     }
 
-    final started = await service.start();
+    final started = await service.start(source: captureSource);
     if (!started) {
-      if (_android) await MicForegroundService.stop();
+      if (_android && captureSource == CaptureSource.microphone) {
+        await MicForegroundService.stop();
+      }
       return const OverlayStartResult(started: false, overlayShown: false);
     }
 

@@ -46,12 +46,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _isToggling = false;
   /// [AppSettings.modeMic] or [AppSettings.modeLive].
   String _mode = AppSettings.modeMic;
+  /// [AppSettings.liveCaptureAudio] or [AppSettings.liveCaptureScreen].
+  String _liveCaptureMode = AppSettings.liveCaptureAudio;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _mode = AppSettings.translateMode;
+    _liveCaptureMode = AppSettings.liveCaptureMode;
     _sourceLanguage = AppSettings.sourceLanguage;
     _targetLanguage = AppSettings.targetLanguage;
     if (!kSourceLanguages.any((l) => l.code == _sourceLanguage)) {
@@ -138,6 +141,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() => _mode = mode);
     unawaited(AppSettings.setTranslateMode(mode));
   }
+
+  void _setLiveCaptureMode(String mode) {
+    if (_translating ||
+        (mode != AppSettings.liveCaptureAudio &&
+            mode != AppSettings.liveCaptureScreen)) {
+      return;
+    }
+    setState(() => _liveCaptureMode = mode);
+    unawaited(AppSettings.setLiveCaptureMode(mode));
+  }
+
+  CaptureSource get _liveCaptureSource =>
+      _liveCaptureMode == AppSettings.liveCaptureScreen
+          ? CaptureSource.screen
+          : CaptureSource.playback;
 
   void _showPaywall() {
     Navigator.of(context).push(
@@ -254,26 +272,45 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await _maybeAutoClone();
       if (!mounted) return;
       if (mounted) setState(() => _status = 'Starting…');
-      final useOverlay = _mode == AppSettings.modeLive && Platform.isAndroid;
-      final result = await _overlayController.start(showOverlay: useOverlay);
+      final live = _mode == AppSettings.modeLive && Platform.isAndroid;
+      final liveScreen = live &&
+          _liveCaptureMode == AppSettings.liveCaptureScreen;
+      final result = await _overlayController.start(
+        showOverlay: live,
+        captureSource: live ? _liveCaptureSource : CaptureSource.microphone,
+      );
       if (!mounted) return;
       setState(() {
         _translating = result.started;
         if (!result.started) {
-          _status = 'Could not start — check microphone permission';
+          _status = live
+              ? 'Could not start — allow screen/audio capture when prompted'
+              : 'Could not start — check microphone permission';
         }
       });
       if (result.started &&
-          useOverlay &&
+          live &&
           !result.overlayShown &&
           Platform.isAndroid) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Live Translate is running. Enable “Display over other apps” '
-              'to show the caption bubble on top of other apps.',
+              liveScreen
+                  ? 'Live Translate is reading on-screen text. Enable “Display over other apps” for the caption bubble.'
+                  : 'Live Translate is capturing app audio. Enable “Display over other apps” for the caption bubble.',
             ),
-            duration: Duration(seconds: 5),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      } else if (result.started && live) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              liveScreen
+                  ? 'Switch to an app with visible text. OCR updates about every 1–2 seconds.'
+                  : 'Play media with speech (e.g. YouTube). Some apps block audio capture.',
+            ),
+            duration: const Duration(seconds: 4),
           ),
         );
       }
@@ -427,12 +464,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const SizedBox(height: 6),
               Text(
                 _mode == AppSettings.modeLive
-                    ? 'Live: mic + overlay bubble while you use other apps'
+                    ? (_liveCaptureMode == AppSettings.liveCaptureScreen
+                        ? 'Live: read visible text on screen (OCR) + overlay'
+                        : 'Live: capture audio from apps you play + overlay')
                     : 'Mic: capture your microphone; captions stay in this app',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
               ),
+              if (_mode == AppSettings.modeLive && Platform.isAndroid) ...[
+                const SizedBox(height: 8),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment<String>(
+                      value: AppSettings.liveCaptureAudio,
+                      label: Text('App audio'),
+                      icon: Icon(Icons.headphones, size: 18),
+                    ),
+                    ButtonSegment<String>(
+                      value: AppSettings.liveCaptureScreen,
+                      label: Text('Screen text'),
+                      icon: Icon(Icons.text_fields, size: 18),
+                    ),
+                  ],
+                  selected: {_liveCaptureMode},
+                  onSelectionChanged: _translating
+                      ? null
+                      : (next) {
+                          if (next.isEmpty) return;
+                          _setLiveCaptureMode(next.first);
+                        },
+                ),
+              ],
               const SizedBox(height: 12),
               Row(
                 children: [
