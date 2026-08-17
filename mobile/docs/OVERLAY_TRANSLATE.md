@@ -1,6 +1,6 @@
 # Overlay live translation (Android)
 
-When you start translation from Home, the app can show a **draggable bubble** over other apps with status, live captions (source + translation), mute TTS, and stop. Caption font size and opacity follow **Settings**.
+When you start translation from Home, the app can show a **draggable bubble** over other apps with status, live captions (source + translation), **voice picker**, **TTS volume**, mute TTS, and stop. Caption font size and opacity follow **Settings**.
 
 ## Grant “Display over other apps”
 
@@ -30,7 +30,7 @@ While translation runs with the overlay / background keep-alive:
 
 ## Quick test checklist
 
-- Start translate on Home → grant overlay → leave app → open another app → bubble visible; captions update when speaking into the mic; TTS plays unless muted.
+- Start translate on Home → grant overlay → leave app → open another app → bubble visible; captions update when speaking into the mic; TTS plays unless muted; volume slider and voice dropdown work from the expanded bubble.
 - Stop from the bubble and from Home; both tear down cleanly.
 - Deny overlay permission → in-app translate still works.
 - Background ~1+ minute: notification present; recording does not die silently.

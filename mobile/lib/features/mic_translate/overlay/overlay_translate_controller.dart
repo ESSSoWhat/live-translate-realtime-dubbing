@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
+import '../../../services/api_client.dart';
 import '../../../services/app_settings.dart';
 import '../mic_translate_service.dart';
 import 'mic_foreground_service.dart';
@@ -27,6 +28,7 @@ class OverlayTranslateController {
   final MicTranslateService service;
 
   final _activeController = StreamController<bool>.broadcast();
+  final _api = ApiClient();
   StreamSubscription<String>? _statusSub;
   StreamSubscription<String>? _sourceSub;
   StreamSubscription<String>? _translatedSub;
@@ -36,6 +38,7 @@ class OverlayTranslateController {
   String _status = '';
   String _source = '';
   String _translated = '';
+  List<Map<String, String>> _voices = const [];
   bool _active = false;
   bool _overlayShown = false;
   bool _mainBridgeReady = false;
@@ -94,21 +97,16 @@ class OverlayTranslateController {
     return _tryShowOverlay();
   }
 
-  /// Shows the bubble if already allowed; otherwise opens the system settings
-  /// page without blocking translation (requestPermission can hang until grant).
   Future<bool> _tryShowOverlay() async {
     try {
       final granted = await FlutterOverlayWindow.isPermissionGranted();
       if (!granted) {
-        // Open settings; do not await — the Future often never completes until
-        // the user grants permission, which froze Home "Start translation".
         unawaited(FlutterOverlayWindow.requestPermission());
         return false;
       }
       _ensureMainBridge();
-      // enableDrag MUST be false: the plugin's native OnTouchListener otherwise
-      // steals taps so Flutter widgets never receive them.
-      // centerRight pins the bubble to the right screen border without moveOverlay.
+      unawaited(_refreshVoices());
+      // enableDrag MUST be false: native drag steals Flutter taps.
       await FlutterOverlayWindow.showOverlay(
         height: 72,
         width: 72,
@@ -126,6 +124,37 @@ class OverlayTranslateController {
     } catch (_) {
       _overlayShown = false;
       return false;
+    }
+  }
+
+  Future<void> _refreshVoices() async {
+    try {
+      final list = await _api.getVoices();
+      final mapped = <Map<String, String>>[];
+      for (final m in list) {
+        final id = (m['voice_id'] as String?)?.trim() ?? '';
+        if (id.isEmpty) continue;
+        mapped.add({
+          'id': id,
+          'name': (m['name'] as String?)?.trim().isNotEmpty == true
+              ? (m['name'] as String).trim()
+              : id,
+        });
+      }
+      if (mapped.isEmpty) {
+        mapped.add({
+          'id': MicTranslateService.defaultVoiceId,
+          'name': 'Rachel',
+        });
+      }
+      _voices = mapped;
+      _schedulePush(immediate: true);
+    } catch (_) {
+      if (_voices.isEmpty) {
+        _voices = [
+          {'id': MicTranslateService.defaultVoiceId, 'name': 'Rachel'},
+        ];
+      }
     }
   }
 
@@ -195,7 +224,23 @@ class OverlayTranslateController {
     } else if (type == 'toggleMute') {
       service.muted = !service.muted;
       _schedulePush(immediate: true);
+    } else if (type == 'setVolume') {
+      final v = map['volume'];
+      if (v is num) {
+        final volume = v.toDouble().clamp(0.0, 1.0);
+        service.volume = volume;
+        unawaited(AppSettings.setTtsVolume(volume));
+        _schedulePush(immediate: true);
+      }
+    } else if (type == 'setVoice') {
+      final id = map['voiceId'] as String?;
+      if (id != null && id.isNotEmpty) {
+        service.voiceId = id;
+        unawaited(AppSettings.setVoiceId(id));
+        _schedulePush(immediate: true);
+      }
     } else if (type == 'ready') {
+      unawaited(_refreshVoices());
       _schedulePush(immediate: true);
     }
   }
@@ -218,7 +263,6 @@ class OverlayTranslateController {
     });
   }
 
-  /// Coalesce rapid status/caption events so the bubble does not flicker.
   void _schedulePush({bool immediate = false}) {
     if (!_overlayShown) return;
     _pushDebounce?.cancel();
@@ -239,13 +283,15 @@ class OverlayTranslateController {
       'source': _source,
       'translated': _translated,
       'muted': service.muted,
+      'volume': service.volume,
+      'voiceId': service.voiceId,
+      'voices': _voices,
       'fontSize': AppSettings.captionFontSize,
       'opacity': AppSettings.captionOpacity,
     });
     if (payload == _lastPayload) return;
     _lastPayload = payload;
 
-    // Prefer IsolateNameServer; only fall back to shareData if no listener yet.
     final delivered = OverlayBridge.sendToOverlay(payload);
     if (!delivered) {
       try {
