@@ -457,8 +457,13 @@ class _CloneVoiceDialogState extends State<_CloneVoiceDialog> {
           encoder: AudioEncoder.wav,
           sampleRate: 16000,
           numChannels: 1,
+          audioInterruption: AudioInterruptionMode.none,
           echoCancel: true,
           noiseSuppress: true,
+          androidConfig: AndroidRecordConfig(
+            manageBluetooth: false,
+            audioSource: AndroidAudioSource.voiceRecognition,
+          ),
         ),
         path: path,
       );

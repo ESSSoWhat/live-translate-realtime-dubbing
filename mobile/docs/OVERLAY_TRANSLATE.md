@@ -14,6 +14,8 @@ Overlay / Home translation uses the **device microphone** (chunked WAV → backe
 
 It does **not** capture YouTube/Telegram **playback** audio internally. That needs MediaProjection — see [MEDIA_PROJECTION_PHASE2.md](MEDIA_PROJECTION_PHASE2.md).
 
+Live Translate listens on the **microphone** while other apps play audio. Recording is configured not to take exclusive audio focus, so YouTube should keep playing when the bubble shows “Listening…”. Spoken TTS may briefly duck (not fully stop) other media.
+
 Desktop-only (not on Android): WASAPI/app loopback, VB-Cable “play as mic” into Zoom/Discord.
 
 ## Background notification

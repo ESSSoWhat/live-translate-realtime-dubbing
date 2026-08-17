@@ -26,6 +26,7 @@ dependencies:
   http_parser: ^4.0.2
   shared_preferences: ^2.3.3
   file_picker: ^8.1.7
+  audio_session: ^0.1.25
 
 dev_dependencies:
   flutter_test:

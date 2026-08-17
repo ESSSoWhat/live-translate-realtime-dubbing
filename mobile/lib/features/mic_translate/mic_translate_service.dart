@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:dio/dio.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -42,11 +43,13 @@ class MicTranslateService {
   final _api = ApiClient();
   final _auth = AuthService();
   final _record = AudioRecorder();
-  final _player = AudioPlayer();
+  // Duck (don't pause) other media like YouTube while TTS speaks.
+  final _player = AudioPlayer(handleInterruptions: true);
   final _statusController = StreamController<String>.broadcast();
   final _paywallController = StreamController<void>.broadcast();
   final _sourceTextController = StreamController<String>.broadcast();
   final _translatedTextController = StreamController<String>.broadcast();
+  bool _audioSessionReady = false;
 
   Stream<String> get statusStream => _statusController.stream;
 
@@ -94,12 +97,44 @@ class MicTranslateService {
       _statusController.add('Microphone permission denied');
       return false;
     }
+    await _ensureAudioSession();
     _running = true;
     _statusController.add('Starting…');
     unawaited(_runLoop().catchError((e, s) {
       if (_running) _statusController.add('Error: $e');
     }));
     return true;
+  }
+
+  /// Prefer ducking YouTube/media instead of pausing it when we listen or speak.
+  Future<void> _ensureAudioSession() async {
+    if (_audioSessionReady) return;
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(
+        AudioSessionConfiguration(
+          avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+          avAudioSessionCategoryOptions:
+              AVAudioSessionCategoryOptions.mixWithOthers |
+                  AVAudioSessionCategoryOptions.defaultToSpeaker |
+                  AVAudioSessionCategoryOptions.allowBluetooth,
+          avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+          avAudioSessionRouteSharingPolicy:
+              AVAudioSessionRouteSharingPolicy.defaultPolicy,
+          androidAudioAttributes: const AndroidAudioAttributes(
+            contentType: AndroidAudioContentType.speech,
+            flags: AndroidAudioFlags.none,
+            usage: AndroidAudioUsage.assistanceAccessibility,
+          ),
+          androidAudioFocusGainType:
+              AndroidAudioFocusGainType.gainTransientMayDuck,
+          androidWillPauseWhenDucked: false,
+        ),
+      );
+      _audioSessionReady = true;
+    } catch (_) {
+      // Still run without session tweaks if configuration fails.
+    }
   }
 
   Future<void> stop() async {
@@ -198,10 +233,18 @@ class MicTranslateService {
           encoder: AudioEncoder.wav,
           sampleRate: 16000,
           numChannels: 1,
+          // Keep YouTube/other media playing while we listen (Live Translate).
+          audioInterruption: AudioInterruptionMode.none,
           // Reduce speaker→mic feedback when TTS plays through the device.
           echoCancel: true,
           noiseSuppress: true,
           autoGain: true,
+          androidConfig: AndroidRecordConfig(
+            // SCO headset routing often interrupts media playback.
+            manageBluetooth: false,
+            audioSource: AndroidAudioSource.voiceRecognition,
+            audioManagerMode: AudioManagerMode.modeNormal,
+          ),
         ),
         path: path,
       );
