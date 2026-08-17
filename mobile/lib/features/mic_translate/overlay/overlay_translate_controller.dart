@@ -121,8 +121,9 @@ class OverlayTranslateController {
       await Future<void>.delayed(const Duration(milliseconds: 300));
       _schedulePush(immediate: true);
       return true;
-    } catch (_) {
+    } catch (e, st) {
       _overlayShown = false;
+      debugPrint('Overlay show failed: $e\n$st');
       return false;
     }
   }

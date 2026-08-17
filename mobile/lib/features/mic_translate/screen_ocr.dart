@@ -40,6 +40,9 @@ class ScreenOcr {
       final recognized =
           await _recognizer.processImage(InputImage.fromFilePath(path));
       return _joinText(recognized);
+    } catch (_) {
+      // Native ML Kit failures on some emulator ABIs should not kill the loop.
+      return '';
     } finally {
       try {
         await file.delete();

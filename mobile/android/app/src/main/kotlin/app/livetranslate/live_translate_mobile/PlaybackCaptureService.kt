@@ -275,6 +275,7 @@ class PlaybackCaptureService : Service() {
 
         val bitmap = if (rowPadding == 0 && pixelStride == 4) {
             val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            buffer.rewind()
             bmp.copyPixelsFromBuffer(buffer)
             bmp
         } else {
@@ -283,6 +284,7 @@ class PlaybackCaptureService : Service() {
                 height,
                 Bitmap.Config.ARGB_8888,
             )
+            buffer.rewind()
             bmp.copyPixelsFromBuffer(buffer)
             Bitmap.createBitmap(bmp, 0, 0, width, height).also {
                 if (it !== bmp) bmp.recycle()

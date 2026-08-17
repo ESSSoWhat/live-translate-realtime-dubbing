@@ -147,7 +147,13 @@ class MicTranslateService {
         return false;
       }
       if (source == CaptureSource.screen) {
-        _screenOcr = ScreenOcr(sourceLanguage: _sourceLanguage);
+        try {
+          _screenOcr = ScreenOcr(sourceLanguage: _sourceLanguage);
+        } catch (e) {
+          await PlaybackCapture.stop();
+          _statusController.add('Screen OCR unavailable on this device');
+          return false;
+        }
         _lastOcrNormalized = '';
         _lastOcrEmittedAt = null;
       }

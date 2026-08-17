@@ -4,14 +4,26 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
-import '../mic_translate_service.dart';
 import 'overlay_bridge.dart';
+
+/// Default ElevenLabs voice (Rachel) — keep in sync with MicTranslateService.
+/// Do NOT import mic_translate_service here: the overlay isolate must stay light.
+const _kDefaultVoiceId = '21m00Tcm4TlvDq8ikWAM';
 
 /// Separate Flutter entry point for the Android overlay bubble.
 /// Prefer calling [overlayMain] from `main.dart` so the VM entry-point is linked.
 void runOverlayTranslateApp() {
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(const OverlayTranslateApp());
+  runZonedGuarded(() {
+    WidgetsFlutterBinding.ensureInitialized();
+    FlutterError.onError = (details) {
+      FlutterError.dumpErrorToConsole(details, forceReport: true);
+    };
+    runApp(const OverlayTranslateApp());
+  }, (Object error, StackTrace stack) {
+    // Keep the overlay engine alive; log instead of killing the process.
+    // ignore: avoid_print
+    print('Overlay isolate error: $error\n$stack');
+  });
 }
 
 class OverlayTranslateApp extends StatelessWidget {
@@ -40,7 +52,7 @@ class OverlayBubble extends StatefulWidget {
 class _OverlayBubbleState extends State<OverlayBubble> {
   static const _collapsedSize = 72;
   static const _expandedWidth = 300;
-  static const _expandedHeight = 340;
+  static const _expandedHeight = 320;
 
   StreamSubscription<dynamic>? _shareSub;
   bool _bridgeReady = false;
@@ -53,16 +65,24 @@ class _OverlayBubbleState extends State<OverlayBubble> {
   double _fontSize = 14;
   double _opacity = 1;
   double _volume = 1;
-  String _voiceId = MicTranslateService.defaultVoiceId;
-  List<({String id, String name})> _voices = const [];
+  String _voiceId = _kDefaultVoiceId;
+  List<Map<String, String>> _voices = const [];
   String? _lastUpdateKey;
 
   @override
   void initState() {
     super.initState();
     OverlayBridge.listenOnOverlay(_onBridgeEvent);
-    _shareSub = FlutterOverlayWindow.overlayListener.listen(_onShareEvent);
-    OverlayBridge.sendToMain(jsonEncode({'type': 'ready'}));
+    try {
+      _shareSub = FlutterOverlayWindow.overlayListener.listen(_onShareEvent);
+    } catch (e) {
+      // Plugin channel may not be ready in the overlay engine yet.
+      // ignore: avoid_print
+      print('Overlay share listener unavailable: $e');
+    }
+    try {
+      OverlayBridge.sendToMain(jsonEncode({'type': 'ready'}));
+    } catch (_) {}
   }
 
   @override
@@ -122,19 +142,23 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     if (vid is String && vid.isNotEmpty) voiceId = vid;
     final rawVoices = map['voices'];
     if (rawVoices is List) {
-      final parsed = <({String id, String name})>[];
+      final parsed = <Map<String, String>>[];
       for (final item in rawVoices) {
         if (item is! Map) continue;
         final id = item['id']?.toString() ?? '';
         if (id.isEmpty) continue;
         final name = item['name']?.toString();
-        parsed.add((id: id, name: (name == null || name.isEmpty) ? id : name));
+        parsed.add({
+          'id': id,
+          'name': (name == null || name.isEmpty) ? id : name,
+        });
       }
       if (parsed.isNotEmpty) voices = parsed;
     }
 
+    final voiceKey = voices.map((v) => v['id']).join(',');
     final key =
-        '$status|$source|$translated|$muted|$fontSize|$opacity|$volume|$voiceId|${voices.map((v) => v.id).join(',')}';
+        '$status|$source|$translated|$muted|$fontSize|$opacity|$volume|$voiceId|$voiceKey';
     if (key == _lastUpdateKey) return;
     _lastUpdateKey = key;
 
@@ -198,9 +222,9 @@ class _OverlayBubbleState extends State<OverlayBubble> {
   }
 
   String get _selectedVoiceId {
-    if (_voices.any((v) => v.id == _voiceId)) return _voiceId;
-    if (_voices.isNotEmpty) return _voices.first.id;
-    return MicTranslateService.defaultVoiceId;
+    if (_voices.any((v) => v['id'] == _voiceId)) return _voiceId;
+    if (_voices.isNotEmpty) return _voices.first['id']!;
+    return _kDefaultVoiceId;
   }
 
   @override
@@ -232,6 +256,7 @@ class _OverlayBubbleState extends State<OverlayBubble> {
       elevation: 8,
       borderRadius: BorderRadius.circular(16),
       color: scheme.surface,
+      clipBehavior: Clip.antiAlias,
       child: SizedBox(
         width: _expandedWidth.toDouble(),
         height: _expandedHeight.toDouble(),
@@ -258,26 +283,13 @@ class _OverlayBubbleState extends State<OverlayBubble> {
                   ),
                 ],
               ),
-              DropdownButtonFormField<String>(
-                // ignore: deprecated_member_use
-                value: _voices.isEmpty ? null : _selectedVoiceId,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  labelText: 'Voice',
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                ),
-                items: [
-                  for (final v in _voices)
-                    DropdownMenuItem<String>(
-                      value: v.id,
-                      child: Text(v.name, overflow: TextOverflow.ellipsis),
-                    ),
-                ],
-                onChanged: _voices.isEmpty ? null : _setVoice,
+              // Avoid DropdownButtonFormField menus in tiny overlay windows —
+              // use a simple cycling button when few voices, dropdown otherwise.
+              _VoicePicker(
+                voices: _voices,
+                selectedId: _selectedVoiceId,
+                onSelected: _setVoice,
               ),
-              const SizedBox(height: 4),
               Row(
                 children: [
                   Icon(
@@ -294,9 +306,13 @@ class _OverlayBubbleState extends State<OverlayBubble> {
                       onChangeEnd: _muted ? null : _setVolume,
                     ),
                   ),
-                  Text(
-                    '${(_volume * 100).round()}%',
-                    style: Theme.of(context).textTheme.labelSmall,
+                  SizedBox(
+                    width: 36,
+                    child: Text(
+                      '${(_volume * 100).round()}%',
+                      style: Theme.of(context).textTheme.labelSmall,
+                      textAlign: TextAlign.end,
+                    ),
                   ),
                 ],
               ),
@@ -366,6 +382,65 @@ class _OverlayBubbleState extends State<OverlayBubble> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Compact voice control that does not rely on overlay popup menus.
+class _VoicePicker extends StatelessWidget {
+  const _VoicePicker({
+    required this.voices,
+    required this.selectedId,
+    required this.onSelected,
+  });
+
+  final List<Map<String, String>> voices;
+  final String selectedId;
+  final ValueChanged<String?> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    if (voices.isEmpty) {
+      return Text(
+        'Voice: loading…',
+        style: Theme.of(context).textTheme.labelMedium,
+      );
+    }
+    final idx = voices.indexWhere((v) => v['id'] == selectedId);
+    final current = idx >= 0 ? voices[idx] : voices.first;
+    final name = current['name'] ?? current['id'] ?? 'Voice';
+
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+        ),
+        IconButton(
+          tooltip: 'Previous voice',
+          visualDensity: VisualDensity.compact,
+          onPressed: () {
+            final i = idx >= 0 ? idx : 0;
+            final prev = (i - 1 + voices.length) % voices.length;
+            onSelected(voices[prev]['id']);
+          },
+          icon: const Icon(Icons.chevron_left),
+        ),
+        IconButton(
+          tooltip: 'Next voice',
+          visualDensity: VisualDensity.compact,
+          onPressed: () {
+            final i = idx >= 0 ? idx : 0;
+            final next = (i + 1) % voices.length;
+            onSelected(voices[next]['id']);
+          },
+          icon: const Icon(Icons.chevron_right),
+        ),
+      ],
     );
   }
 }
