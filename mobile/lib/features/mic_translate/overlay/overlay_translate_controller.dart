@@ -8,7 +8,6 @@ import '../../../services/app_settings.dart';
 import '../mic_translate_service.dart';
 import 'mic_foreground_service.dart';
 import 'overlay_bridge.dart';
-import 'overlay_dock.dart';
 
 /// Result of [OverlayTranslateController.start].
 class OverlayStartResult {
@@ -107,22 +106,21 @@ class OverlayTranslateController {
         return false;
       }
       _ensureMainBridge();
-      // topLeft gravity: PositionGravity.auto snap math uses left-origin X.
-      // (centerRight + auto can push the bubble off-screen / untappable.)
+      // enableDrag MUST be false: the plugin's native OnTouchListener otherwise
+      // steals taps so Flutter widgets never receive them.
+      // centerRight pins the bubble to the right screen border without moveOverlay.
       await FlutterOverlayWindow.showOverlay(
         height: 72,
         width: 72,
-        alignment: OverlayAlignment.topLeft,
-        enableDrag: true,
+        alignment: OverlayAlignment.centerRight,
+        enableDrag: false,
         overlayTitle: 'Live Translate',
         overlayContent: 'Translation is running',
         flag: OverlayFlag.focusPointer,
-        positionGravity: PositionGravity.auto,
+        positionGravity: PositionGravity.none,
       );
       _overlayShown = true;
-      await dockOverlayToEdge(width: 72, height: 72, preferRight: true);
-      // Overlay isolate registers its port asynchronously — one delayed push.
-      await Future<void>.delayed(const Duration(milliseconds: 350));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
       _schedulePush(immediate: true);
       return true;
     } catch (_) {
