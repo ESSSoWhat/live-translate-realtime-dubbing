@@ -162,6 +162,8 @@ class MicTranslateService {
   }
 
   /// Prefer ducking YouTube/media instead of pausing it when we listen or speak.
+  /// TTS uses [AndroidAudioUsage.assistant] so it stays audible (accessibility
+  /// stream is often muted) while still excluded from AudioPlaybackCapture.
   Future<void> _ensureAudioSession() async {
     if (_audioSessionReady) return;
     try {
@@ -179,13 +181,14 @@ class MicTranslateService {
           androidAudioAttributes: const AndroidAudioAttributes(
             contentType: AndroidAudioContentType.speech,
             flags: AndroidAudioFlags.none,
-            usage: AndroidAudioUsage.assistanceAccessibility,
+            usage: AndroidAudioUsage.assistant,
           ),
           androidAudioFocusGainType:
               AndroidAudioFocusGainType.gainTransientMayDuck,
           androidWillPauseWhenDucked: false,
         ),
       );
+      await session.setActive(true);
       _audioSessionReady = true;
     } catch (_) {
       // Still run without session tweaks if configuration fails.
@@ -504,8 +507,13 @@ class MicTranslateService {
       try {
         await _record.stop();
       } catch (_) {}
+      try {
+        final session = await AudioSession.instance;
+        await session.setActive(true);
+      } catch (_) {}
+      await _player.stop();
       await _player.setFilePath(path);
-      await _player.setVolume(_volume);
+      await _player.setVolume(_volume <= 0 ? 1.0 : _volume);
       await _player.play();
       await _player.playerStateStream.firstWhere((s) =>
           s.processingState == ProcessingState.completed ||

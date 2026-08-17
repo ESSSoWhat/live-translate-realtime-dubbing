@@ -25,7 +25,7 @@ Live Translate on Android uses the system **MediaProjection** consent dialog. Un
 - Some apps set `ALLOW_CAPTURE_BY_NONE` and **cannot** be captured for audio.
 - Screen OCR uses a scaled frame (~720px long edge) about every 1.5s; heavy on CPU/battery vs audio mode.
 - OCR script follows the Home **From** language (latin / CJK / Devanagari); `auto` uses latin.
-- TTS uses accessibility audio usage so it is less likely to be re-captured into the audio pipeline.
+- TTS uses assistant audio usage so it stays audible and is not re-captured by AudioPlaybackCapture.
 - Virtual mic / “play as Zoom mic” remains unavailable on Android.
 
 ## Implementation

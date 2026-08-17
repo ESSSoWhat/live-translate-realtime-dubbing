@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
 import 'overlay_bridge.dart';
+import 'overlay_dock.dart';
 
 /// Separate Flutter entry point for the Android overlay bubble.
 /// Prefer calling [overlayMain] from `main.dart` so the VM entry-point is linked.
@@ -139,19 +140,11 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     try {
       // Keep focusPointer so expand/collapse controls stay tappable.
       await FlutterOverlayWindow.updateFlag(OverlayFlag.focusPointer);
-      if (next) {
-        await FlutterOverlayWindow.resizeOverlay(
-          _expandedWidth,
-          _expandedHeight,
-          true,
-        );
-      } else {
-        await FlutterOverlayWindow.resizeOverlay(
-          _collapsedSize,
-          _collapsedSize,
-          true,
-        );
-      }
+      final w = next ? _expandedWidth : _collapsedSize;
+      final h = next ? _expandedHeight : _collapsedSize;
+      await FlutterOverlayWindow.resizeOverlay(w, h, true);
+      // Re-dock after resize so the panel stays on the L/R border.
+      await dockOverlayToEdge(width: w, height: h);
     } catch (_) {
       // Keep UI state; native resize can fail if overlay was closed.
     } finally {
