@@ -39,20 +39,23 @@ class _OverlayBubbleState extends State<OverlayBubble> {
   static const _expandedHeight = 220;
 
   StreamSubscription<dynamic>? _shareSub;
+  bool _bridgeReady = false;
   bool _expanded = false;
   bool _muted = false;
+  bool _resizing = false;
   String _status = 'Listening…';
   String _source = '';
   String _translated = '';
   double _fontSize = 14;
   double _opacity = 1;
+  String? _lastUpdateKey;
 
   @override
   void initState() {
     super.initState();
-    OverlayBridge.listenOnOverlay(_onEvent);
-    // Secondary path if IsolateNameServer isn't ready yet.
-    _shareSub = FlutterOverlayWindow.overlayListener.listen(_onEvent);
+    OverlayBridge.listenOnOverlay(_onBridgeEvent);
+    // Temporary fallback until IsolateNameServer handshake completes.
+    _shareSub = FlutterOverlayWindow.overlayListener.listen(_onShareEvent);
     OverlayBridge.sendToMain(jsonEncode({'type': 'ready'}));
   }
 
@@ -63,7 +66,22 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     super.dispose();
   }
 
-  void _onEvent(dynamic event) {
+  void _onBridgeEvent(dynamic event) {
+    _bridgeReady = true;
+    // Drop shareData once the reliable bridge is live (avoids double setState).
+    if (_shareSub != null) {
+      unawaited(_shareSub!.cancel());
+      _shareSub = null;
+    }
+    _applyUpdate(event);
+  }
+
+  void _onShareEvent(dynamic event) {
+    if (_bridgeReady) return;
+    _applyUpdate(event);
+  }
+
+  void _applyUpdate(dynamic event) {
     Map<String, dynamic>? map;
     if (event is Map) {
       map = Map<String, dynamic>.from(event);
@@ -79,39 +97,65 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     }
     if (map == null || map['type'] != 'update') return;
     if (!mounted) return;
+
+    final status = (map['status'] as String?) ?? _status;
+    final source = (map['source'] as String?) ?? _source;
+    final translated = (map['translated'] as String?) ?? _translated;
+    final muted = (map['muted'] as bool?) ?? _muted;
+    var fontSize = _fontSize;
+    var opacity = _opacity;
+    final fs = map['fontSize'];
+    if (fs is num) fontSize = fs.toDouble();
+    final op = map['opacity'];
+    if (op is num) opacity = op.toDouble();
+
+    final key = '$status|$source|$translated|$muted|$fontSize|$opacity';
+    if (key == _lastUpdateKey) return;
+    _lastUpdateKey = key;
+
     setState(() {
-      _status = (map!['status'] as String?) ?? _status;
-      _source = (map['source'] as String?) ?? _source;
-      _translated = (map['translated'] as String?) ?? _translated;
-      _muted = (map['muted'] as bool?) ?? _muted;
-      final fs = map['fontSize'];
-      if (fs is num) _fontSize = fs.toDouble();
-      final op = map['opacity'];
-      if (op is num) _opacity = op.toDouble();
+      _status = status;
+      _source = source;
+      _translated = translated;
+      _muted = muted;
+      _fontSize = fontSize;
+      _opacity = opacity;
     });
   }
 
   void _send(Map<String, dynamic> payload) {
     final encoded = jsonEncode(payload);
-    OverlayBridge.sendToMain(encoded);
-    unawaited(FlutterOverlayWindow.shareData(encoded));
+    final delivered = OverlayBridge.sendToMain(encoded);
+    if (!delivered) {
+      unawaited(FlutterOverlayWindow.shareData(encoded));
+    }
   }
 
   Future<void> _toggleExpand() async {
+    if (_resizing) return;
     final next = !_expanded;
     setState(() => _expanded = next);
-    if (next) {
-      await FlutterOverlayWindow.resizeOverlay(
-        _expandedWidth,
-        _expandedHeight,
-        true,
-      );
-    } else {
-      await FlutterOverlayWindow.resizeOverlay(
-        _collapsedSize,
-        _collapsedSize,
-        true,
-      );
+    _resizing = true;
+    try {
+      // Keep focusPointer so expand/collapse controls stay tappable.
+      await FlutterOverlayWindow.updateFlag(OverlayFlag.focusPointer);
+      if (next) {
+        await FlutterOverlayWindow.resizeOverlay(
+          _expandedWidth,
+          _expandedHeight,
+          true,
+        );
+      } else {
+        await FlutterOverlayWindow.resizeOverlay(
+          _collapsedSize,
+          _collapsedSize,
+          true,
+        );
+      }
+    } catch (_) {
+      // Keep UI state; native resize can fail if overlay was closed.
+    } finally {
+      _resizing = false;
     }
   }
 
@@ -128,26 +172,22 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     if (!_expanded) {
       return Material(
         color: Colors.transparent,
-        child: GestureDetector(
-          onTap: _toggleExpand,
-          child: Container(
-            width: _collapsedSize.toDouble(),
-            height: _collapsedSize.toDouble(),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary,
-              shape: BoxShape.circle,
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x40000000),
-                  blurRadius: 8,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Icon(
-              _muted ? Icons.mic_off : Icons.translate,
-              color: Theme.of(context).colorScheme.onPrimary,
-              size: 32,
+        child: SizedBox(
+          width: _collapsedSize.toDouble(),
+          height: _collapsedSize.toDouble(),
+          child: Material(
+            color: Theme.of(context).colorScheme.primary,
+            shape: const CircleBorder(),
+            elevation: 4,
+            shadowColor: const Color(0x40000000),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: _toggleExpand,
+              child: Icon(
+                _muted ? Icons.mic_off : Icons.translate,
+                color: Theme.of(context).colorScheme.onPrimary,
+                size: 32,
+              ),
             ),
           ),
         ),
@@ -221,7 +261,7 @@ class _OverlayBubbleState extends State<OverlayBubble> {
                     ],
                     if (_source.isEmpty && _translated.isEmpty)
                       Text(
-                        'Speak near the mic — captions appear here.',
+                        'Captions appear here while Live Translate runs.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: scheme.onSurfaceVariant,
                             ),

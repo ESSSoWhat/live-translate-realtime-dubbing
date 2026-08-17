@@ -31,12 +31,20 @@ class OverlayBridge {
     port.listen(onMessage);
   }
 
-  static void sendToOverlay(dynamic message) {
-    IsolateNameServer.lookupPortByName(overlayPortName)?.send(message);
+  /// Returns true if a listener was registered and the message was sent.
+  static bool sendToOverlay(dynamic message) {
+    final port = IsolateNameServer.lookupPortByName(overlayPortName);
+    if (port == null) return false;
+    port.send(message);
+    return true;
   }
 
-  static void sendToMain(dynamic message) {
-    IsolateNameServer.lookupPortByName(mainPortName)?.send(message);
+  /// Returns true if a listener was registered and the message was sent.
+  static bool sendToMain(dynamic message) {
+    final port = IsolateNameServer.lookupPortByName(mainPortName);
+    if (port == null) return false;
+    port.send(message);
+    return true;
   }
 
   static void dispose() {

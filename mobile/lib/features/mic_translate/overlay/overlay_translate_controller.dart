@@ -30,6 +30,8 @@ class OverlayTranslateController {
   StreamSubscription<String>? _statusSub;
   StreamSubscription<String>? _sourceSub;
   StreamSubscription<String>? _translatedSub;
+  Timer? _pushDebounce;
+  String? _lastPayload;
 
   String _status = '';
   String _source = '';
@@ -111,15 +113,14 @@ class OverlayTranslateController {
         enableDrag: true,
         overlayTitle: 'Live Translate',
         overlayContent: 'Translation is running',
-        flag: OverlayFlag.defaultFlag,
+        // focusPointer: taps/buttons work reliably on the overlay window.
+        flag: OverlayFlag.focusPointer,
         positionGravity: PositionGravity.auto,
       );
       _overlayShown = true;
-      // Overlay isolate registers its port asynchronously — push a few times.
-      for (var i = 0; i < 5; i++) {
-        await Future<void>.delayed(Duration(milliseconds: 200 * (i + 1)));
-        await _pushUpdate();
-      }
+      // Overlay isolate registers its port asynchronously — one delayed push.
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      _schedulePush(immediate: true);
       return true;
     } catch (_) {
       _overlayShown = false;
@@ -128,6 +129,9 @@ class OverlayTranslateController {
   }
 
   Future<void> stop() async {
+    _pushDebounce?.cancel();
+    _pushDebounce = null;
+    _lastPayload = null;
     if (!_active && !_overlayShown) {
       await service.stop();
       if (_android) await MicForegroundService.stop();
@@ -148,6 +152,8 @@ class OverlayTranslateController {
   }
 
   void dispose() {
+    _pushDebounce?.cancel();
+    _pushDebounce = null;
     _statusSub?.cancel();
     _sourceSub?.cancel();
     _translatedSub?.cancel();
@@ -187,9 +193,9 @@ class OverlayTranslateController {
       unawaited(stop());
     } else if (type == 'toggleMute') {
       service.muted = !service.muted;
-      unawaited(_pushUpdate());
+      _schedulePush(immediate: true);
     } else if (type == 'ready') {
-      unawaited(_pushUpdate());
+      _schedulePush(immediate: true);
     }
   }
 
@@ -199,14 +205,27 @@ class OverlayTranslateController {
     _translatedSub?.cancel();
     _statusSub = service.statusStream.listen((s) {
       _status = s;
-      unawaited(_pushUpdate());
+      _schedulePush();
     });
     _sourceSub = service.sourceTextStream.listen((s) {
       _source = s;
-      unawaited(_pushUpdate());
+      _schedulePush();
     });
     _translatedSub = service.translatedTextStream.listen((s) {
       _translated = s;
+      _schedulePush();
+    });
+  }
+
+  /// Coalesce rapid status/caption events so the bubble does not flicker.
+  void _schedulePush({bool immediate = false}) {
+    if (!_overlayShown) return;
+    _pushDebounce?.cancel();
+    if (immediate) {
+      unawaited(_pushUpdate());
+      return;
+    }
+    _pushDebounce = Timer(const Duration(milliseconds: 120), () {
       unawaited(_pushUpdate());
     });
   }
@@ -222,14 +241,22 @@ class OverlayTranslateController {
       'fontSize': AppSettings.captionFontSize,
       'opacity': AppSettings.captionOpacity,
     });
-    OverlayBridge.sendToOverlay(payload);
-    // Keep shareData as a secondary path for older plugin builds.
-    try {
-      await FlutterOverlayWindow.shareData(payload);
-    } catch (_) {}
+    if (payload == _lastPayload) return;
+    _lastPayload = payload;
+
+    // Prefer IsolateNameServer; only fall back to shareData if no listener yet.
+    final delivered = OverlayBridge.sendToOverlay(payload);
+    if (!delivered) {
+      try {
+        await FlutterOverlayWindow.shareData(payload);
+      } catch (_) {}
+    }
   }
 
   Future<void> _tearDownOverlay() async {
+    _pushDebounce?.cancel();
+    _pushDebounce = null;
+    _lastPayload = null;
     _statusSub?.cancel();
     _sourceSub?.cancel();
     _translatedSub?.cancel();
