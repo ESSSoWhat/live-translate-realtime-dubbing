@@ -77,7 +77,7 @@ class OverlayBubble extends StatefulWidget {
 class _OverlayBubbleState extends State<OverlayBubble> {
   static const _collapsedSize = 96;
   static const _expandedWidth = 300;
-  static const _expandedHeight = 340;
+  static const _expandedHeight = 360;
 
   StreamSubscription<dynamic>? _shareSub;
   bool _bridgeReady = false;
