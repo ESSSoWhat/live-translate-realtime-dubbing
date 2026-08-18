@@ -76,6 +76,20 @@ subprojects {
                             overlayFile.writeText(text)
                             logger.lifecycle("Patched flutter_overlay_window OverlayService for Android 14+ FGS")
                         }
+                        // showOverlay passes dp, but initial LayoutParams used raw px (tiny bubble).
+                        text = overlayFile.readText()
+                        if (!text.contains("/* LT_DP_SIZE */")) {
+                            text = text.replace(
+                                """WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                WindowSetup.width == -1999 ? -1 : WindowSetup.width,
+                WindowSetup.height != -1999 ? WindowSetup.height : screenHeight(),""",
+                                """WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                /* LT_DP_SIZE */ WindowSetup.width == -1999 ? -1 : (WindowSetup.width < 0 ? WindowSetup.width : dpToPx(WindowSetup.width)),
+                WindowSetup.height == -1999 ? screenHeight() : (WindowSetup.height < 0 ? WindowSetup.height : dpToPx(WindowSetup.height)),""",
+                            )
+                            overlayFile.writeText(text)
+                            logger.lifecycle("Patched flutter_overlay_window initial size to use dp")
+                        }
                     }
                     if (pluginFile.exists()) {
                         var text = pluginFile.readText()

@@ -50,7 +50,7 @@ class OverlayBubble extends StatefulWidget {
 }
 
 class _OverlayBubbleState extends State<OverlayBubble> {
-  static const _collapsedSize = 72;
+  static const _collapsedSize = 96;
   static const _expandedWidth = 300;
   static const _expandedHeight = 320;
 
@@ -191,13 +191,20 @@ class _OverlayBubbleState extends State<OverlayBubble> {
       await FlutterOverlayWindow.updateFlag(OverlayFlag.focusPointer);
       final w = next ? _expandedWidth : _collapsedSize;
       final h = next ? _expandedHeight : _collapsedSize;
-      // Resize the native window BEFORE flipping expanded UI. Otherwise the
-      // panel lays out inside the 72×72 bubble (RenderFlex overflow / red crash
-      // stripes in debug).
-      await FlutterOverlayWindow.resizeOverlay(w, h, false)
-          .timeout(const Duration(seconds: 2), onTimeout: () => false);
-      if (!mounted) return;
-      setState(() => _expanded = next);
+      if (next) {
+        // Expand: grow the native window first, then paint the panel.
+        await FlutterOverlayWindow.resizeOverlay(w, h, false)
+            .timeout(const Duration(seconds: 2), onTimeout: () => false);
+        if (!mounted) return;
+        setState(() => _expanded = true);
+      } else {
+        // Collapse: paint the bubble first, then shrink the native window.
+        // MediaQuery in this isolate reports full-screen size, so we cannot
+        // use it to detect window bounds — order matters instead.
+        setState(() => _expanded = false);
+        await FlutterOverlayWindow.resizeOverlay(w, h, false)
+            .timeout(const Duration(seconds: 2), onTimeout: () => false);
+      }
     } catch (_) {
       // Keep UI state; native resize can fail if overlay was closed.
     } finally {
@@ -235,11 +242,7 @@ class _OverlayBubbleState extends State<OverlayBubble> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    // Never paint the expanded panel until the native window is large enough.
-    final maxW = MediaQuery.sizeOf(context).width;
-    final showExpanded = _expanded && maxW >= (_expandedWidth * 0.6);
-
-    if (!showExpanded) {
+    if (!_expanded) {
       return SizedBox(
         width: _collapsedSize.toDouble(),
         height: _collapsedSize.toDouble(),

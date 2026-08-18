@@ -93,7 +93,14 @@ class OverlayTranslateController {
 
   /// Call when the app resumes so a newly granted overlay permission can attach.
   Future<bool> retryOverlayIfNeeded() async {
-    if (!_active || _overlayShown || !_android) return _overlayShown;
+    if (!_active || !_android) return false;
+    // Recover when Dart thinks the bubble is up but the native service died.
+    if (_overlayShown) {
+      try {
+        if (await FlutterOverlayWindow.isActive()) return true;
+      } catch (_) {}
+      _overlayShown = false;
+    }
     return _tryShowOverlay();
   }
 
@@ -107,9 +114,11 @@ class OverlayTranslateController {
       _ensureMainBridge();
       unawaited(_refreshVoices());
       // enableDrag MUST be false: native drag steals Flutter taps.
+      // Initial LayoutParams treat width/height as raw px; resizeOverlay uses dp.
+      const bubble = 96;
       await FlutterOverlayWindow.showOverlay(
-        height: 72,
-        width: 72,
+        height: bubble,
+        width: bubble,
         alignment: OverlayAlignment.centerRight,
         enableDrag: false,
         overlayTitle: 'Live Translate',
@@ -117,10 +126,35 @@ class OverlayTranslateController {
         flag: OverlayFlag.focusPointer,
         positionGravity: PositionGravity.none,
       );
-      _overlayShown = true;
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      _schedulePush(immediate: true);
-      return true;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      // Apply true dp size so the bubble is visible on high-density screens.
+      try {
+        await FlutterOverlayWindow.resizeOverlay(bubble, bubble, false);
+      } catch (_) {}
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final active = await FlutterOverlayWindow.isActive();
+      if (!active) {
+        debugPrint('Overlay service not active after show; retrying once');
+        await FlutterOverlayWindow.showOverlay(
+          height: bubble,
+          width: bubble,
+          alignment: OverlayAlignment.centerRight,
+          enableDrag: false,
+          overlayTitle: 'Live Translate',
+          overlayContent: 'Translation is running',
+          flag: OverlayFlag.focusPointer,
+          positionGravity: PositionGravity.none,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        try {
+          await FlutterOverlayWindow.resizeOverlay(bubble, bubble, false);
+        } catch (_) {}
+      }
+      _overlayShown = await FlutterOverlayWindow.isActive();
+      if (_overlayShown) {
+        _schedulePush(immediate: true);
+      }
+      return _overlayShown;
     } catch (e, st) {
       _overlayShown = false;
       debugPrint('Overlay show failed: $e\n$st');
