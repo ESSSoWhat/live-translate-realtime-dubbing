@@ -694,16 +694,16 @@ class MainWindow(QMainWindow):
         self._audio_meter = AudioMeter("Input Level")
         control_layout.addWidget(self._audio_meter)
 
-        # Translation source: App Audio | Microphone (integrated)
+        # Translation mode: LiveTranslate | MicTranslate (integrated)
         source_row = QHBoxLayout()
-        source_row.addWidget(QLabel("Source:"))
+        source_row.addWidget(QLabel("Mode:"))
         self._source_combo = QComboBox()
-        self._source_combo.addItem("App Audio", "app")
-        self._source_combo.addItem("Microphone", "mic")
+        self._source_combo.addItem("LiveTranslate", "app")
+        self._source_combo.addItem("MicTranslate", "mic")
         self._source_combo.setMinimumWidth(140)
         self._source_combo.setToolTip(
-            "App Audio: translate audio from the selected app.\n"
-            "Microphone: speak into your mic, output to virtual cable (Discord, Zoom, etc.)."
+            "LiveTranslate: translate audio from the selected app (or all system audio).\n"
+            "MicTranslate: speak into your mic, output to virtual cable (Discord, Zoom, etc.)."
         )
         self._source_combo.currentIndexChanged.connect(self._on_source_changed)
         source_row.addWidget(self._source_combo)
@@ -716,7 +716,7 @@ class MainWindow(QMainWindow):
         source_row.addWidget(self._mic_detach_btn)
         main_layout.addLayout(source_row)
 
-        # Stacked content: App Audio (device+controls) | Microphone (mic translate)
+        # Stacked content: LiveTranslate (device+controls) | MicTranslate (mic translate)
         self._translation_stack = QStackedWidget()
         app_page = QWidget()
         app_page_layout = QVBoxLayout(app_page)
@@ -844,7 +844,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self._status_bar)
 
     def _on_source_changed(self, index: int) -> None:
-        """Switch between App Audio and Microphone translation source."""
+        """Switch between LiveTranslate and MicTranslate translation mode."""
         self._translation_stack.setCurrentIndex(index)
         self._mic_detach_btn.setVisible(index == 1)
         # Stop the other mode when switching
