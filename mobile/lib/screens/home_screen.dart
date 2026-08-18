@@ -440,152 +440,188 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const UsageCard(),
-              const SizedBox(height: 12),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment<String>(
-                    value: AppSettings.modeMic,
-                    label: Text('Mic Translate'),
-                    icon: Icon(Icons.mic, size: 18),
-                  ),
-                  ButtonSegment<String>(
-                    value: AppSettings.modeLive,
-                    label: Text('Live Translate'),
-                    icon: Icon(Icons.picture_in_picture_alt, size: 18),
-                  ),
-                ],
-                selected: {_mode},
-                onSelectionChanged: _translating
-                    ? null
-                    : (next) {
-                        if (next.isEmpty) return;
-                        _setMode(next.first);
-                      },
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _mode == AppSettings.modeLive
-                    ? (_liveCaptureMode == AppSettings.liveCaptureScreen
-                        ? 'Live: read visible text on screen (OCR) + overlay'
-                        : 'Live: capture audio from apps you play + overlay')
-                    : 'Mic: capture your microphone; captions stay in this app',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              ),
-              if (_mode == AppSettings.modeLive && Platform.isAndroid) ...[
-                const SizedBox(height: 8),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment<String>(
-                      value: AppSettings.liveCaptureAudio,
-                      label: Text('App audio'),
-                      icon: Icon(Icons.headphones, size: 18),
-                    ),
-                    ButtonSegment<String>(
-                      value: AppSettings.liveCaptureScreen,
-                      label: Text('Screen text'),
-                      icon: Icon(Icons.text_fields, size: 18),
-                    ),
-                  ],
-                  selected: {_liveCaptureMode},
-                  onSelectionChanged: _translating
-                      ? null
-                      : (next) {
-                          if (next.isEmpty) return;
-                          _setLiveCaptureMode(next.first);
-                        },
-                ),
-              ],
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  _languageDropdown(
-                    label: 'From',
-                    value: _sourceLanguage,
-                    languages: kSourceLanguages,
-                    onChanged: _setSourceLanguage,
-                  ),
-                  IconButton(
-                    tooltip: _sourceLanguage == 'auto'
-                        ? 'Pick a source language to swap'
-                        : 'Swap languages',
-                    onPressed: _sourceLanguage == 'auto' ? null : _swapLanguages,
-                    icon: const Icon(Icons.swap_horiz),
-                  ),
-                  _languageDropdown(
-                    label: 'To',
-                    value: _targetLanguage,
-                    languages: kSupportedLanguages,
-                    onChanged: _setTargetLanguage,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              VoicePickerBar(
-                selectedVoiceId: _voiceId,
-                onVoiceSelected: _setVoiceId,
-                onVoiceDeleted: (id) {
-                  unawaited(
-                    _translateService.voiceProfiles.onVoiceDeleted(id),
-                  );
-                },
-                enabled: !_translating,
-              ),
-              ExpansionTile(
-                title: const Text('Voice Profiles'),
-                subtitle: const Text('Per-speaker TTS voices'),
-                initiallyExpanded: false,
-                childrenPadding: const EdgeInsets.only(bottom: 8),
-                children: [
-                  VoiceProfilesPanel(
-                    manager: _translateService.voiceProfiles,
-                    fallbackVoiceId: _voiceId,
-                    enabled: !_translating,
-                    showHeader: false,
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  Icon(
-                    _translating ? Icons.mic : Icons.mic_none,
-                    color: _translating
-                        ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).colorScheme.outline,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _status ??
-                          (_translating ? 'Listening…' : 'Tap Start to translate'),
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: _clearCaptions,
-                    child: const Text('Clear'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
               Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _captionPane(
-                      title: 'Source',
-                      text: _sourceCaption,
-                      controller: _sourceScroll,
-                    ),
-                    const SizedBox(width: 8),
-                    _captionPane(
-                      title: 'Translation',
-                      text: _translatedCaption,
-                      controller: _translatedScroll,
-                    ),
-                  ],
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const UsageCard(),
+                            const SizedBox(height: 12),
+                            SegmentedButton<String>(
+                              segments: const [
+                                ButtonSegment<String>(
+                                  value: AppSettings.modeMic,
+                                  label: Text('Mic Translate'),
+                                  icon: Icon(Icons.mic, size: 18),
+                                ),
+                                ButtonSegment<String>(
+                                  value: AppSettings.modeLive,
+                                  label: Text('Live Translate'),
+                                  icon: Icon(
+                                    Icons.picture_in_picture_alt,
+                                    size: 18,
+                                  ),
+                                ),
+                              ],
+                              selected: {_mode},
+                              onSelectionChanged: _translating
+                                  ? null
+                                  : (next) {
+                                      if (next.isEmpty) return;
+                                      _setMode(next.first);
+                                    },
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              _mode == AppSettings.modeLive
+                                  ? (_liveCaptureMode ==
+                                          AppSettings.liveCaptureScreen
+                                      ? 'Live: read visible text on screen (OCR) + overlay'
+                                      : 'Live: capture audio from apps you play + overlay')
+                                  : 'Mic: capture your microphone; captions stay in this app',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                            ),
+                            if (_mode == AppSettings.modeLive &&
+                                Platform.isAndroid) ...[
+                              const SizedBox(height: 8),
+                              SegmentedButton<String>(
+                                segments: const [
+                                  ButtonSegment<String>(
+                                    value: AppSettings.liveCaptureAudio,
+                                    label: Text('App audio'),
+                                    icon: Icon(Icons.headphones, size: 18),
+                                  ),
+                                  ButtonSegment<String>(
+                                    value: AppSettings.liveCaptureScreen,
+                                    label: Text('Screen text'),
+                                    icon: Icon(Icons.text_fields, size: 18),
+                                  ),
+                                ],
+                                selected: {_liveCaptureMode},
+                                onSelectionChanged: _translating
+                                    ? null
+                                    : (next) {
+                                        if (next.isEmpty) return;
+                                        _setLiveCaptureMode(next.first);
+                                      },
+                              ),
+                            ],
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                _languageDropdown(
+                                  label: 'From',
+                                  value: _sourceLanguage,
+                                  languages: kSourceLanguages,
+                                  onChanged: _setSourceLanguage,
+                                ),
+                                IconButton(
+                                  tooltip: _sourceLanguage == 'auto'
+                                      ? 'Pick a source language to swap'
+                                      : 'Swap languages',
+                                  onPressed: _sourceLanguage == 'auto'
+                                      ? null
+                                      : _swapLanguages,
+                                  icon: const Icon(Icons.swap_horiz),
+                                ),
+                                _languageDropdown(
+                                  label: 'To',
+                                  value: _targetLanguage,
+                                  languages: kSupportedLanguages,
+                                  onChanged: _setTargetLanguage,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            VoicePickerBar(
+                              selectedVoiceId: _voiceId,
+                              onVoiceSelected: _setVoiceId,
+                              onVoiceDeleted: (id) {
+                                unawaited(
+                                  _translateService.voiceProfiles
+                                      .onVoiceDeleted(id),
+                                );
+                              },
+                              enabled: !_translating,
+                            ),
+                            ExpansionTile(
+                              title: const Text('Voice Profiles'),
+                              subtitle: const Text('Per-speaker TTS voices'),
+                              initiallyExpanded: false,
+                              childrenPadding:
+                                  const EdgeInsets.only(bottom: 8),
+                              children: [
+                                VoiceProfilesPanel(
+                                  manager: _translateService.voiceProfiles,
+                                  fallbackVoiceId: _voiceId,
+                                  enabled: !_translating,
+                                  showHeader: false,
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                Icon(
+                                  _translating ? Icons.mic : Icons.mic_none,
+                                  color: _translating
+                                      ? Theme.of(context).colorScheme.primary
+                                      : Theme.of(context).colorScheme.outline,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _status ??
+                                        (_translating
+                                            ? 'Listening…'
+                                            : 'Tap Start to translate'),
+                                    style:
+                                        Theme.of(context).textTheme.titleSmall,
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: _clearCaptions,
+                                  child: const Text('Clear'),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              height: 200,
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  _captionPane(
+                                    title: 'Source',
+                                    text: _sourceCaption,
+                                    controller: _sourceScroll,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _captionPane(
+                                    title: 'Translation',
+                                    text: _translatedCaption,
+                                    controller: _translatedScroll,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(height: 12),
