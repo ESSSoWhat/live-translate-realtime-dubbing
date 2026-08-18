@@ -904,6 +904,7 @@ String _formatPipelineError(Object e) {
   if (e is DioException) {
     final code = e.response?.statusCode;
     final data = e.response?.data;
+    final path = e.requestOptions.path;
     String? detail;
     if (data is Map && data['detail'] != null) {
       final d = data['detail'];
@@ -911,8 +912,9 @@ String _formatPipelineError(Object e) {
     } else if (data is String && data.isNotEmpty) {
       detail = data.length > 160 ? '${data.substring(0, 160)}…' : data;
     }
-    if (code != null && detail != null) return 'Error $code: $detail';
-    if (code != null) return 'Error $code from API';
+    final where = path.isNotEmpty ? ' ($path)' : '';
+    if (code != null && detail != null) return 'Error $code$where: $detail';
+    if (code != null) return 'Error $code$where from API';
     if (e.type == DioExceptionType.connectionTimeout ||
         e.type == DioExceptionType.receiveTimeout ||
         e.type == DioExceptionType.connectionError) {

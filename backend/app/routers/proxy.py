@@ -203,8 +203,10 @@ async def transcribe(
 
     client = _elevenlabs()
     try:
+        # Named tuple so ElevenLabs multipart includes a filename (bare BytesIO can 500 upstream).
+        audio_file = ("audio.wav", audio_bytes, "audio/wav")
         result = await client.speech_to_text.convert(
-            file=io.BytesIO(audio_bytes),
+            file=audio_file,
             model_id="scribe_v1",
             language_code=None if language == "auto" else language,
         )
@@ -213,9 +215,10 @@ async def transcribe(
     except Exception as exc:
         raise _elevenlabs_upstream_error("Transcription", exc) from exc
 
+    lang = getattr(result, "language_code", None) or language or "auto"
     return TranscriptionResponse(
         text=(getattr(result, "text", None) or "").strip(),
-        language_code=(getattr(result, "language_code", None) or language or "auto"),
+        language_code=str(lang),
     )
 
 
@@ -439,10 +442,21 @@ async def list_voices(user: dict = Depends(get_current_user)) -> list[VoiceItem]
     client = _elevenlabs()
     try:
         result = await client.voices.get_all()
-        return [
-            VoiceItem(voice_id=v.voice_id, name=v.name, category=v.category or "premade")
-            for v in result.voices
-        ]
+        items: list[VoiceItem] = []
+        for v in result.voices:
+            vid = str(getattr(v, "voice_id", "") or "").strip()
+            if not vid:
+                continue
+            raw_cat = getattr(v, "category", None)
+            if raw_cat is None:
+                cat = "premade"
+            elif hasattr(raw_cat, "value"):
+                cat = str(raw_cat.value)
+            else:
+                cat = str(raw_cat) or "premade"
+            name = str(getattr(v, "name", None) or "").strip() or vid
+            items.append(VoiceItem(voice_id=vid, name=name, category=cat))
+        return items
     except HTTPException:
         raise
     except Exception as exc:
@@ -546,6 +560,11 @@ async def clone_voice(
         await check_quota(user["id"], "clone", 1)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Clone quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     audio_bytes = await audio.read()
     if not audio_bytes:

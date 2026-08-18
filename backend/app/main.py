@@ -77,7 +77,14 @@ def create_app() -> FastAPI:
             return await request_validation_exception_handler(request, exc)
         import traceback
 
+        from fastapi.exceptions import ResponseValidationError
+
         logger.error("Unhandled exception", error=str(exc), tb=traceback.format_exc())
+        if isinstance(exc, ResponseValidationError):
+            return JSONResponse(
+                status_code=502,
+                content={"detail": "Upstream response did not match expected schema"},
+            )
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
     application.add_exception_handler(Exception, debug_exception_handler)

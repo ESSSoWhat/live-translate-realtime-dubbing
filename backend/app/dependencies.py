@@ -107,7 +107,12 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
 
     # API key path (Wix flow): token is the raw api_key from users.api_key
     if not _looks_like_jwt(token):
-        result = await sb.table("users").select("*").eq("api_key", token).maybe_single().execute()
+        try:
+            result = await sb.table("users").select("*").eq("api_key", token).maybe_single().execute()
+        except Exception as exc:
+            # PostgREST maybe_single raises when 0 rows; treat as invalid key.
+            logger.warning("API key lookup failed", error=str(exc))
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key") from exc
         if result and result.data:
             return result.data
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
@@ -115,7 +120,11 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
     # JWT path (Supabase): verify signature via JWKS (RS256/ES256) or legacy HS256 secret
     supabase_uid = _verify_supabase_jwt(token)
 
-    result = await sb.table("users").select("*").eq("supabase_uid", supabase_uid).maybe_single().execute()
+    try:
+        result = await sb.table("users").select("*").eq("supabase_uid", supabase_uid).maybe_single().execute()
+    except Exception as exc:
+        logger.warning("JWT user lookup failed", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found") from exc
     if not result or not result.data:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
