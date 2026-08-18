@@ -111,10 +111,19 @@ class OverlayTranslateController {
         unawaited(FlutterOverlayWindow.requestPermission());
         return false;
       }
+      // Already showing — don't call showOverlay again (plugin stopSelf mid-restart).
+      try {
+        if (await FlutterOverlayWindow.isActive()) {
+          _overlayShown = true;
+          _schedulePush(immediate: true);
+          return true;
+        }
+      } catch (_) {}
+
       _ensureMainBridge();
       unawaited(_refreshVoices());
       // enableDrag MUST be false: native drag steals Flutter taps.
-      // Initial LayoutParams treat width/height as raw px; resizeOverlay uses dp.
+      // Size is dp (native patch converts); keep a single show call only.
       const bubble = 96;
       await FlutterOverlayWindow.showOverlay(
         height: bubble,
@@ -126,35 +135,20 @@ class OverlayTranslateController {
         flag: OverlayFlag.focusPointer,
         positionGravity: PositionGravity.none,
       );
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-      // Apply true dp size so the bubble is visible on high-density screens.
-      try {
-        await FlutterOverlayWindow.resizeOverlay(bubble, bubble, false);
-      } catch (_) {}
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      final active = await FlutterOverlayWindow.isActive();
-      if (!active) {
-        debugPrint('Overlay service not active after show; retrying once');
-        await FlutterOverlayWindow.showOverlay(
-          height: bubble,
-          width: bubble,
-          alignment: OverlayAlignment.centerRight,
-          enableDrag: false,
-          overlayTitle: 'Live Translate',
-          overlayContent: 'Translation is running',
-          flag: OverlayFlag.focusPointer,
-          positionGravity: PositionGravity.none,
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 300));
+      // Wait for the FGS + FlutterView to attach before treating as shown.
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 150));
         try {
-          await FlutterOverlayWindow.resizeOverlay(bubble, bubble, false);
+          if (await FlutterOverlayWindow.isActive()) {
+            _overlayShown = true;
+            _schedulePush(immediate: true);
+            return true;
+          }
         } catch (_) {}
       }
-      _overlayShown = await FlutterOverlayWindow.isActive();
-      if (_overlayShown) {
-        _schedulePush(immediate: true);
-      }
-      return _overlayShown;
+      _overlayShown = false;
+      debugPrint('Overlay service did not become active after showOverlay');
+      return false;
     } catch (e, st) {
       _overlayShown = false;
       debugPrint('Overlay show failed: $e\n$st');

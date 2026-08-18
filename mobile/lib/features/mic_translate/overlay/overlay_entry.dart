@@ -188,25 +188,27 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     final next = !_expanded;
     _resizing = true;
     try {
-      await FlutterOverlayWindow.updateFlag(OverlayFlag.focusPointer);
       final w = next ? _expandedWidth : _collapsedSize;
       final h = next ? _expandedHeight : _collapsedSize;
       if (next) {
-        // Expand: grow the native window first, then paint the panel.
-        await FlutterOverlayWindow.resizeOverlay(w, h, false)
+        final ok = await FlutterOverlayWindow.resizeOverlay(w, h, false)
             .timeout(const Duration(seconds: 2), onTimeout: () => false);
         if (!mounted) return;
-        setState(() => _expanded = true);
+        // Only flip UI after a successful resize to avoid painting the panel
+        // inside a 96×96 window (overflow / “crash” stripes).
+        if (ok == true) {
+          setState(() => _expanded = true);
+        }
       } else {
-        // Collapse: paint the bubble first, then shrink the native window.
-        // MediaQuery in this isolate reports full-screen size, so we cannot
-        // use it to detect window bounds — order matters instead.
         setState(() => _expanded = false);
         await FlutterOverlayWindow.resizeOverlay(w, h, false)
             .timeout(const Duration(seconds: 2), onTimeout: () => false);
       }
     } catch (_) {
-      // Keep UI state; native resize can fail if overlay was closed.
+      // Native resize can fail if overlay was closed; keep a usable bubble.
+      if (mounted && next) {
+        setState(() => _expanded = false);
+      }
     } finally {
       if (mounted) _resizing = false;
     }
@@ -242,157 +244,180 @@ class _OverlayBubbleState extends State<OverlayBubble> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    if (!_expanded) {
-      return SizedBox(
-        width: _collapsedSize.toDouble(),
-        height: _collapsedSize.toDouble(),
-        child: Material(
-          color: scheme.primary,
-          shape: const CircleBorder(),
-          elevation: 6,
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            onTap: _resizing ? null : _toggleExpand,
-            child: Icon(
-              _muted ? Icons.mic_off : Icons.translate,
-              color: scheme.onPrimary,
-              size: 32,
-            ),
-          ),
-        ),
-      );
-    }
+    // Prefer real FlutterView constraints over MediaQuery (often full-screen
+    // in the overlay isolate even when the native window is 96×96).
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wideEnough =
+            constraints.hasBoundedWidth &&
+            constraints.maxWidth >= (_expandedWidth * 0.75);
+        final showPanel = _expanded && wideEnough;
 
-    return Material(
-      elevation: 8,
-      borderRadius: BorderRadius.circular(16),
-      color: scheme.surface,
-      clipBehavior: Clip.antiAlias,
-      child: SizedBox(
-        width: _expandedWidth.toDouble(),
-        height: _expandedHeight.toDouble(),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _status,
-                      style: Theme.of(context).textTheme.labelLarge,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    tooltip: 'Collapse',
-                    onPressed: _resizing ? null : _toggleExpand,
-                    icon: const Icon(Icons.unfold_less),
-                  ),
-                ],
-              ),
-              // Avoid DropdownButtonFormField menus in tiny overlay windows —
-              // use a simple cycling button when few voices, dropdown otherwise.
-              _VoicePicker(
-                voices: _voices,
-                selectedId: _selectedVoiceId,
-                onSelected: _setVoice,
-              ),
-              Row(
-                children: [
-                  Icon(
-                    _muted ? Icons.volume_off : Icons.volume_up,
-                    size: 20,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                  Expanded(
-                    child: Slider(
-                      value: _volume,
-                      onChanged: _muted
-                          ? null
-                          : (v) => setState(() => _volume = v.clamp(0.0, 1.0)),
-                      onChangeEnd: _muted ? null : _setVolume,
-                    ),
-                  ),
-                  SizedBox(
-                    width: 36,
-                    child: Text(
-                      '${(_volume * 100).round()}%',
-                      style: Theme.of(context).textTheme.labelSmall,
-                      textAlign: TextAlign.end,
-                    ),
-                  ),
-                ],
-              ),
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (_source.isNotEmpty) ...[
-                        Text(
-                          'Source',
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
-                        ),
-                        Text(
-                          _source,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                fontSize: _fontSize,
-                                color: scheme.onSurface.withValues(alpha: _opacity),
-                              ),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                      if (_translated.isNotEmpty) ...[
-                        Text(
-                          'Translation',
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
-                        ),
-                        Text(
-                          _translated,
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                fontSize: _fontSize,
-                                fontWeight: FontWeight.w600,
-                                color: scheme.onSurface.withValues(alpha: _opacity),
-                              ),
-                        ),
-                      ],
-                      if (_source.isEmpty && _translated.isEmpty)
-                        Text(
-                          'Captions appear here while Live Translate runs.',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
-                        ),
-                    ],
-                  ),
+        if (!showPanel) {
+          return SizedBox(
+            width: _collapsedSize.toDouble(),
+            height: _collapsedSize.toDouble(),
+            child: Material(
+              color: scheme.primary,
+              shape: const CircleBorder(),
+              elevation: 6,
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _resizing ? null : _toggleExpand,
+                child: Icon(
+                  _muted ? Icons.mic_off : Icons.translate,
+                  color: scheme.onPrimary,
+                  size: 32,
                 ),
               ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+            ),
+          );
+        }
+
+        return Material(
+          elevation: 8,
+          borderRadius: BorderRadius.circular(16),
+          color: scheme.surface,
+          clipBehavior: Clip.antiAlias,
+          child: SizedBox(
+            width: _expandedWidth.toDouble(),
+            height: _expandedHeight.toDouble(),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  IconButton(
-                    tooltip: _muted ? 'Unmute TTS' : 'Mute TTS',
-                    onPressed: _toggleMute,
-                    icon: Icon(_muted ? Icons.volume_off : Icons.volume_up),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _status,
+                          style: Theme.of(context).textTheme.labelLarge,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: 'Collapse',
+                        onPressed: _resizing ? null : _toggleExpand,
+                        icon: const Icon(Icons.unfold_less),
+                      ),
+                    ],
                   ),
-                  FilledButton.tonal(
-                    onPressed: _stop,
-                    child: const Text('Stop'),
+                  _VoicePicker(
+                    voices: _voices,
+                    selectedId: _selectedVoiceId,
+                    onSelected: _setVoice,
+                  ),
+                  Row(
+                    children: [
+                      Icon(
+                        _muted ? Icons.volume_off : Icons.volume_up,
+                        size: 20,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      Expanded(
+                        child: Slider(
+                          value: _volume,
+                          onChanged: _muted
+                              ? null
+                              : (v) =>
+                                  setState(() => _volume = v.clamp(0.0, 1.0)),
+                          onChangeEnd: _muted ? null : _setVolume,
+                        ),
+                      ),
+                      SizedBox(
+                        width: 36,
+                        child: Text(
+                          '${(_volume * 100).round()}%',
+                          style: Theme.of(context).textTheme.labelSmall,
+                          textAlign: TextAlign.end,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_source.isNotEmpty) ...[
+                            Text(
+                              'Source',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
+                            Text(
+                              _source,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    fontSize: _fontSize,
+                                    color: scheme.onSurface
+                                        .withValues(alpha: _opacity),
+                                  ),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                          if (_translated.isNotEmpty) ...[
+                            Text(
+                              'Translation',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
+                            Text(
+                              _translated,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(
+                                    fontSize: _fontSize,
+                                    fontWeight: FontWeight.w600,
+                                    color: scheme.onSurface
+                                        .withValues(alpha: _opacity),
+                                  ),
+                            ),
+                          ],
+                          if (_source.isEmpty && _translated.isEmpty)
+                            Text(
+                              'Captions appear here while Live Translate runs.',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      IconButton(
+                        tooltip: _muted ? 'Unmute TTS' : 'Mute TTS',
+                        onPressed: _toggleMute,
+                        icon: Icon(
+                          _muted ? Icons.volume_off : Icons.volume_up,
+                        ),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: _stop,
+                        child: const Text('Stop'),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

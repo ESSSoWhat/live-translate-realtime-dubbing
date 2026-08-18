@@ -90,6 +90,36 @@ subprojects {
                             overlayFile.writeText(text)
                             logger.lifecycle("Patched flutter_overlay_window initial size to use dp")
                         }
+                        text = overlayFile.readText()
+                        if (!text.contains("LT_NO_STOPSELF")) {
+                            text = text.replace(
+                                """
+        if (windowManager != null) {
+            windowManager.removeView(flutterView);
+            windowManager = null;
+            flutterView.detachFromFlutterEngine();
+            stopSelf();
+        }
+        isRunning = true;
+                                """.trimIndent(),
+                                """
+        // LT_NO_STOPSELF: recreating the overlay must not stopSelf() — that races
+        // onDestroy with the new FlutterView and crashes / blanks the bubble.
+        if (windowManager != null) {
+            try {
+                windowManager.removeView(flutterView);
+            } catch (Exception ignored) {}
+            windowManager = null;
+            try {
+                flutterView.detachFromFlutterEngine();
+            } catch (Exception ignored) {}
+        }
+        isRunning = true;
+                                """.trimIndent(),
+                            )
+                            overlayFile.writeText(text)
+                            logger.lifecycle("Patched flutter_overlay_window to avoid stopSelf on recreate")
+                        }
                     }
                     if (pluginFile.exists()) {
                         var text = pluginFile.readText()
