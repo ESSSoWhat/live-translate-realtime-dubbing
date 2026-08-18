@@ -186,14 +186,18 @@ class _OverlayBubbleState extends State<OverlayBubble> {
   Future<void> _toggleExpand() async {
     if (_resizing) return;
     final next = !_expanded;
-    setState(() => _expanded = next);
     _resizing = true;
     try {
       await FlutterOverlayWindow.updateFlag(OverlayFlag.focusPointer);
       final w = next ? _expandedWidth : _collapsedSize;
       final h = next ? _expandedHeight : _collapsedSize;
+      // Resize the native window BEFORE flipping expanded UI. Otherwise the
+      // panel lays out inside the 72×72 bubble (RenderFlex overflow / red crash
+      // stripes in debug).
       await FlutterOverlayWindow.resizeOverlay(w, h, false)
           .timeout(const Duration(seconds: 2), onTimeout: () => false);
+      if (!mounted) return;
+      setState(() => _expanded = next);
     } catch (_) {
       // Keep UI state; native resize can fail if overlay was closed.
     } finally {
@@ -231,7 +235,11 @@ class _OverlayBubbleState extends State<OverlayBubble> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    if (!_expanded) {
+    // Never paint the expanded panel until the native window is large enough.
+    final maxW = MediaQuery.sizeOf(context).width;
+    final showExpanded = _expanded && maxW >= (_expandedWidth * 0.6);
+
+    if (!showExpanded) {
       return SizedBox(
         width: _collapsedSize.toDouble(),
         height: _collapsedSize.toDouble(),
