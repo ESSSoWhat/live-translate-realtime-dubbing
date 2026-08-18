@@ -16,11 +16,14 @@ class VoicePickerBar extends StatefulWidget {
     super.key,
     required this.selectedVoiceId,
     required this.onVoiceSelected,
+    this.onVoiceDeleted,
     this.enabled = true,
   });
 
   final String selectedVoiceId;
   final ValueChanged<String> onVoiceSelected;
+  /// Called after a cloned voice is deleted (clear profile assignments).
+  final ValueChanged<String>? onVoiceDeleted;
   final bool enabled;
 
   @override
@@ -261,6 +264,7 @@ class _VoicePickerBarState extends State<VoicePickerBar> {
     if (ok != true || !mounted) return;
     try {
       await _api.deleteVoice(current.id);
+      widget.onVoiceDeleted?.call(current.id);
       await _loadVoices(preferVoiceId: MicTranslateService.defaultVoiceId);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -304,7 +308,8 @@ class _VoicePickerBarState extends State<VoicePickerBar> {
                 value: _voices.isEmpty ? null : selected,
                 isExpanded: true,
                 decoration: const InputDecoration(
-                  labelText: 'Voice',
+                  labelText: 'Default voice',
+                  helperText: 'Used when a speaker has no assigned profile voice',
                   border: OutlineInputBorder(),
                   contentPadding:
                       EdgeInsets.symmetric(horizontal: 12, vertical: 8),

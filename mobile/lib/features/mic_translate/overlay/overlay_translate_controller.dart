@@ -42,6 +42,7 @@ class OverlayTranslateController {
   bool _active = false;
   bool _overlayShown = false;
   bool _mainBridgeReady = false;
+  bool _cloning = false;
 
   bool get isActive => _active;
   bool get overlayShown => _overlayShown;
@@ -208,6 +209,7 @@ class OverlayTranslateController {
     _status = '';
     _source = '';
     _translated = '';
+    _cloning = false;
   }
 
   void dispose() {
@@ -268,9 +270,61 @@ class OverlayTranslateController {
         unawaited(AppSettings.setVoiceId(id));
         _schedulePush(immediate: true);
       }
+    } else if (type == 'liveClone') {
+      unawaited(_liveClone());
     } else if (type == 'ready') {
       unawaited(_refreshVoices());
       _schedulePush(immediate: true);
+    }
+  }
+
+  Future<void> _liveClone() async {
+    if (!_active || _cloning) return;
+    if (service.captureSource == CaptureSource.screen) {
+      _status = 'Clone needs audio (not screen text)';
+      _schedulePush(immediate: true);
+      return;
+    }
+
+    _cloning = true;
+    _status = 'Cloning…';
+    _schedulePush(immediate: true);
+
+    try {
+      final seconds = AppSettings.autoCloneSeconds;
+      final sample = await service.captureCloneSample(seconds: seconds);
+      if (!_active) return;
+      if (sample == null || sample.isEmpty) {
+        _status = 'Clone failed';
+        return;
+      }
+
+      final name = 'live_clone_${DateTime.now().millisecondsSinceEpoch}';
+      final body = await _api.cloneVoice(
+        audioBytes: sample,
+        name: name,
+        description: 'Cloned from Live Translate overlay',
+      );
+      if (!_active) return;
+
+      final voiceId = (body['voice_id'] as String?)?.trim();
+      if (voiceId == null || voiceId.isEmpty) {
+        _status = 'Clone failed';
+        return;
+      }
+
+      service.voiceId = voiceId;
+      await AppSettings.setVoiceId(voiceId);
+      await _refreshVoices();
+      final display = (body['name'] as String?)?.trim();
+      _status =
+          'Cloned: ${display != null && display.isNotEmpty ? display : name}';
+    } catch (_) {
+      // Keep current voice on failure (do not reset voiceId).
+      if (_active) _status = 'Clone failed';
+    } finally {
+      _cloning = false;
+      if (_active) _schedulePush(immediate: true);
     }
   }
 
@@ -315,6 +369,7 @@ class OverlayTranslateController {
       'volume': service.volume,
       'voiceId': service.voiceId,
       'voices': _voices,
+      'cloning': _cloning,
       'fontSize': AppSettings.captionFontSize,
       'opacity': AppSettings.captionOpacity,
     });

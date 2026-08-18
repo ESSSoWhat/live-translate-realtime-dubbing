@@ -77,13 +77,14 @@ class OverlayBubble extends StatefulWidget {
 class _OverlayBubbleState extends State<OverlayBubble> {
   static const _collapsedSize = 96;
   static const _expandedWidth = 300;
-  static const _expandedHeight = 320;
+  static const _expandedHeight = 340;
 
   StreamSubscription<dynamic>? _shareSub;
   bool _bridgeReady = false;
   bool _expanded = false;
   bool _muted = false;
   bool _resizing = false;
+  bool _cloning = false;
   String _status = 'Listening…';
   String _source = '';
   String _translated = '';
@@ -152,6 +153,7 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     final source = (map['source'] as String?) ?? _source;
     final translated = (map['translated'] as String?) ?? _translated;
     final muted = (map['muted'] as bool?) ?? _muted;
+    final cloning = (map['cloning'] as bool?) ?? _cloning;
     var fontSize = _fontSize;
     var opacity = _opacity;
     var volume = _volume;
@@ -183,7 +185,7 @@ class _OverlayBubbleState extends State<OverlayBubble> {
 
     final voiceKey = voices.map((v) => v['id']).join(',');
     final key =
-        '$status|$source|$translated|$muted|$fontSize|$opacity|$volume|$voiceId|$voiceKey';
+        '$status|$source|$translated|$muted|$cloning|$fontSize|$opacity|$volume|$voiceId|$voiceKey';
     if (key == _lastUpdateKey) return;
     _lastUpdateKey = key;
 
@@ -192,6 +194,7 @@ class _OverlayBubbleState extends State<OverlayBubble> {
       _source = source;
       _translated = translated;
       _muted = muted;
+      _cloning = cloning;
       _fontSize = fontSize;
       _opacity = opacity;
       _volume = volume;
@@ -257,6 +260,12 @@ class _OverlayBubbleState extends State<OverlayBubble> {
 
   void _stop() {
     _send({'type': 'stop'});
+  }
+
+  void _liveClone() {
+    if (_cloning) return;
+    setState(() => _cloning = true);
+    _send({'type': 'liveClone'});
   }
 
   String get _selectedVoiceId {
@@ -422,17 +431,33 @@ class _OverlayBubbleState extends State<OverlayBubble> {
                     ),
                   ),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
+                      Flexible(
+                        child: TextButton.icon(
+                          onPressed:
+                              _cloning || _resizing ? null : _liveClone,
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                          icon: Icon(
+                            _cloning
+                                ? Icons.hourglass_top
+                                : Icons.record_voice_over,
+                            size: 18,
+                          ),
+                          label: Text(_cloning ? 'Cloning…' : 'Clone'),
+                        ),
+                      ),
                       IconButton(
                         tooltip: _muted ? 'Unmute TTS' : 'Mute TTS',
-                        onPressed: _toggleMute,
+                        onPressed: _cloning ? null : _toggleMute,
                         icon: Icon(
                           _muted ? Icons.volume_off : Icons.volume_up,
                         ),
                       ),
                       FilledButton.tonal(
-                        onPressed: _stop,
+                        onPressed: _cloning ? null : _stop,
                         child: const Text('Stop'),
                       ),
                     ],

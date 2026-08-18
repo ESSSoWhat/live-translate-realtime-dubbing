@@ -12,6 +12,8 @@ import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import 'playback_capture.dart';
 import 'screen_ocr.dart';
+import 'voice_profiles.dart';
+import 'wav_pcm.dart';
 
 /// Where Live Translate / Mic Translate pulls input from.
 enum CaptureSource {
@@ -64,12 +66,16 @@ class MicTranslateService {
   final _paywallController = StreamController<void>.broadcast();
   final _sourceTextController = StreamController<String>.broadcast();
   final _translatedTextController = StreamController<String>.broadcast();
+  final _voiceProfiles = VoiceProfileManager();
   bool _audioSessionReady = false;
   CaptureSource _captureSource = CaptureSource.microphone;
   StreamSubscription<Uint8List>? _playbackSub;
   ScreenOcr? _screenOcr;
   String _lastOcrNormalized = '';
   DateTime? _lastOcrEmittedAt;
+
+  /// Speaker profiles (MFCC) → TTS voice mapping.
+  VoiceProfileManager get voiceProfiles => _voiceProfiles;
 
   CaptureSource get captureSource => _captureSource;
 
@@ -118,11 +124,183 @@ class MicTranslateService {
   /// Serializes TTS so overlapping Live chunks do not stomp each other.
   Future<void> _ttsChain = Future<void>.value();
 
+  /// Live Clone: accumulate next N seconds of playback WAV PCM.
+  Completer<Uint8List?>? _cloneCompleter;
+  DateTime? _cloneDeadline;
+  final _clonePcm = BytesBuilder(copy: false);
+  _WavFormat? _cloneFormat;
+  Timer? _cloneTimeout;
+
+  /// Mic loop yields while overlay/home clone records a dedicated sample.
+  bool _pausingForClone = false;
+
+  /// Capture [seconds] of **source** audio for voice cloning (not TTS output).
+  ///
+  /// Playback: buffers the next N seconds of app-audio WAV.
+  /// Microphone: pauses the STT loop and records N seconds from the mic.
+  /// Screen OCR: returns null (no audio path).
+  Future<Uint8List?> captureCloneSample({required int seconds}) async {
+    if (!_running || seconds < 1) return null;
+    if (_captureSource == CaptureSource.screen) return null;
+    if (_cloneCompleter != null || _pausingForClone) return null;
+
+    final wasMuted = _muted;
+    _muted = true;
+    try {
+      await _player.stop();
+    } catch (_) {}
+
+    try {
+      switch (_captureSource) {
+        case CaptureSource.playback:
+          return await _capturePlaybackCloneSample(seconds);
+        case CaptureSource.microphone:
+          return await _captureMicCloneSample(seconds);
+        case CaptureSource.screen:
+          return null;
+      }
+    } finally {
+      _muted = wasMuted;
+    }
+  }
+
+  Future<Uint8List?> _capturePlaybackCloneSample(int seconds) async {
+    final completer = Completer<Uint8List?>();
+    _cloneCompleter = completer;
+    _cloneDeadline = DateTime.now().add(Duration(seconds: seconds));
+    _clonePcm.clear();
+    _cloneFormat = null;
+    _cloneTimeout?.cancel();
+    _cloneTimeout = Timer(Duration(seconds: seconds + 3), () {
+      _finishCloneCapture();
+    });
+    return completer.future;
+  }
+
+  Future<Uint8List?> _captureMicCloneSample(int seconds) async {
+    _pausingForClone = true;
+    try {
+      try {
+        await _record.stop();
+      } catch (_) {}
+      // Let the mic loop notice the pause before we take the recorder.
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      if (!_running) return null;
+
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/overlay_clone_${DateTime.now().millisecondsSinceEpoch}.wav';
+      await _record.start(
+        const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+          audioInterruption: AudioInterruptionMode.none,
+          echoCancel: true,
+          noiseSuppress: true,
+          autoGain: true,
+          androidConfig: AndroidRecordConfig(
+            manageBluetooth: false,
+            audioSource: AndroidAudioSource.voiceRecognition,
+            audioManagerMode: AudioManagerMode.modeNormal,
+          ),
+        ),
+        path: path,
+      );
+      await Future<void>.delayed(Duration(seconds: seconds));
+      await _record.stop();
+      if (!_running) return null;
+      final file = File(path);
+      final bytes = await file.readAsBytes();
+      try {
+        await file.delete();
+      } catch (_) {}
+      // ~0.5s of 16 kHz mono PCM16 (+ WAV header) as a sanity floor.
+      if (bytes.length < 8000) return null;
+      return Uint8List.fromList(bytes);
+    } catch (_) {
+      try {
+        await _record.stop();
+      } catch (_) {}
+      return null;
+    } finally {
+      _pausingForClone = false;
+    }
+  }
+
+  void _offerCloneWav(List<int> bytes) {
+    if (_cloneDeadline == null || _cloneCompleter == null) return;
+    final parsed = _parseWav(
+      bytes is Uint8List ? bytes : Uint8List.fromList(bytes),
+    );
+    if (parsed != null) {
+      final fmt = _cloneFormat;
+      if (fmt == null) {
+        _cloneFormat = parsed.format;
+        _clonePcm.add(parsed.pcm);
+      } else if (fmt.sampleRate == parsed.format.sampleRate &&
+          fmt.channels == parsed.format.channels &&
+          fmt.bitsPerSample == parsed.format.bitsPerSample) {
+        _clonePcm.add(parsed.pcm);
+      }
+    }
+    if (DateTime.now().isAfter(_cloneDeadline!)) {
+      _finishCloneCapture();
+    }
+  }
+
+  void _finishCloneCapture() {
+    _cloneTimeout?.cancel();
+    _cloneTimeout = null;
+    final completer = _cloneCompleter;
+    if (completer == null || completer.isCompleted) {
+      _cloneDeadline = null;
+      _cloneCompleter = null;
+      _clonePcm.clear();
+      _cloneFormat = null;
+      return;
+    }
+    final wav = _buildCloneWav();
+    _cloneDeadline = null;
+    _cloneCompleter = null;
+    _clonePcm.clear();
+    _cloneFormat = null;
+    completer.complete(wav);
+  }
+
+  void _abortCloneCapture() {
+    _cloneTimeout?.cancel();
+    _cloneTimeout = null;
+    _cloneDeadline = null;
+    final completer = _cloneCompleter;
+    _cloneCompleter = null;
+    _clonePcm.clear();
+    _cloneFormat = null;
+    _pausingForClone = false;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(null);
+    }
+  }
+
+  Uint8List? _buildCloneWav() {
+    final fmt = _cloneFormat;
+    final pcm = _clonePcm.takeBytes();
+    if (fmt == null || pcm.isEmpty) return null;
+    // Reject near-silent / too-short samples (~0.4s of PCM).
+    final bytesPerSec =
+        fmt.sampleRate * fmt.channels * (fmt.bitsPerSample ~/ 8);
+    if (bytesPerSec <= 0 || pcm.length < (bytesPerSec * 0.4).round()) {
+      return null;
+    }
+    return _writeWav(pcm: pcm, format: fmt);
+  }
+
   Future<bool> start({
     CaptureSource source = CaptureSource.microphone,
   }) async {
     if (_running) return true;
     if (!await _auth.hasTokens()) return false;
+    await _voiceProfiles.init();
     _captureSource = source;
     if (source == CaptureSource.microphone) {
       if (!await _record.hasPermission()) {
@@ -209,6 +387,7 @@ class MicTranslateService {
   Future<void> stop() async {
     _running = false;
     _playbackActive = false;
+    _abortCloneCapture();
     await _playbackSub?.cancel();
     _playbackSub = null;
     if (_captureSource == CaptureSource.playback ||
@@ -228,6 +407,7 @@ class MicTranslateService {
 
   void dispose() {
     _running = false;
+    _abortCloneCapture();
     unawaited(_playbackSub?.cancel());
     _playbackSub = null;
     unawaited(PlaybackCapture.stop());
@@ -244,6 +424,7 @@ class MicTranslateService {
     _paywallController.close();
     _sourceTextController.close();
     _translatedTextController.close();
+    unawaited(_voiceProfiles.dispose());
   }
 
   Future<void> _runLoop() async {
@@ -301,6 +482,7 @@ class MicTranslateService {
     try {
       await for (final bytes in queue.stream) {
         if (!_running) break;
+        _offerCloneWav(bytes);
         latest = bytes;
         unawaited(pump());
       }
@@ -308,6 +490,7 @@ class MicTranslateService {
       await queue.close();
       await _playbackSub?.cancel();
       _playbackSub = null;
+      _finishCloneCapture();
     }
   }
 
@@ -397,11 +580,18 @@ class MicTranslateService {
     while (_running) {
       String? path;
       try {
+        // Yield while overlay/home clone takes a dedicated mic sample.
+        while (_running && _pausingForClone) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        if (!_running) break;
+
         // Never capture while TTS is on the speaker (feedback loop).
         while (_running && _playbackActive) {
           await Future<void>.delayed(const Duration(milliseconds: 50));
         }
         if (!_running) break;
+        if (_pausingForClone) continue;
 
         _statusController.add('Listening…');
         path = await _recordToFile();
@@ -446,6 +636,15 @@ class MicTranslateService {
     bool awaitTts = true,
   }) async {
     try {
+      // Match speaker before STT so TTS voice tracks the talker (desktop parity).
+      final samples = decodeWavToFloats(bytes);
+      final voiceId = samples == null
+          ? _voiceId
+          : _voiceProfiles.resolveVoiceIdForAudio(
+              samples,
+              fallbackVoiceId: _voiceId,
+            );
+
       _statusController.add('Transcribing…');
       final text = stripNonVerbal(await _transcribe(bytes));
       if (!_running) return;
@@ -453,7 +652,7 @@ class MicTranslateService {
         _statusController.add(emptySpeechMessage);
         return;
       }
-      await _processSourceText(text, awaitTts: awaitTts);
+      await _processSourceText(text, awaitTts: awaitTts, voiceId: voiceId);
     } catch (e) {
       if (!_running) return;
       if (e is DioException && e.error is QuotaExceededException) {
@@ -468,7 +667,9 @@ class MicTranslateService {
   Future<void> _processSourceText(
     String text, {
     bool awaitTts = true,
+    String? voiceId,
   }) async {
+    final ttsVoice = (voiceId != null && voiceId.isNotEmpty) ? voiceId : _voiceId;
     try {
       _sourceTextController.add(text);
       _statusController.add('Translating…');
@@ -481,12 +682,12 @@ class MicTranslateService {
       }
       _statusController.add('Speaking…');
       if (awaitTts) {
-        await _synthesizeAndPlay(translated);
+        await _synthesizeAndPlay(translated, voiceId: ttsVoice);
       } else {
         _ttsChain = _ttsChain
             .then((_) async {
               if (!_running || _muted) return;
-              await _synthesizeAndPlay(translated);
+              await _synthesizeAndPlay(translated, voiceId: ttsVoice);
             })
             .catchError((Object _) {});
       }
@@ -558,9 +759,13 @@ class MicTranslateService {
     return (r['translated_text'] as String?)?.trim() ?? '';
   }
 
-  Future<void> _synthesizeAndPlay(String text) async {
+  Future<void> _synthesizeAndPlay(
+    String text, {
+    required String voiceId,
+  }) async {
     if (_muted || !_running) return;
-    final bytes = await _api.synthesize(text: text, voiceId: _voiceId);
+    final id = voiceId.isNotEmpty ? voiceId : _voiceId;
+    final bytes = await _api.synthesize(text: text, voiceId: id);
     if (bytes.isEmpty || !_running || _muted) return;
     final dir = await getTemporaryDirectory();
     final path = '${dir.path}/tts_${DateTime.now().millisecondsSinceEpoch}.mp3';
@@ -593,6 +798,106 @@ class MicTranslateService {
       } catch (_) {}
     }
   }
+}
+
+class _WavFormat {
+  const _WavFormat({
+    required this.sampleRate,
+    required this.channels,
+    required this.bitsPerSample,
+  });
+
+  final int sampleRate;
+  final int channels;
+  final int bitsPerSample;
+}
+
+class _ParsedWav {
+  const _ParsedWav({required this.format, required this.pcm});
+
+  final _WavFormat format;
+  final Uint8List pcm;
+}
+
+_ParsedWav? _parseWav(Uint8List bytes) {
+  if (bytes.length < 44) return null;
+  if (bytes[0] != 0x52 || bytes[1] != 0x49 || bytes[2] != 0x46 || bytes[3] != 0x46) {
+    return null;
+  }
+  var offset = 12;
+  int? sampleRate;
+  int? channels;
+  int? bitsPerSample;
+  Uint8List? pcm;
+  while (offset + 8 <= bytes.length) {
+    final id = String.fromCharCodes(bytes.sublist(offset, offset + 4));
+    final size = ByteData.sublistView(bytes, offset + 4, offset + 8)
+        .getUint32(0, Endian.little);
+    final dataStart = offset + 8;
+    final dataEnd = dataStart + size;
+    if (dataEnd > bytes.length) break;
+    if (id == 'fmt ' && size >= 16) {
+      final bd = ByteData.sublistView(bytes, dataStart, dataEnd);
+      channels = bd.getUint16(2, Endian.little);
+      sampleRate = bd.getUint32(4, Endian.little);
+      bitsPerSample = bd.getUint16(14, Endian.little);
+    } else if (id == 'data') {
+      pcm = bytes.sublist(dataStart, dataEnd);
+    }
+    offset = dataEnd + (size.isOdd ? 1 : 0);
+  }
+  if (sampleRate == null ||
+      channels == null ||
+      bitsPerSample == null ||
+      pcm == null ||
+      pcm.isEmpty) {
+    return null;
+  }
+  return _ParsedWav(
+    format: _WavFormat(
+      sampleRate: sampleRate,
+      channels: channels,
+      bitsPerSample: bitsPerSample,
+    ),
+    pcm: pcm,
+  );
+}
+
+Uint8List _writeWav({
+  required Uint8List pcm,
+  required _WavFormat format,
+}) {
+  final byteRate =
+      format.sampleRate * format.channels * (format.bitsPerSample ~/ 8);
+  final blockAlign = format.channels * (format.bitsPerSample ~/ 8);
+  final dataSize = pcm.length;
+  final out = BytesBuilder(copy: false);
+  void writeString(String s) => out.add(s.codeUnits);
+  void writeUint32(int v) {
+    final b = ByteData(4)..setUint32(0, v, Endian.little);
+    out.add(b.buffer.asUint8List());
+  }
+
+  void writeUint16(int v) {
+    final b = ByteData(2)..setUint16(0, v, Endian.little);
+    out.add(b.buffer.asUint8List());
+  }
+
+  writeString('RIFF');
+  writeUint32(36 + dataSize);
+  writeString('WAVE');
+  writeString('fmt ');
+  writeUint32(16);
+  writeUint16(1); // PCM
+  writeUint16(format.channels);
+  writeUint32(format.sampleRate);
+  writeUint32(byteRate);
+  writeUint16(blockAlign);
+  writeUint16(format.bitsPerSample);
+  writeString('data');
+  writeUint32(dataSize);
+  out.add(pcm);
+  return out.takeBytes();
 }
 
 String _formatPipelineError(Object e) {

@@ -7,6 +7,7 @@ import '../config/languages.dart';
 import '../features/mic_translate/mic_translate_service.dart';
 import '../features/mic_translate/overlay/overlay_translate_controller.dart';
 import '../features/mic_translate/voice_picker_bar.dart';
+import '../features/mic_translate/voice_profiles_panel.dart';
 import '../services/api_client.dart';
 import '../services/app_settings.dart';
 import '../services/auth_service.dart';
@@ -73,6 +74,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _translateService.muted = _muted;
     _translateService.volume = AppSettings.ttsVolume;
     _overlayController = OverlayTranslateController(service: _translateService);
+    unawaited(_translateService.voiceProfiles.init());
     _statusSub = _translateService.statusStream.listen((s) {
       if (mounted) setState(() => _status = s);
     });
@@ -524,9 +526,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               VoicePickerBar(
                 selectedVoiceId: _voiceId,
                 onVoiceSelected: _setVoiceId,
+                onVoiceDeleted: (id) {
+                  unawaited(
+                    _translateService.voiceProfiles.onVoiceDeleted(id),
+                  );
+                },
                 enabled: !_translating,
               ),
-              const SizedBox(height: 8),
+              ExpansionTile(
+                title: const Text('Voice Profiles'),
+                subtitle: const Text('Per-speaker TTS voices'),
+                initiallyExpanded: false,
+                childrenPadding: const EdgeInsets.only(bottom: 8),
+                children: [
+                  VoiceProfilesPanel(
+                    manager: _translateService.voiceProfiles,
+                    fallbackVoiceId: _voiceId,
+                    enabled: !_translating,
+                    showHeader: false,
+                  ),
+                ],
+              ),
               Row(
                 children: [
                   Icon(
