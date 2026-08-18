@@ -31,9 +31,34 @@ class OverlayTranslateApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    // Match main app logo palette (cyan on navy). Keep theme inline so the
+    // overlay isolate does not import the full app tree.
+    const cyan = Color(0xFF68F8F8);
+    const navy = Color(0xFF000810);
+    const navySurface = Color(0xFF001020);
+    const navyCard = Color(0xFF001830);
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: OverlayBubble(),
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        colorScheme: const ColorScheme.dark(
+          primary: cyan,
+          onPrimary: navy,
+          surface: navySurface,
+          onSurface: Color(0xFFE8F7FF),
+          secondary: Color(0xFF00C4FC),
+          onSecondary: navy,
+        ),
+        scaffoldBackgroundColor: Colors.transparent,
+        cardColor: navyCard,
+        sliderTheme: const SliderThemeData(
+          activeTrackColor: cyan,
+          thumbColor: cyan,
+          inactiveTrackColor: Color(0xFF002040),
+        ),
+      ),
+      home: const OverlayBubble(),
     );
   }
 }
