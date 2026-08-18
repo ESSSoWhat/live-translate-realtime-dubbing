@@ -307,7 +307,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           SnackBar(
             content: Text(
               liveScreen
-                  ? 'Switch to an app with visible text. OCR updates about every 1–2 seconds.'
+                  ? 'Switch to an app with visible text. OCR updates about every second.'
                   : 'Play media with speech (e.g. YouTube). Some apps block audio capture.',
             ),
             duration: const Duration(seconds: 4),

@@ -107,11 +107,16 @@ class MicTranslateService {
     unawaited(_player.setVolume(_volume));
   }
 
-  static const int chunkSeconds = 3;
+  /// Mic capture window (ms). Shorter = lower latency; silence-aware Live
+  /// capture is handled natively in [PlaybackCaptureService].
+  static const int chunkMs = 1200;
   static const _backoff = Duration(seconds: 1);
   /// Let speaker audio die out so the next mic chunk does not re-hear TTS.
-  static const _postTtsCooldown = Duration(milliseconds: 500);
-  static const _ocrDedupeWindow = Duration(seconds: 2);
+  static const _postTtsCooldown = Duration(milliseconds: 250);
+  static const _ocrDedupeWindow = Duration(milliseconds: 1200);
+
+  /// Serializes TTS so overlapping Live chunks do not stomp each other.
+  Future<void> _ttsChain = Future<void>.value();
 
   Future<bool> start({
     CaptureSource source = CaptureSource.microphone,
@@ -263,17 +268,41 @@ class MicTranslateService {
       },
     );
     _statusController.add('Listening to app audio…');
+    // Keep only the newest chunk so we stay near real-time instead of
+    // translating audio that is many seconds old.
+    List<int>? latest;
+    var pumping = false;
+
+    Future<void> pump() async {
+      if (pumping) return;
+      pumping = true;
+      try {
+        while (_running) {
+          final bytes = latest;
+          latest = null;
+          if (bytes == null) break;
+          await _processWavBytes(
+            bytes,
+            emptySpeechMessage:
+                'No speech in app audio — play media with dialogue',
+            // TTS uses assistant usage (excluded from capture); do not block
+            // the next STT/translate on playback finishing.
+            awaitTts: false,
+          );
+        }
+      } finally {
+        pumping = false;
+        if (_running && latest != null) {
+          unawaited(pump());
+        }
+      }
+    }
+
     try {
       await for (final bytes in queue.stream) {
         if (!_running) break;
-        while (_running && _playbackActive) {
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-        }
-        if (!_running) break;
-        await _processWavBytes(
-          bytes,
-          emptySpeechMessage: 'No speech in app audio — play media with dialogue',
-        );
+        latest = bytes;
+        unawaited(pump());
       }
     } finally {
       await queue.close();
@@ -295,47 +324,64 @@ class MicTranslateService {
       },
     );
     _statusController.add('Reading on-screen text…');
-    try {
-      await for (final jpeg in queue.stream) {
-        if (!_running) break;
-        while (_running && _playbackActive) {
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-        }
-        if (!_running) break;
-        try {
-          _statusController.add('Reading screen…');
-          final raw = await ocr.recognizeJpeg(jpeg);
-          if (!_running) break;
-          final text = stripNonVerbal(raw);
-          if (text.isEmpty) {
-            _statusController.add('No text on screen');
-            continue;
-          }
-          final normalized = _normalizeOcrText(text);
-          final now = DateTime.now();
-          final lastAt = _lastOcrEmittedAt;
-          if (normalized == _lastOcrNormalized &&
-              lastAt != null &&
-              now.difference(lastAt) < _ocrDedupeWindow) {
-            continue;
-          }
-          if (normalized == _lastOcrNormalized) {
-            // Same text after window — skip re-speaking identical caption.
-            continue;
-          }
-          _lastOcrNormalized = normalized;
-          _lastOcrEmittedAt = now;
-          await _processSourceText(text);
-        } catch (e) {
-          if (_running) {
-            if (e is DioException && e.error is QuotaExceededException) {
-              _statusController.add('Upgrade required');
-              _paywallController.add(null);
-            } else {
-              _statusController.add(_formatPipelineError(e));
+    Uint8List? latest;
+    var pumping = false;
+
+    Future<void> pump() async {
+      if (pumping) return;
+      pumping = true;
+      try {
+        while (_running) {
+          final jpeg = latest;
+          latest = null;
+          if (jpeg == null) break;
+          try {
+            _statusController.add('Reading screen…');
+            final raw = await ocr.recognizeJpeg(jpeg);
+            if (!_running) break;
+            final text = stripNonVerbal(raw);
+            if (text.isEmpty) {
+              _statusController.add('No text on screen');
+              continue;
+            }
+            final normalized = _normalizeOcrText(text);
+            final now = DateTime.now();
+            final lastAt = _lastOcrEmittedAt;
+            if (normalized == _lastOcrNormalized &&
+                lastAt != null &&
+                now.difference(lastAt) < _ocrDedupeWindow) {
+              continue;
+            }
+            if (normalized == _lastOcrNormalized) {
+              continue;
+            }
+            _lastOcrNormalized = normalized;
+            _lastOcrEmittedAt = now;
+            await _processSourceText(text, awaitTts: false);
+          } catch (e) {
+            if (_running) {
+              if (e is DioException && e.error is QuotaExceededException) {
+                _statusController.add('Upgrade required');
+                _paywallController.add(null);
+              } else {
+                _statusController.add(_formatPipelineError(e));
+              }
             }
           }
         }
+      } finally {
+        pumping = false;
+        if (_running && latest != null) {
+          unawaited(pump());
+        }
+      }
+    }
+
+    try {
+      await for (final jpeg in queue.stream) {
+        if (!_running) break;
+        latest = jpeg;
+        unawaited(pump());
       }
     } finally {
       await queue.close();
@@ -397,6 +443,7 @@ class MicTranslateService {
   Future<void> _processWavBytes(
     List<int> bytes, {
     required String emptySpeechMessage,
+    bool awaitTts = true,
   }) async {
     try {
       _statusController.add('Transcribing…');
@@ -406,7 +453,7 @@ class MicTranslateService {
         _statusController.add(emptySpeechMessage);
         return;
       }
-      await _processSourceText(text);
+      await _processSourceText(text, awaitTts: awaitTts);
     } catch (e) {
       if (!_running) return;
       if (e is DioException && e.error is QuotaExceededException) {
@@ -418,7 +465,10 @@ class MicTranslateService {
     }
   }
 
-  Future<void> _processSourceText(String text) async {
+  Future<void> _processSourceText(
+    String text, {
+    bool awaitTts = true,
+  }) async {
     try {
       _sourceTextController.add(text);
       _statusController.add('Translating…');
@@ -430,7 +480,16 @@ class MicTranslateService {
         return;
       }
       _statusController.add('Speaking…');
-      await _synthesizeAndPlay(translated);
+      if (awaitTts) {
+        await _synthesizeAndPlay(translated);
+      } else {
+        _ttsChain = _ttsChain
+            .then((_) async {
+              if (!_running || _muted) return;
+              await _synthesizeAndPlay(translated);
+            })
+            .catchError((Object _) {});
+      }
     } catch (e) {
       if (!_running) return;
       if (e is DioException && e.error is QuotaExceededException) {
@@ -468,7 +527,7 @@ class MicTranslateService {
         ),
         path: path,
       );
-      await Future<void>.delayed(Duration(seconds: chunkSeconds));
+      await Future<void>.delayed(const Duration(milliseconds: chunkMs));
       await _record.stop();
       return path;
     } catch (e) {

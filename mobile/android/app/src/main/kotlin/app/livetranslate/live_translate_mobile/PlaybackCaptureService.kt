@@ -182,18 +182,38 @@ class PlaybackCaptureService : Service() {
         capturing = true
         record.startRecording()
         captureThread = thread(name = "PlaybackCapture", isDaemon = true) {
-            val chunkBytes = SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_SECONDS
-            val readBuf = ByteArray(bufferSize.coerceAtMost(chunkBytes))
-            val chunk = ByteArrayOutputStream(chunkBytes + 64)
+            // ~20 ms frames for energy VAD; flush on short silence or max length.
+            val frameBytes = (SAMPLE_RATE / 50) * BYTES_PER_SAMPLE
+            val readBuf = ByteArray(frameBytes.coerceAtMost(bufferSize))
+            val chunk = ByteArrayOutputStream(SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_MAX_SECONDS + 64)
+            val silenceFramesNeeded = SILENCE_FLUSH_MS / 20
+            val minSpeechBytes = (SAMPLE_RATE * BYTES_PER_SAMPLE * MIN_SPEECH_MS) / 1000
+            val maxChunkBytes = SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_MAX_SECONDS
             while (capturing) {
                 chunk.reset()
                 var collected = 0
-                while (capturing && collected < chunkBytes) {
-                    val n = record.read(readBuf, 0, minOf(readBuf.size, chunkBytes - collected))
+                var heardSpeech = false
+                var silenceFrames = 0
+                while (capturing && collected < maxChunkBytes) {
+                    val n = record.read(readBuf, 0, minOf(readBuf.size, frameBytes))
                     when {
                         n > 0 -> {
                             chunk.write(readBuf, 0, n)
                             collected += n
+                            val frame = if (n == readBuf.size) readBuf else readBuf.copyOf(n)
+                            if (isSilent(frame)) {
+                                if (heardSpeech) {
+                                    silenceFrames++
+                                    if (silenceFrames >= silenceFramesNeeded &&
+                                        collected >= minSpeechBytes
+                                    ) {
+                                        break
+                                    }
+                                }
+                            } else {
+                                heardSpeech = true
+                                silenceFrames = 0
+                            }
                         }
                         n < 0 -> {
                             emitError("AudioRecord read error: $n")
@@ -203,6 +223,7 @@ class PlaybackCaptureService : Service() {
                     }
                 }
                 if (!capturing) break
+                if (!heardSpeech) continue
                 val pcm = chunk.toByteArray()
                 if (pcm.isEmpty() || isSilent(pcm)) continue
                 emitWav(pcmToWav(pcm, SAMPLE_RATE))
@@ -393,9 +414,14 @@ class PlaybackCaptureService : Service() {
         const val NOTIFICATION_ID = 4202
         const val SAMPLE_RATE = 16000
         const val BYTES_PER_SAMPLE = 2
-        const val CHUNK_SECONDS = 3
+        /** Hard cap so phrases are not held forever without a pause. */
+        const val CHUNK_MAX_SECONDS = 2
+        /** Flush after this much trailing silence once speech was heard (~desktop VAD). */
+        const val SILENCE_FLUSH_MS = 350
+        /** Do not flush on silence until at least this much audio was collected. */
+        const val MIN_SPEECH_MS = 450
         const val SCREEN_MAX_EDGE = 720
-        const val FRAME_INTERVAL_MS = 1500L
+        const val FRAME_INTERVAL_MS = 900L
         const val JPEG_QUALITY = 70
 
         @Volatile

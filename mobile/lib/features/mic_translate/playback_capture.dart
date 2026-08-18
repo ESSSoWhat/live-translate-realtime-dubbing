@@ -34,10 +34,10 @@ class PlaybackCapture {
   static bool get _supportedPlatform =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
-  /// WAV chunks (~3s, 16 kHz mono PCM) while audio capture is running.
+  /// WAV chunks (silence-flush ~0.5–2s, 16 kHz mono PCM) while audio capture runs.
   static Stream<Uint8List> get audioStream => _audioController.stream;
 
-  /// JPEG screen frames (~1.5s) while screen capture is running.
+  /// JPEG screen frames (~0.9s) while screen capture is running.
   static Stream<Uint8List> get frameStream => _frameController.stream;
 
   static Future<bool> isSupported() async {
