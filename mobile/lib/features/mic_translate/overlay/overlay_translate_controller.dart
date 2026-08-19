@@ -263,6 +263,13 @@ class OverlayTranslateController {
         unawaited(AppSettings.setTtsVolume(volume));
         _schedulePush(immediate: true);
       }
+    } else if (type == 'setOpacity') {
+      final o = map['opacity'];
+      if (o is num) {
+        final opacity = o.toDouble().clamp(0.3, 1.0);
+        unawaited(AppSettings.setCaptionOpacity(opacity));
+        _schedulePush(immediate: true);
+      }
     } else if (type == 'setVoice') {
       final id = map['voiceId'] as String?;
       if (id != null && id.isNotEmpty) {

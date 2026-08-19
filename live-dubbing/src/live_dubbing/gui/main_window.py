@@ -920,6 +920,11 @@ class MainWindow(QMainWindow):
         )
         self._unsubscribers.append(unsub)
 
+        unsub = self._event_bus.subscribe(
+            EventType.TTS_STARTED, self._on_tts_started
+        )
+        self._unsubscribers.append(unsub)
+
         # State changes
         unsub = self._event_bus.subscribe(
             EventType.STATE_CHANGED, self._on_state_changed
@@ -1132,6 +1137,7 @@ class MainWindow(QMainWindow):
         )
         overlay.set_font_size(self._settings.ui.dubbed_font_size)
         overlay.set_text_opacity(self._settings.ui.dubbed_text_opacity)
+        overlay.set_opacity(self._settings.ui.dubbed_opacity)
         overlay.set_session_active(self._is_running)
 
     def _show_live_overlay(self, hide_main: bool) -> None:
@@ -2346,6 +2352,13 @@ class MainWindow(QMainWindow):
                 scrollbar.setValue(scrollbar.maximum())
             if self._dubbed_window is not None:
                 self._dubbed_window.append_text(text)
+
+    @pyqtSlot(object)
+    def _on_tts_started(self, event: Event) -> None:
+        """Highlight the overlay translation chunk currently being spoken."""
+        text = event.data.get("text", "") or ""
+        if self._dubbed_window is not None:
+            self._dubbed_window.highlight_spoken_text(text)
 
     @pyqtSlot(object)
     def _on_state_changed(self, event: Event) -> None:

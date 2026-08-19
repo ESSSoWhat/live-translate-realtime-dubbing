@@ -11,7 +11,17 @@ from typing import TYPE_CHECKING
 
 import structlog
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QColor, QFont, QMouseEvent, QPainter, QPaintEvent
+from PyQt6.QtGui import (
+    QCloseEvent,
+    QColor,
+    QFont,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QTextCharFormat,
+    QTextCursor,
+    QWheelEvent,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -36,8 +46,8 @@ _ON_SURFACE = "#E8F7FF"
 _MUTED = "#8AA4B5"
 
 _COLLAPSED = 96
-_EXPANDED_WIDTH = 300
-_EXPANDED_HEIGHT = 360
+_EXPANDED_WIDTH = 320
+_EXPANDED_HEIGHT = 460
 _DRAG_THRESHOLD = 6
 
 
@@ -71,6 +81,192 @@ class _BubbleButton(QWidget):
         painter.setFont(font)
         glyph = "M" if self._muted else "LT"
         painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), glyph)
+
+
+def _split_chunks(text: str) -> list[str]:
+    """Split pasted or streamed caption text into utterance chunks."""
+    lines = [ln.strip() for ln in text.replace("\r\n", "\n").split("\n")]
+    return [ln for ln in lines if ln]
+
+
+class _CaptionPane(QWidget):
+    """Caption history with a slider that highlights the active utterance."""
+
+    def __init__(
+        self,
+        title: str,
+        *,
+        bold: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._chunks: list[str] = []
+        self._spans: list[tuple[int, int]] = []
+        self._index = 0
+        self._follow = True
+        self._bold = bold
+        self._font_size = 14
+        self._text_alpha = 255
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        title_label = QLabel(title)
+        title_label.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
+        layout.addWidget(title_label)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+
+        self._text = QTextEdit()
+        self._text.setReadOnly(True)
+        self._text.setPlaceholderText(f"{title} captions appear here.")
+        self._text.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._text.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._text.installEventFilter(self)
+        row.addWidget(self._text, 1)
+
+        self._slider = QSlider(Qt.Orientation.Vertical)
+        self._slider.setRange(0, 0)
+        self._slider.setEnabled(False)
+        self._slider.setInvertedAppearance(True)
+        self._slider.setInvertedControls(True)
+        self._slider.setFixedWidth(18)
+        self._slider.setToolTip(
+            "Scroll captions — highlighted text is the current utterance"
+        )
+        self._slider.valueChanged.connect(self._on_slider_changed)
+        row.addWidget(self._slider)
+        layout.addLayout(row, 1)
+        self._apply_text_style()
+
+    def append_chunk(self, text: str) -> None:
+        """Add an utterance and highlight it as the current line."""
+        for chunk in _split_chunks(text):
+            self._chunks.append(chunk)
+        if not self._chunks:
+            return
+        self._index = len(self._chunks) - 1
+        self._follow = True
+        self._refresh(scroll_to_index=True)
+
+    def highlight_matching(self, text: str) -> None:
+        """Highlight the chunk currently being read (TTS / latest STT)."""
+        needle = (text or "").strip()
+        if not self._chunks:
+            return
+        index = len(self._chunks) - 1
+        if needle:
+            for i in range(len(self._chunks) - 1, -1, -1):
+                chunk = self._chunks[i]
+                if chunk == needle or needle in chunk or chunk in needle:
+                    index = i
+                    break
+        self._index = index
+        self._follow = index == len(self._chunks) - 1
+        self._refresh(scroll_to_index=True)
+
+    def clear(self) -> None:
+        """Remove all caption history."""
+        self._chunks.clear()
+        self._spans.clear()
+        self._index = 0
+        self._follow = True
+        self._text.clear()
+        self._slider.blockSignals(True)
+        self._slider.setRange(0, 0)
+        self._slider.setEnabled(False)
+        self._slider.blockSignals(False)
+        self._text.setExtraSelections([])
+
+    def set_font_size(self, size: int, *, bold: bool | None = None) -> None:
+        """Update caption font size."""
+        self._font_size = size
+        if bold is not None:
+            self._bold = bold
+        font = QFont()
+        font.setPointSize(size)
+        font.setBold(self._bold)
+        self._text.setFont(font)
+
+    def set_text_alpha(self, alpha: int) -> None:
+        """Update caption text alpha (0–255)."""
+        self._text_alpha = max(0, min(255, alpha))
+        self._apply_text_style()
+
+    def _apply_text_style(self) -> None:
+        color = f"rgba(232, 247, 255, {self._text_alpha})"
+        self._text.setStyleSheet(
+            f"background-color: {_NAVY}; color: {color}; "
+            f"border: 1px solid #003050; border-radius: 6px; padding: 6px;"
+        )
+
+    def _on_slider_changed(self, value: int) -> None:
+        if not self._chunks:
+            return
+        self._index = max(0, min(value, len(self._chunks) - 1))
+        self._follow = self._index >= len(self._chunks) - 1
+        self._apply_highlight()
+
+    def _refresh(self, *, scroll_to_index: bool) -> None:
+        last = max(0, len(self._chunks) - 1)
+        self._slider.blockSignals(True)
+        self._slider.setRange(0, last)
+        self._slider.setEnabled(len(self._chunks) > 1)
+        if scroll_to_index:
+            self._slider.setValue(self._index)
+        self._slider.blockSignals(False)
+        self._rebuild_document()
+        self._apply_highlight()
+
+    def _rebuild_document(self) -> None:
+        parts: list[str] = []
+        spans: list[tuple[int, int]] = []
+        pos = 0
+        for i, chunk in enumerate(self._chunks):
+            if i:
+                parts.append("\n")
+                pos += 1
+            start = pos
+            parts.append(chunk)
+            pos += len(chunk)
+            spans.append((start, pos))
+        self._spans = spans
+        self._text.setPlainText("".join(parts))
+
+    def _apply_highlight(self) -> None:
+        if not self._spans or not (0 <= self._index < len(self._spans)):
+            self._text.setExtraSelections([])
+            return
+        start, end = self._spans[self._index]
+        cursor = self._text.textCursor()
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        fmt = QTextCharFormat()
+        fmt.setBackground(QColor("#0A4A68"))
+        fmt.setForeground(QColor(_CYAN))
+        selection = QTextEdit.ExtraSelection()
+        selection.format = fmt
+        selection.cursor = cursor
+        self._text.setExtraSelections([selection])
+        show = self._text.textCursor()
+        show.setPosition(start)
+        self._text.setTextCursor(show)
+        self._text.ensureCursorVisible()
+
+    def eventFilter(self, obj: QObject | None, event: QEvent | None) -> bool:
+        """Map mouse-wheel on the caption pane to the utterance slider."""
+        if obj is self._text and isinstance(event, QWheelEvent) and self._chunks:
+            delta = event.angleDelta().y()
+            if delta == 0:
+                return False
+            step = -1 if delta > 0 else 1
+            new_val = max(0, min(self._slider.maximum(), self._slider.value() + step))
+            self._slider.setValue(new_val)
+            return True
+        return super().eventFilter(obj, event)
 
 
 class DubbedWindow(QWidget):
@@ -208,6 +404,17 @@ class DubbedWindow(QWidget):
                 margin: -5px 0;
                 border-radius: 6px;
             }}
+            QSlider::groove:vertical {{
+                width: 4px;
+                background: #002040;
+                border-radius: 2px;
+            }}
+            QSlider::handle:vertical {{
+                background: {_CYAN};
+                height: 12px;
+                margin: 0 -5px;
+                border-radius: 6px;
+            }}
             """
         )
         panel_layout = QVBoxLayout(self._panel)
@@ -256,21 +463,27 @@ class DubbedWindow(QWidget):
         vol_row.addWidget(self._volume_label)
         panel_layout.addLayout(vol_row)
 
-        src_label = QLabel("Source")
-        src_label.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
-        panel_layout.addWidget(src_label)
-        self._source_caption = QTextEdit()
-        self._source_caption.setReadOnly(True)
-        self._source_caption.setPlaceholderText("Source captions appear here.")
-        panel_layout.addWidget(self._source_caption, 1)
+        opacity_row = QHBoxLayout()
+        opacity_row.addWidget(QLabel("Opacity"))
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setRange(20, 100)
+        self._opacity_slider.setValue(int(self._window_opacity * 100))
+        self._opacity_slider.setToolTip("Overlay window opacity")
+        self._opacity_slider.valueChanged.connect(self._on_opacity_slider_changed)
+        opacity_row.addWidget(self._opacity_slider, 1)
+        self._opacity_label = QLabel(f"{int(self._window_opacity * 100)}%")
+        self._opacity_label.setFixedWidth(36)
+        self._opacity_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        opacity_row.addWidget(self._opacity_label)
+        panel_layout.addLayout(opacity_row)
 
-        tr_label = QLabel("Translation")
-        tr_label.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
-        panel_layout.addWidget(tr_label)
-        self._translated_caption = QTextEdit()
-        self._translated_caption.setReadOnly(True)
-        self._translated_caption.setPlaceholderText("Translation appears here.")
-        panel_layout.addWidget(self._translated_caption, 1)
+        self._source_pane = _CaptionPane("Source", parent=self._panel)
+        panel_layout.addWidget(self._source_pane, 1)
+
+        self._translated_pane = _CaptionPane(
+            "Translation", bold=True, parent=self._panel
+        )
+        panel_layout.addWidget(self._translated_pane, 1)
 
         actions = QHBoxLayout()
         actions.setSpacing(6)
@@ -308,23 +521,31 @@ class DubbedWindow(QWidget):
     def _apply_settings(self) -> None:
         """Apply saved font size and opacities from config."""
         self._update_font(self._font_size)
-        self._update_window_opacity(self._window_opacity)
         self._update_text_opacity(self._text_opacity)
+        pct = int(self._window_opacity * 100)
+        self._opacity_slider.blockSignals(True)
+        self._opacity_slider.setValue(pct)
+        self._opacity_slider.blockSignals(False)
+        self._on_opacity_slider_changed(pct)
 
     # ── Public API ────────────────────────────────────────────────────────
 
     def append_text(self, text: str) -> None:
-        """Append translated text to the display."""
-        self._append_to(self._translated_caption, text)
+        """Append translated text and highlight it as the latest utterance."""
+        self._translated_pane.append_chunk(text)
 
     def append_source_text(self, text: str) -> None:
-        """Append source (original) transcription text."""
-        self._append_to(self._source_caption, text)
+        """Append source transcription and highlight it as the latest utterance."""
+        self._source_pane.append_chunk(text)
+
+    def highlight_spoken_text(self, text: str) -> None:
+        """Highlight the translation chunk currently being spoken."""
+        self._translated_pane.highlight_matching(text)
 
     def clear_text(self) -> None:
         """Clear source and translation captions."""
-        self._source_caption.clear()
-        self._translated_caption.clear()
+        self._source_pane.clear()
+        self._translated_pane.clear()
 
     def get_font_size(self) -> int:
         """Return the current caption font size."""
@@ -349,6 +570,14 @@ class DubbedWindow(QWidget):
         self._text_opacity = max(0.2, min(1.0, opacity))
         self._ui_config.dubbed_text_opacity = self._text_opacity
         self._update_text_opacity(self._text_opacity)
+
+    def set_opacity(self, opacity: float) -> None:
+        """Update overlay window opacity (0.2 – 1.0) and persist it."""
+        pct = int(max(0.2, min(1.0, opacity)) * 100)
+        self._opacity_slider.blockSignals(True)
+        self._opacity_slider.setValue(pct)
+        self._opacity_slider.blockSignals(False)
+        self._on_opacity_slider_changed(pct)
 
     def set_status(self, text: str) -> None:
         """Update the status line in the expanded panel."""
@@ -412,38 +641,24 @@ class DubbedWindow(QWidget):
 
     # ── Internal ──────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _append_to(widget: QTextEdit, text: str) -> None:
-        if not text:
-            return
-        widget.append(text)
-        scrollbar = widget.verticalScrollBar()
-        if scrollbar is not None:
-            scrollbar.setValue(scrollbar.maximum())
-
     def _update_font(self, size: int) -> None:
-        font = QFont()
-        font.setPointSize(size)
-        self._source_caption.setFont(font)
-        translated = QFont()
-        translated.setPointSize(size)
-        translated.setBold(True)
-        self._translated_caption.setFont(translated)
+        self._source_pane.set_font_size(size, bold=False)
+        self._translated_pane.set_font_size(size, bold=True)
 
     def _update_window_opacity(self, opacity: float) -> None:
         self.setWindowOpacity(max(0.2, min(1.0, opacity)))
 
     def _update_text_opacity(self, opacity: float) -> None:
         alpha = int(max(0.2, min(1.0, opacity)) * 255)
-        color = f"rgba(232, 247, 255, {alpha})"
-        self._source_caption.setStyleSheet(
-            f"background-color: {_NAVY}; color: {color}; "
-            f"border: 1px solid #003050; border-radius: 6px; padding: 6px;"
-        )
-        self._translated_caption.setStyleSheet(
-            f"background-color: {_NAVY}; color: {color}; "
-            f"border: 1px solid #003050; border-radius: 6px; padding: 6px;"
-        )
+        self._source_pane.set_text_alpha(alpha)
+        self._translated_pane.set_text_alpha(alpha)
+
+    def _on_opacity_slider_changed(self, value: int) -> None:
+        opacity = value / 100.0
+        self._window_opacity = opacity
+        self._ui_config.dubbed_opacity = opacity
+        self._opacity_label.setText(f"{value}%")
+        self._update_window_opacity(opacity)
 
     def _set_expanded(self, expanded: bool, save_corner: bool = True) -> None:
         """Toggle collapsed bubble vs expanded panel, keeping the right edge."""

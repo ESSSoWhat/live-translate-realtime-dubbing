@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
@@ -76,8 +77,9 @@ class OverlayBubble extends StatefulWidget {
 
 class _OverlayBubbleState extends State<OverlayBubble> {
   static const _collapsedSize = 96;
-  static const _expandedWidth = 300;
-  static const _expandedHeight = 360;
+  static const _expandedWidth = 320;
+  static const _expandedHeight = 520;
+  static const _maxCaptionLines = 80;
 
   StreamSubscription<dynamic>? _shareSub;
   bool _bridgeReady = false;
@@ -88,12 +90,21 @@ class _OverlayBubbleState extends State<OverlayBubble> {
   String _status = 'Listening…';
   String _source = '';
   String _translated = '';
+  final List<String> _sourceLines = [];
+  final List<String> _translatedLines = [];
+  /// 0 = oldest, 1 = latest (currently read) line.
+  double _sourceFocus = 1;
+  double _translatedFocus = 1;
+  bool _sourceFollowLatest = true;
+  bool _translatedFollowLatest = true;
   double _fontSize = 14;
   double _opacity = 1;
   double _volume = 1;
   String _voiceId = _kDefaultVoiceId;
   List<Map<String, String>> _voices = const [];
   String? _lastUpdateKey;
+  final GlobalKey _sourceHighlightKey = GlobalKey();
+  final GlobalKey _translatedHighlightKey = GlobalKey();
 
   @override
   void initState() {
@@ -132,6 +143,29 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     _applyUpdate(event);
   }
 
+  void _appendCaptionLine(List<String> lines, String text) {
+    final t = text.trim();
+    if (t.isEmpty) return;
+    if (lines.isNotEmpty && lines.last == t) return;
+    lines.add(t);
+    while (lines.length > _maxCaptionLines) {
+      lines.removeAt(0);
+    }
+  }
+
+  void _ensureHighlightVisible(GlobalKey key) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = key.currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.35,
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
   void _applyUpdate(dynamic event) {
     Map<String, dynamic>? map;
     if (event is Map) {
@@ -162,7 +196,7 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     final fs = map['fontSize'];
     if (fs is num) fontSize = fs.toDouble();
     final op = map['opacity'];
-    if (op is num) opacity = op.toDouble();
+    if (op is num) opacity = op.toDouble().clamp(0.3, 1.0);
     final vol = map['volume'];
     if (vol is num) volume = vol.toDouble().clamp(0.0, 1.0);
     final vid = map['voiceId'];
@@ -189,6 +223,11 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     if (key == _lastUpdateKey) return;
     _lastUpdateKey = key;
 
+    final sourceAdded = source.trim().isNotEmpty &&
+        (_sourceLines.isEmpty || _sourceLines.last != source.trim());
+    final translatedAdded = translated.trim().isNotEmpty &&
+        (_translatedLines.isEmpty || _translatedLines.last != translated.trim());
+
     setState(() {
       _status = status;
       _source = source;
@@ -200,7 +239,22 @@ class _OverlayBubbleState extends State<OverlayBubble> {
       _volume = volume;
       _voiceId = voiceId;
       _voices = voices;
+      if (sourceAdded) {
+        _appendCaptionLine(_sourceLines, source);
+        if (_sourceFollowLatest) _sourceFocus = 1;
+      }
+      if (translatedAdded) {
+        _appendCaptionLine(_translatedLines, translated);
+        if (_translatedFollowLatest) _translatedFocus = 1;
+      }
     });
+
+    if (sourceAdded && _sourceFollowLatest) {
+      _ensureHighlightVisible(_sourceHighlightKey);
+    }
+    if (translatedAdded && _translatedFollowLatest) {
+      _ensureHighlightVisible(_translatedHighlightKey);
+    }
   }
 
   void _send(Map<String, dynamic> payload) {
@@ -252,6 +306,30 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     _send({'type': 'setVolume', 'volume': v});
   }
 
+  void _setOpacity(double value) {
+    final o = value.clamp(0.3, 1.0);
+    setState(() => _opacity = o);
+    _send({'type': 'setOpacity', 'opacity': o});
+  }
+
+  void _setSourceFocus(double value) {
+    final v = value.clamp(0.0, 1.0);
+    setState(() {
+      _sourceFocus = v;
+      _sourceFollowLatest = v >= 0.98;
+    });
+    _ensureHighlightVisible(_sourceHighlightKey);
+  }
+
+  void _setTranslatedFocus(double value) {
+    final v = value.clamp(0.0, 1.0);
+    setState(() {
+      _translatedFocus = v;
+      _translatedFollowLatest = v >= 0.98;
+    });
+    _ensureHighlightVisible(_translatedHighlightKey);
+  }
+
   void _setVoice(String? id) {
     if (id == null || id.isEmpty) return;
     setState(() => _voiceId = id);
@@ -292,7 +370,7 @@ class _OverlayBubbleState extends State<OverlayBubble> {
             width: _collapsedSize.toDouble(),
             height: _collapsedSize.toDouble(),
             child: Material(
-              color: scheme.primary,
+              color: scheme.primary.withValues(alpha: _opacity),
               shape: const CircleBorder(),
               elevation: 6,
               child: InkWell(
@@ -311,7 +389,7 @@ class _OverlayBubbleState extends State<OverlayBubble> {
         return Material(
           elevation: 8,
           borderRadius: BorderRadius.circular(16),
-          color: scheme.surface,
+          color: scheme.surface.withValues(alpha: _opacity),
           clipBehavior: Clip.antiAlias,
           child: SizedBox(
             width: _expandedWidth.toDouble(),
@@ -344,90 +422,46 @@ class _OverlayBubbleState extends State<OverlayBubble> {
                     selectedId: _selectedVoiceId,
                     onSelected: _setVoice,
                   ),
-                  Row(
-                    children: [
-                      Icon(
-                        _muted ? Icons.volume_off : Icons.volume_up,
-                        size: 20,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                      Expanded(
-                        child: Slider(
-                          value: _volume,
-                          onChanged: _muted
-                              ? null
-                              : (v) =>
-                                  setState(() => _volume = v.clamp(0.0, 1.0)),
-                          onChangeEnd: _muted ? null : _setVolume,
-                        ),
-                      ),
-                      SizedBox(
-                        width: 36,
-                        child: Text(
-                          '${(_volume * 100).round()}%',
-                          style: Theme.of(context).textTheme.labelSmall,
-                          textAlign: TextAlign.end,
-                        ),
-                      ),
-                    ],
+                  _CompactSliderRow(
+                    icon: _muted ? Icons.volume_off : Icons.volume_up,
+                    value: _volume,
+                    enabled: !_muted,
+                    onChanged: (v) => setState(() => _volume = v),
+                    onChangeEnd: _setVolume,
+                  ),
+                  _CompactSliderRow(
+                    icon: Icons.opacity,
+                    value: _opacity,
+                    min: 0.3,
+                    enabled: true,
+                    onChanged: (v) => setState(() => _opacity = v),
+                    onChangeEnd: _setOpacity,
                   ),
                   Expanded(
-                    child: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (_source.isNotEmpty) ...[
-                            Text(
-                              'Source',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
-                            Text(
-                              _source,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(
-                                    fontSize: _fontSize,
-                                    color: scheme.onSurface
-                                        .withValues(alpha: _opacity),
-                                  ),
-                            ),
-                            const SizedBox(height: 8),
-                          ],
-                          if (_translated.isNotEmpty) ...[
-                            Text(
-                              'Translation',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
-                            Text(
-                              _translated,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.copyWith(
-                                    fontSize: _fontSize,
-                                    fontWeight: FontWeight.w600,
-                                    color: scheme.onSurface
-                                        .withValues(alpha: _opacity),
-                                  ),
-                            ),
-                          ],
-                          if (_source.isEmpty && _translated.isEmpty)
-                            Text(
-                              'Captions appear here while Live Translate runs.',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
-                        ],
-                      ),
+                    child: _CaptionLane(
+                      title: 'Source',
+                      lines: _sourceLines,
+                      focus: _sourceFocus,
+                      fontSize: _fontSize,
+                      textOpacity: _opacity,
+                      highlightKey: _sourceHighlightKey,
+                      onFocusChanged: _setSourceFocus,
+                      emptyHint:
+                          'Source captions appear here while Live Translate runs.',
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Expanded(
+                    child: _CaptionLane(
+                      title: 'Translation',
+                      lines: _translatedLines,
+                      focus: _translatedFocus,
+                      fontSize: _fontSize,
+                      textOpacity: _opacity,
+                      highlightKey: _translatedHighlightKey,
+                      emphasize: true,
+                      onFocusChanged: _setTranslatedFocus,
+                      emptyHint: 'Translations appear here.',
                     ),
                   ),
                   Row(
@@ -468,6 +502,195 @@ class _OverlayBubbleState extends State<OverlayBubble> {
           ),
         );
       },
+    );
+  }
+}
+
+class _CompactSliderRow extends StatelessWidget {
+  const _CompactSliderRow({
+    required this.icon,
+    required this.value,
+    required this.onChanged,
+    required this.onChangeEnd,
+    this.enabled = true,
+    this.min = 0,
+  });
+
+  final IconData icon;
+  final double value;
+  final double min;
+  final bool enabled;
+  final ValueChanged<double> onChanged;
+  final ValueChanged<double> onChangeEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: scheme.onSurfaceVariant),
+        Expanded(
+          child: Slider(
+            min: min,
+            max: 1,
+            value: value.clamp(min, 1.0),
+            onChanged: enabled ? onChanged : null,
+            onChangeEnd: enabled ? onChangeEnd : null,
+          ),
+        ),
+        SizedBox(
+          width: 36,
+          child: Text(
+            '${(value * 100).round()}%',
+            style: Theme.of(context).textTheme.labelSmall,
+            textAlign: TextAlign.end,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Caption history with a vertical scrubber that highlights the focused line.
+class _CaptionLane extends StatelessWidget {
+  const _CaptionLane({
+    required this.title,
+    required this.lines,
+    required this.focus,
+    required this.fontSize,
+    required this.textOpacity,
+    required this.highlightKey,
+    required this.onFocusChanged,
+    required this.emptyHint,
+    this.emphasize = false,
+  });
+
+  final String title;
+  final List<String> lines;
+  final double focus;
+  final double fontSize;
+  final double textOpacity;
+  final GlobalKey highlightKey;
+  final ValueChanged<double> onFocusChanged;
+  final String emptyHint;
+  final bool emphasize;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final hasLines = lines.isNotEmpty;
+    final idx = hasLines
+        ? (focus.clamp(0.0, 1.0) * math.max(lines.length - 1, 0)).round()
+        : 0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          title,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+        ),
+        const SizedBox(height: 2),
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: hasLines
+                      ? ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
+                          itemCount: lines.length,
+                          itemBuilder: (context, i) {
+                            final active = i == idx;
+                            return Container(
+                              key: active ? highlightKey : null,
+                              margin: const EdgeInsets.only(bottom: 4),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: active
+                                    ? scheme.primary.withValues(alpha: 0.22)
+                                    : null,
+                                borderRadius: BorderRadius.circular(6),
+                                border: active
+                                    ? Border.all(
+                                        color: scheme.primary
+                                            .withValues(alpha: 0.55),
+                                      )
+                                    : null,
+                              ),
+                              child: Text(
+                                lines[i],
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      fontSize: fontSize,
+                                      fontWeight: emphasize && active
+                                          ? FontWeight.w600
+                                          : FontWeight.w400,
+                                      color: scheme.onSurface.withValues(
+                                        alpha: active
+                                            ? textOpacity
+                                            : textOpacity * 0.55,
+                                      ),
+                                    ),
+                              ),
+                            );
+                          },
+                        )
+                      : Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Text(
+                            emptyHint,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                        ),
+                ),
+              ),
+              if (hasLines && lines.length > 1)
+                SizedBox(
+                  width: 28,
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.keyboard_arrow_up,
+                        size: 16,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      Expanded(
+                        child: RotatedBox(
+                          quarterTurns: 3,
+                          child: Slider(
+                            value: focus.clamp(0.0, 1.0),
+                            onChanged: onFocusChanged,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 16,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
