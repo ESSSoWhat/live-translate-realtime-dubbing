@@ -92,7 +92,6 @@ class MicTranslateService {
 
   bool _running = false;
   bool _muted = false;
-  bool _playbackActive = false;
   double _volume = 1.0;
 
   /// When true, capture/translate continue but TTS is skipped.
@@ -115,11 +114,15 @@ class MicTranslateService {
 
   /// Mic capture window (ms). Shorter = lower latency; silence-aware Live
   /// capture is handled natively in [PlaybackCaptureService].
-  static const int chunkMs = 1200;
+  static const int chunkMs = 900;
   static const _backoff = Duration(seconds: 1);
   /// Let speaker audio die out so the next mic chunk does not re-hear TTS.
-  static const _postTtsCooldown = Duration(milliseconds: 250);
+  static const _postTtsCooldown = Duration(milliseconds: 180);
   static const _ocrDedupeWindow = Duration(milliseconds: 1200);
+  /// Max Live WAV chunks queued while STT/translate runs (drop oldest if full).
+  static const int _livePendingMax = 4;
+  /// Cap coalesced Live audio so STT stays snappy (~3.5s mono 16-bit @ 16k).
+  static const int _liveCoalesceMaxPcmBytes = 16000 * 2 * 35 ~/ 10;
 
   /// Serializes TTS so overlapping Live chunks do not stomp each other.
   Future<void> _ttsChain = Future<void>.value();
@@ -386,7 +389,6 @@ class MicTranslateService {
 
   Future<void> stop() async {
     _running = false;
-    _playbackActive = false;
     _abortCloneCapture();
     await _playbackSub?.cancel();
     _playbackSub = null;
@@ -449,31 +451,41 @@ class MicTranslateService {
       },
     );
     _statusController.add('Listening to app audio…');
-    // Keep only the newest chunk so we stay near real-time instead of
-    // translating audio that is many seconds old.
-    List<int>? latest;
+    // Keep a short FIFO of chunks so brief STT lag does not drop dialogue.
+    // If we fall far behind, drop the oldest chunks (prefer recent speech).
+    final pending = <List<int>>[];
     var pumping = false;
 
     Future<void> pump() async {
       if (pumping) return;
       pumping = true;
       try {
-        while (_running) {
-          final bytes = latest;
-          latest = null;
-          if (bytes == null) break;
-          await _processWavBytes(
-            bytes,
-            emptySpeechMessage:
-                'No speech in app audio — play media with dialogue',
-            // TTS uses assistant usage (excluded from capture); do not block
-            // the next STT/translate on playback finishing.
-            awaitTts: false,
-          );
+        while (_running && pending.isNotEmpty) {
+          final batch = List<List<int>>.from(pending);
+          pending.clear();
+          final merged = _coalesceWavChunks(batch);
+          if (merged != null && merged.isNotEmpty) {
+            await _processWavBytes(
+              merged,
+              emptySpeechMessage:
+                  'No speech in app audio — play media with dialogue',
+              awaitTts: false,
+            );
+          } else {
+            for (final bytes in batch) {
+              if (!_running) break;
+              await _processWavBytes(
+                bytes,
+                emptySpeechMessage:
+                    'No speech in app audio — play media with dialogue',
+                awaitTts: false,
+              );
+            }
+          }
         }
       } finally {
         pumping = false;
-        if (_running && latest != null) {
+        if (_running && pending.isNotEmpty) {
           unawaited(pump());
         }
       }
@@ -483,7 +495,10 @@ class MicTranslateService {
       await for (final bytes in queue.stream) {
         if (!_running) break;
         _offerCloneWav(bytes);
-        latest = bytes;
+        pending.add(bytes);
+        while (pending.length > _livePendingMax) {
+          pending.removeAt(0);
+        }
         unawaited(pump());
       }
     } finally {
@@ -492,6 +507,38 @@ class MicTranslateService {
       _playbackSub = null;
       _finishCloneCapture();
     }
+  }
+
+  /// Merge consecutive Live WAV chunks into one when formats match.
+  Uint8List? _coalesceWavChunks(List<List<int>> chunks) {
+    if (chunks.isEmpty) return null;
+    if (chunks.length == 1) {
+      final only = chunks.first;
+      return only is Uint8List ? only : Uint8List.fromList(only);
+    }
+    _WavFormat? format;
+    final pcm = BytesBuilder(copy: false);
+    for (final raw in chunks) {
+      final parsed = _parseWav(
+        raw is Uint8List ? raw : Uint8List.fromList(raw),
+      );
+      if (parsed == null) continue;
+      format ??= parsed.format;
+      if (format.sampleRate != parsed.format.sampleRate ||
+          format.channels != parsed.format.channels ||
+          format.bitsPerSample != parsed.format.bitsPerSample) {
+        continue;
+      }
+      pcm.add(parsed.pcm);
+      if (pcm.length >= _liveCoalesceMaxPcmBytes) break;
+    }
+    final fmt = format;
+    final bytes = pcm.takeBytes();
+    if (fmt == null || bytes.isEmpty) return null;
+    final trimmed = bytes.length > _liveCoalesceMaxPcmBytes
+        ? bytes.sublist(bytes.length - _liveCoalesceMaxPcmBytes)
+        : bytes;
+    return _writeWav(pcm: trimmed, format: fmt);
   }
 
   Future<void> _runScreenLoop() async {
@@ -585,14 +632,11 @@ class MicTranslateService {
           await Future<void>.delayed(const Duration(milliseconds: 50));
         }
         if (!_running) break;
-
-        // Never capture while TTS is on the speaker (feedback loop).
-        while (_running && _playbackActive) {
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-        }
-        if (!_running) break;
         if (_pausingForClone) continue;
 
+        // Do not hard-block capture on TTS: echoCancel + stopping the
+        // recorder inside TTS already reduce feedback. Blocking here was
+        // dropping all speech spoken while the translation played.
         _statusController.add('Listening…');
         path = await _recordToFile();
         if (!_running || path == null) {
@@ -607,9 +651,11 @@ class MicTranslateService {
             await Future<void>.delayed(_backoff);
             continue;
           }
+          // Fire-and-forget TTS so the next mic window starts immediately.
           await _processWavBytes(
             bytes,
             emptySpeechMessage: 'No speech detected — speak near the mic',
+            awaitTts: false,
           );
         } finally {
           try {
@@ -771,7 +817,6 @@ class MicTranslateService {
     final path = '${dir.path}/tts_${DateTime.now().millisecondsSinceEpoch}.mp3';
     final file = File(path);
     await file.writeAsBytes(bytes);
-    _playbackActive = true;
     try {
       // Ensure mic is not open while speaker TTS is playing.
       try {
@@ -792,7 +837,6 @@ class MicTranslateService {
         await Future<void>.delayed(_postTtsCooldown);
       }
     } finally {
-      _playbackActive = false;
       try {
         await file.delete();
       } catch (_) {}

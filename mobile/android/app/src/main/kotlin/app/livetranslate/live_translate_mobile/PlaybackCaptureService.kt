@@ -198,11 +198,12 @@ class PlaybackCaptureService : Service() {
                     val n = record.read(readBuf, 0, minOf(readBuf.size, frameBytes))
                     when {
                         n > 0 -> {
-                            chunk.write(readBuf, 0, n)
-                            collected += n
                             val frame = if (n == readBuf.size) readBuf else readBuf.copyOf(n)
                             if (isSilent(frame)) {
                                 if (heardSpeech) {
+                                    // Keep a little trailing silence for natural phrasing.
+                                    chunk.write(readBuf, 0, n)
+                                    collected += n
                                     silenceFrames++
                                     if (silenceFrames >= silenceFramesNeeded &&
                                         collected >= minSpeechBytes
@@ -210,9 +211,12 @@ class PlaybackCaptureService : Service() {
                                         break
                                     }
                                 }
+                                // Discard leading silence so the max window is speech-only.
                             } else {
                                 heardSpeech = true
                                 silenceFrames = 0
+                                chunk.write(readBuf, 0, n)
+                                collected += n
                             }
                         }
                         n < 0 -> {
@@ -415,11 +419,11 @@ class PlaybackCaptureService : Service() {
         const val SAMPLE_RATE = 16000
         const val BYTES_PER_SAMPLE = 2
         /** Hard cap so phrases are not held forever without a pause. */
-        const val CHUNK_MAX_SECONDS = 2
+        const val CHUNK_MAX_SECONDS = 3
         /** Flush after this much trailing silence once speech was heard (~desktop VAD). */
-        const val SILENCE_FLUSH_MS = 350
+        const val SILENCE_FLUSH_MS = 550
         /** Do not flush on silence until at least this much audio was collected. */
-        const val MIN_SPEECH_MS = 450
+        const val MIN_SPEECH_MS = 400
         const val SCREEN_MAX_EDGE = 720
         const val FRAME_INTERVAL_MS = 900L
         const val JPEG_QUALITY = 70
