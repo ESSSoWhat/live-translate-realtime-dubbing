@@ -4,14 +4,23 @@
 
 from __future__ import annotations
 
+import contextlib
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 if TYPE_CHECKING:
     from live_dubbing.app import AsyncWorker
-from PyQt6.QtCore import Qt, QTimer, pyqtSlot  # pylint: disable=no-name-in-module
-from PyQt6.QtGui import QCloseEvent, QFont, QIcon, QKeySequence, QShortcut  # pylint: disable=no-name-in-module
+from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSlot  # pylint: disable=no-name-in-module
+from PyQt6.QtGui import (  # pylint: disable=no-name-in-module
+    QAction,
+    QCloseEvent,
+    QFont,
+    QIcon,
+    QKeySequence,
+    QShortcut,
+)
 
 # PyQt6 uses dynamic exports; Pylint cannot resolve them without the runtime env
 from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
@@ -20,6 +29,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QCheckBox,
     QComboBox,
     QDialog,
+    QDockWidget,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -29,6 +39,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -36,10 +47,10 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QSlider,
     QSplitter,
     QStackedWidget,
+    QSystemTrayIcon,
     QTextEdit,
     QVBoxLayout,
     QWidget,
-    QDockWidget,
 )
 
 from live_dubbing import __version__
@@ -47,19 +58,19 @@ from live_dubbing.audio.playback import get_output_devices
 from live_dubbing.audio.session import AudioSessionInfo
 from live_dubbing.config.settings import AppSettings, ConfigManager
 from live_dubbing.core.events import Event, EventBus, EventType
+from live_dubbing.core.mic_translator import MicTranslator
 from live_dubbing.core.orchestrator import Orchestrator
 from live_dubbing.core.state import AppState, TranslationState
 from live_dubbing.gui.widgets.app_selector import AppSelectorWidget
 from live_dubbing.gui.widgets.audio_meter import AudioMeter
-from live_dubbing.core.mic_translator import MicTranslator
 from live_dubbing.gui.widgets.debug_window import DebugWindow
+from live_dubbing.gui.widgets.dubbed_window import DubbedWindow
 from live_dubbing.gui.widgets.language_panel import LanguagePanel
 from live_dubbing.gui.widgets.mic_translate_panel import MicTranslateWidget
-from live_dubbing.gui.widgets.status_bar import StatusBar
-from live_dubbing.gui.widgets.dubbed_window import DubbedWindow
-from live_dubbing.gui.widgets.usage_meter import UsageMeterWidget
-from live_dubbing.gui.widgets.settings_dialog import SettingsDialog
 from live_dubbing.gui.widgets.paypal_dialog import PayPalCheckoutDialog
+from live_dubbing.gui.widgets.settings_dialog import SettingsDialog
+from live_dubbing.gui.widgets.status_bar import StatusBar
+from live_dubbing.gui.widgets.usage_meter import UsageMeterWidget
 
 logger = structlog.get_logger(__name__)
 
@@ -98,6 +109,10 @@ class MainWindow(QMainWindow):
         self._use_system_fallback = False  # Track if using system loopback
         self._dubbed_window: DubbedWindow | None = None
         self._dubbed_detached = self._settings.ui.dubbed_window_detached
+        self._main_hidden_for_overlay = False
+        self._force_quit = False
+        self._tray: QSystemTrayIcon | None = None
+        self._overlay_clone_timer: QTimer | None = None
 
         # Usage meter created here so mypy sees the attribute; _setup_ui() adds it to layout
         self._usage_meter: UsageMeterWidget = UsageMeterWidget(self._settings)
@@ -114,6 +129,7 @@ class MainWindow(QMainWindow):
         self._setup_mic_translate_panel()
         self._setup_menus()
         self._setup_shortcuts()
+        self._setup_tray()
         self._connect_events()
         self._setup_refresh_timer()
 
@@ -698,12 +714,12 @@ class MainWindow(QMainWindow):
         source_row = QHBoxLayout()
         source_row.addWidget(QLabel("Source:"))
         self._source_combo = QComboBox()
-        self._source_combo.addItem("App Audio", "app")
-        self._source_combo.addItem("Microphone", "mic")
+        self._source_combo.addItem("Live Translate", "app")
+        self._source_combo.addItem("Mic Translate", "mic")
         self._source_combo.setMinimumWidth(140)
         self._source_combo.setToolTip(
-            "App Audio: translate audio from the selected app.\n"
-            "Microphone: speak into your mic, output to virtual cable (Discord, Zoom, etc.)."
+            "Live Translate: capture the selected app and show an overlay HUD.\n"
+            "Mic Translate: speak into your mic; captions stay in this window."
         )
         self._source_combo.currentIndexChanged.connect(self._on_source_changed)
         source_row.addWidget(self._source_combo)
@@ -1027,9 +1043,208 @@ class MainWindow(QMainWindow):
         stop_shortcut.activated.connect(self._on_stop_clicked)
         self._stop_btn.setToolTip("Stop Translation (Ctrl+Shift+S)")
 
-        # Ctrl+P — Toggle pop out / dock
+        # Ctrl+P — Toggle pop out / overlay HUD
         popout_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
         popout_shortcut.activated.connect(self._on_popout_clicked)
+
+    def _window_icon(self) -> QIcon:
+        """Return the app icon if the asset exists, otherwise an empty icon."""
+        import pathlib
+
+        icon_path = pathlib.Path(__file__).parent / "assets" / "logo.png"
+        if icon_path.exists():
+            return QIcon(str(icon_path))
+        return self.windowIcon()
+
+    def _setup_tray(self) -> None:
+        """Create a system tray icon for restoring the hidden main window."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            logger.info("System tray is not available")
+            return
+        self._tray = QSystemTrayIcon(self._window_icon(), self)
+        self._tray.setToolTip("Live Translate")
+        menu = QMenu(self)
+        show_action = QAction("Show", self)
+        show_action.triggered.connect(self._restore_main_window)
+        menu.addAction(show_action)
+        stop_action = QAction("Stop", self)
+        stop_action.triggered.connect(self._on_stop_clicked)
+        menu.addAction(stop_action)
+        menu.addSeparator()
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(self._quit_from_tray)
+        menu.addAction(quit_action)
+        self._tray.setContextMenu(menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        """Restore the main window on a tray click."""
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._restore_main_window()
+
+    def _quit_from_tray(self) -> None:
+        """Exit fully from the tray menu."""
+        self._force_quit = True
+        self.close()
+
+    def _is_live_source(self) -> bool:
+        """True when Live Translate (app audio) is selected."""
+        return self._source_combo.currentData() == "app"
+
+    def _overlay_voice_items(self) -> list[tuple[str, str]]:
+        """Voice list for the overlay combo: (id, name)."""
+        items: list[tuple[str, str]] = []
+        for voice in self._orchestrator.get_saved_voices():
+            name = voice.speaker_id or voice.name or voice.voice_id
+            items.append((voice.voice_id, name))
+        return items
+
+    def _ensure_overlay(self) -> DubbedWindow:
+        """Create the overlay HUD if needed and connect its signals once."""
+        if self._dubbed_window is not None:
+            return self._dubbed_window
+        overlay = DubbedWindow(ui_config=self._settings.ui)
+        overlay.reattach_requested.connect(self._on_reattach)
+        overlay.stop_requested.connect(self._on_stop_clicked)
+        overlay.mute_toggled.connect(self._on_overlay_mute)
+        overlay.volume_changed.connect(self._on_overlay_volume)
+        overlay.voice_selected.connect(self._on_overlay_voice)
+        overlay.clone_requested.connect(self._on_overlay_clone)
+        overlay.home_requested.connect(self._restore_main_window)
+        self._dubbed_window = overlay
+        self._sync_overlay_state()
+        return overlay
+
+    def _sync_overlay_state(self) -> None:
+        """Push mute, volume, voices, and caption style into the overlay."""
+        overlay = self._dubbed_window
+        if overlay is None:
+            return
+        overlay.set_muted(self._mute_cb.isChecked())
+        overlay.set_volume(self._volume_slider.value() / 100.0)
+        overlay.set_voices(
+            self._overlay_voice_items(),
+            self._settings.voice_clone.default_voice_id,
+        )
+        overlay.set_font_size(self._settings.ui.dubbed_font_size)
+        overlay.set_text_opacity(self._settings.ui.dubbed_text_opacity)
+        overlay.set_session_active(self._is_running)
+
+    def _show_live_overlay(self, hide_main: bool) -> None:
+        """Show the overlay HUD; optionally hide the main window."""
+        overlay = self._ensure_overlay()
+        existing = self._translation_text.toPlainText()
+        source = self._transcription_text.toPlainText()
+        overlay.clear_text()
+        if source.strip():
+            overlay.append_source_text(source)
+        if existing.strip():
+            overlay.append_text(existing)
+        self._sync_overlay_state()
+        if hide_main:
+            overlay.collapse()
+        else:
+            overlay.expand()
+        overlay.show()
+        overlay.raise_()
+        self._dubbed_detached = True
+        self._popout_btn.setText("Show")
+        self._popout_btn.setToolTip("Bring the overlay HUD to front")
+        if hide_main:
+            self._main_hidden_for_overlay = True
+            self.hide()
+            if self._tray is not None:
+                self._tray.showMessage(
+                    "Live Translate",
+                    "Translation is running in the overlay. "
+                    "Click the tray icon or Home to return here.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    3000,
+                )
+
+    def _restore_main_window(self) -> None:
+        """Show and focus the main window without stopping translation."""
+        self._main_hidden_for_overlay = False
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _hide_live_overlay(self) -> None:
+        """Hide the overlay HUD after a live session ends."""
+        if self._dubbed_window is not None:
+            self._dubbed_window.set_session_active(False)
+            self._dubbed_window.set_cloning(False)
+            self._dubbed_window.hide()
+        self._dubbed_detached = False
+        self._popout_btn.setText("Pop Out")
+        self._popout_btn.setToolTip("Detach dubbed text into a floating overlay")
+        self._translation_group.show()
+
+    def _on_overlay_mute(self, muted: bool) -> None:
+        """Apply mute from the overlay HUD."""
+        self._mute_cb.blockSignals(True)
+        self._mute_cb.setChecked(muted)
+        self._mute_cb.blockSignals(False)
+        self._on_mute_toggled(muted)
+
+    def _on_overlay_volume(self, volume: float) -> None:
+        """Apply volume from the overlay HUD."""
+        pct = int(max(0.0, min(1.0, volume)) * 100)
+        self._volume_slider.blockSignals(True)
+        self._volume_slider.setValue(pct)
+        self._volume_slider.blockSignals(False)
+        self._on_volume_changed(pct)
+
+    def _on_overlay_voice(self, voice_id: str) -> None:
+        """Switch TTS voice from the overlay HUD."""
+        if not voice_id or not self._async_worker:
+            return
+        self._async_worker.run_coroutine(self._orchestrator.switch_voice(voice_id))
+
+    def _on_overlay_clone(self) -> None:
+        """Start a timed live clone from overlay audio, matching mobile Clone."""
+        if not self._is_running:
+            return
+        if self._overlay_clone_timer is not None:
+            return
+        if self._dubbed_window is not None:
+            self._dubbed_window.set_cloning(True)
+        name = datetime.now().strftime("Clone %H:%M")
+        if self._async_worker:
+            self._async_worker.run_coroutine(
+                self._orchestrator.start_voice_capture(name),
+                on_error=self._on_overlay_clone_error,
+            )
+        duration_ms = int(
+            self._settings.voice_clone.dynamic_capture_duration_sec * 1000
+        )
+        self._overlay_clone_timer = QTimer(self)
+        self._overlay_clone_timer.setSingleShot(True)
+        self._overlay_clone_timer.timeout.connect(self._finish_overlay_clone)
+        self._overlay_clone_timer.start(max(3000, duration_ms))
+
+    def _finish_overlay_clone(self) -> None:
+        """Finish overlay live clone capture."""
+        self._overlay_clone_timer = None
+        if self._async_worker:
+            self._async_worker.run_coroutine(
+                self._orchestrator.finish_voice_capture(),
+                on_error=self._on_overlay_clone_error,
+            )
+
+    def _on_overlay_clone_error(self, error_msg: str) -> None:
+        """Reset overlay clone UI after a failure."""
+        if self._overlay_clone_timer is not None:
+            self._overlay_clone_timer.stop()
+            self._overlay_clone_timer = None
+        if self._dubbed_window is not None:
+            self._dubbed_window.set_cloning(False)
+            self._dubbed_window.set_status("Clone failed")
+        logger.warning("Overlay clone failed", error=error_msg)
 
     @pyqtSlot(bool)
     def _toggle_debug_window(self, checked: bool) -> None:
@@ -1316,6 +1531,8 @@ class MainWindow(QMainWindow):
         self._volume_label.setText(f"{value}%")
         self._orchestrator.set_output_volume(volume)
         self._settings.audio.output_volume = volume
+        if self._dubbed_window is not None:
+            self._dubbed_window.set_volume(volume)
         try:
             ConfigManager().save(self._settings)
         except Exception as e:
@@ -1328,10 +1545,13 @@ class MainWindow(QMainWindow):
         else:
             vol = self._volume_slider.value() / 100.0
             self._orchestrator.set_output_volume(vol)
+        if self._dubbed_window is not None:
+            self._dubbed_window.set_muted(checked)
 
     def _on_clear_translation(self) -> None:
-        """Clear translation text in main view and detached window."""
+        """Clear translation text in main view and overlay HUD."""
         self._translation_text.clear()
+        self._transcription_text.clear()
         if self._dubbed_window is not None:
             self._dubbed_window.clear_text()
 
@@ -1441,15 +1661,23 @@ class MainWindow(QMainWindow):
         else:
             logger.error("No async worker available to start translation")
             self._handle_translation_error("No async worker available")
+            return
+
+        if self._is_live_source():
+            self._show_live_overlay(hide_main=True)
 
     @pyqtSlot()
     def _on_stop_clicked(self) -> None:
         """Handle stop button click."""
+        if self._overlay_clone_timer is not None:
+            self._overlay_clone_timer.stop()
+            self._overlay_clone_timer = None
         self._start_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
         self._app_selector.set_enabled(True)
         self._language_panel.set_enabled(True)
         self._capture_mode_combo.setEnabled(True)
+        self._capture_channel_combo.setEnabled(True)
         self._is_running = False
 
         # Restore info labels
@@ -1463,6 +1691,9 @@ class MainWindow(QMainWindow):
             )
         else:
             logger.error("No async worker available to stop translation")
+
+        self._hide_live_overlay()
+        self._restore_main_window()
 
     def _handle_translation_error(self, error_msg: str) -> None:
         """Handle translation error from async worker."""
@@ -1492,6 +1723,8 @@ class MainWindow(QMainWindow):
                 self._clone_progress.setFormat("Ready")
         except Exception as e:
             logger.exception("Error resetting UI after translation failure", error=str(e))
+        self._hide_live_overlay()
+        self._restore_main_window()
 
     @pyqtSlot(object)
     def _on_app_initialized(self, event: Event) -> None:
@@ -1583,6 +1816,11 @@ class MainWindow(QMainWindow):
         # Refresh the voice list so the new clone appears
         self._refresh_voice_list()
         self._refresh_profile_list()
+        if self._dubbed_window is not None:
+            self._dubbed_window.set_cloning(False)
+            self._sync_overlay_state()
+            if voice_name:
+                self._dubbed_window.set_status(f"Voice cloned: {voice_name}")
 
     @pyqtSlot(object)
     def _on_clone_failed(self, event: Event) -> None:
@@ -1595,6 +1833,9 @@ class MainWindow(QMainWindow):
         self._capture_voice_btn.setEnabled(True)
         self._import_voice_btn.setText("Import Voice")
         self._import_voice_btn.setEnabled(True)
+        if self._dubbed_window is not None:
+            self._dubbed_window.set_cloning(False)
+            self._dubbed_window.set_status("Clone failed")
 
     # ── Voice panel handlers ─────────────────────────────────────────────
 
@@ -1645,6 +1886,11 @@ class MainWindow(QMainWindow):
         )
         # Keep profile assign combo in sync with clone library
         self._populate_profile_voice_combo()
+        if self._dubbed_window is not None:
+            self._dubbed_window.set_voices(
+                self._overlay_voice_items(),
+                self._settings.voice_clone.default_voice_id,
+            )
 
     def _refresh_profile_list(self) -> None:
         """Reload voice profiles and default-profile combo."""
@@ -2008,7 +2254,8 @@ class MainWindow(QMainWindow):
             self._usage_meter.stop_auto_refresh()
             self._settings.clear_auth_tokens()
             logger.info("User signed out; quitting")
-            QApplication.quit()
+            self._force_quit = True
+            self.close()
 
     # ── Dubbed window pop-out / customization ────────────────────────────
 
@@ -2023,9 +2270,8 @@ class MainWindow(QMainWindow):
         self._dubbed_font_label.setText(str(value))
         self._settings.ui.dubbed_font_size = value
         self._apply_dubbed_font(value)
-        # Sync to floating window if open
         if self._dubbed_window is not None:
-            self._dubbed_window._font_slider.setValue(value)
+            self._dubbed_window.set_font_size(value)
 
     def _on_dubbed_text_opacity_changed(self, value: int) -> None:
         """Handle inline text opacity slider change."""
@@ -2036,43 +2282,23 @@ class MainWindow(QMainWindow):
         self._translation_text.setStyleSheet(
             f"color: rgba(234, 234, 234, {alpha});"
         )
-        # Sync to floating window if open
         if self._dubbed_window is not None:
-            self._dubbed_window._text_opacity_slider.setValue(value)
+            self._dubbed_window.set_text_opacity(value / 100.0)
 
     def _on_popout_clicked(self) -> None:
-        """Detach the translation display into a floating window."""
+        """Show the overlay HUD without hiding the main window."""
         if self._dubbed_detached and self._dubbed_window is not None:
-            # Already detached — just bring to front
             self._dubbed_window.show()
             self._dubbed_window.raise_()
             self._dubbed_window.activateWindow()
             return
-
-        # Create the floating window
-        self._dubbed_window = DubbedWindow(
-            ui_config=self._settings.ui,
-        )
-        self._dubbed_window.reattach_requested.connect(self._on_reattach)
-
-        # Copy existing text to the floating window
-        existing = self._translation_text.toPlainText()
-        if existing.strip():
-            self._dubbed_window.append_text(existing)
-
-        # Hide inline translation box
+        self._show_live_overlay(hide_main=False)
         self._translation_group.hide()
-        self._dubbed_detached = True
-        self._popout_btn.setText("Show")
-        self._popout_btn.setToolTip("Bring the floating window to front")
-
-        self._dubbed_window.show()
-        logger.info("Dubbed window detached")
+        logger.info("Overlay HUD shown")
 
     def _on_reattach(self) -> None:
-        """Re-dock the floating window back into the main window."""
+        """Hide the overlay HUD and restore the inline translation pane."""
         if self._dubbed_window is not None:
-            # Sync slider values back
             self._dubbed_font_slider.blockSignals(True)
             self._dubbed_font_slider.setValue(self._dubbed_window.get_font_size())
             self._dubbed_font_slider.blockSignals(False)
@@ -2080,20 +2306,23 @@ class MainWindow(QMainWindow):
             self._apply_dubbed_font(self._dubbed_window.get_font_size())
 
             self._dubbed_text_opacity_slider.blockSignals(True)
-            self._dubbed_text_opacity_slider.setValue(int(self._dubbed_window.get_text_opacity() * 100))
+            self._dubbed_text_opacity_slider.setValue(
+                int(self._dubbed_window.get_text_opacity() * 100)
+            )
             self._dubbed_text_opacity_slider.blockSignals(False)
-            self._dubbed_text_opacity_label.setText(f"{int(self._dubbed_window.get_text_opacity() * 100)}%")
+            self._dubbed_text_opacity_label.setText(
+                f"{int(self._dubbed_window.get_text_opacity() * 100)}%"
+            )
 
             self._dubbed_window.hide()
             self._dubbed_window.deleteLater()
             self._dubbed_window = None
 
-        # Show inline translation box again
         self._translation_group.show()
         self._dubbed_detached = False
         self._popout_btn.setText("Pop Out")
-        self._popout_btn.setToolTip("Detach dubbed text into a floating window")
-        logger.info("Dubbed window re-docked")
+        self._popout_btn.setToolTip("Detach dubbed text into a floating overlay")
+        logger.info("Overlay HUD closed")
 
     @pyqtSlot(object)
     def _on_transcription(self, event: Event) -> None:
@@ -2103,20 +2332,19 @@ class MainWindow(QMainWindow):
         scrollbar = self._transcription_text.verticalScrollBar()
         if scrollbar is not None:
             scrollbar.setValue(scrollbar.maximum())
+        if self._dubbed_window is not None:
+            self._dubbed_window.append_source_text(text)
 
     @pyqtSlot(object)
     def _on_translation(self, event: Event) -> None:
         """Handle translation update."""
         text = event.data.get("text", "")
         if text:
-            # Always update inline text (hidden when detached, but keeps buffer)
             self._translation_text.append(text)
             scrollbar = self._translation_text.verticalScrollBar()
             if scrollbar is not None:
                 scrollbar.setValue(scrollbar.maximum())
-
-            # Also update detached window if open
-            if self._dubbed_detached and self._dubbed_window is not None:
+            if self._dubbed_window is not None:
                 self._dubbed_window.append_text(text)
 
     @pyqtSlot(object)
@@ -2125,6 +2353,8 @@ class MainWindow(QMainWindow):
         new_state = event.data.get("new_state")
         if isinstance(new_state, AppState):
             self._status_bar.set_app_state(new_state)
+            if self._dubbed_window is not None and new_state == AppState.RUNNING:
+                self._dubbed_window.set_status("Listening…")
 
     @pyqtSlot(object)
     def _on_translation_state_changed(self, event: Event) -> None:
@@ -2132,6 +2362,16 @@ class MainWindow(QMainWindow):
         new_state = event.data.get("new_state")
         if isinstance(new_state, TranslationState):
             self._status_bar.set_translation_state(new_state)
+            if self._dubbed_window is not None:
+                labels = {
+                    TranslationState.IDLE: "Ready",
+                    TranslationState.WAITING_FOR_AUDIO: "Listening…",
+                    TranslationState.CLONING_VOICE: "Cloning voice…",
+                    TranslationState.TRANSLATING: "Translating",
+                    TranslationState.PAUSED: "Paused",
+                    TranslationState.ERROR: "Error",
+                }
+                self._dubbed_window.set_status(labels.get(new_state, "Listening…"))
 
     @pyqtSlot(object)
     def _on_error(self, event: Event) -> None:
@@ -2167,6 +2407,7 @@ class MainWindow(QMainWindow):
             # Stop capture so STT stops hammering 401s while the user signs in
             if self._is_running and self._async_worker:
                 self._async_worker.run_coroutine(self._orchestrator.stop_translation())
+            self._restore_main_window()
             msg = event.data.get("message", "Session expired — please sign in again.")
             reply = QMessageBox.warning(
                 self,
@@ -2198,10 +2439,43 @@ class MainWindow(QMainWindow):
 
     def show_error(self, message: str) -> None:
         """Display error message to user."""
+        self._restore_main_window()
         QMessageBox.critical(self, "Error", message)
 
+    def changeEvent(self, event: QEvent | None) -> None:
+        """Minimize to tray when the setting is enabled."""
+        super().changeEvent(event)
+        if event is None or event.type() != QEvent.Type.WindowStateChange:
+            return
+        if (
+            self.isMinimized()
+            and self._settings.ui.minimize_to_tray
+            and self._tray is not None
+        ):
+            QTimer.singleShot(0, self.hide)
+
     def closeEvent(self, event: QCloseEvent | None) -> None:
-        """Handle window close event."""
+        """Hide to overlay/tray while a session is running; otherwise quit."""
+        tray_ok = self._tray is not None and self._settings.ui.minimize_to_tray
+        if not self._force_quit and (self._is_running or tray_ok):
+            if event is not None:
+                event.ignore()
+            self.hide()
+            if self._is_running and self._dubbed_window is not None:
+                self._dubbed_window.show()
+                self._dubbed_window.raise_()
+            elif self._tray is not None:
+                self._tray.showMessage(
+                    "Live Translate",
+                    "Still running in the system tray.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    2000,
+                )
+            return
+
+        if self._overlay_clone_timer is not None:
+            self._overlay_clone_timer.stop()
+            self._overlay_clone_timer = None
         if self._is_running and self._async_worker:
             self._async_worker.run_coroutine(
                 self._orchestrator.stop_translation()
@@ -2214,12 +2488,18 @@ class MainWindow(QMainWindow):
         self._settings.ui.window_width = self.width()
         self._settings.ui.window_height = self.height()
 
-        # Save dubbed window state
+        # Save overlay geometry
         self._settings.ui.dubbed_window_detached = self._dubbed_detached
         if self._dubbed_window is not None:
             self._dubbed_window._save_geometry()
+            self._dubbed_window.set_session_active(False)
+            with contextlib.suppress(TypeError):
+                self._dubbed_window.reattach_requested.disconnect()
             self._dubbed_window.close()
             self._dubbed_window = None
+
+        if self._tray is not None:
+            self._tray.hide()
 
         # Persist settings
         try:
@@ -2231,3 +2511,4 @@ class MainWindow(QMainWindow):
             unsub()
         if event is not None:
             event.accept()
+        QApplication.quit()

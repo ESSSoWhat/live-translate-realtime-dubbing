@@ -142,6 +142,8 @@ class Application:
         self._qt_app = QApplication(sys.argv)
         self._qt_app.setApplicationName("Live Translate")
         self._qt_app.setApplicationVersion(__version__)
+        # Overlay (Tool) + hiding the main window must not quit the process.
+        self._qt_app.setQuitOnLastWindowClosed(False)
 
         # Set application icon
         import pathlib

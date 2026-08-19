@@ -1,13 +1,8 @@
 """
-Detachable dubbed/translation display window.
+Floating always-on-top Live Translate overlay HUD.
 
-A floating, always-on-top overlay that shows the live translated text.
-Supports:
-- Adjustable font size
-- Adjustable window opacity (background transparency)
-- Adjustable text opacity (text visibility)
-- Remembers position and size across restarts
-- Can be re-docked back into the main window
+Collapsed: a cyan bubble. Expanded: captions plus session controls
+(status, voice, volume, mute, clone, stop, home), matching the mobile overlay.
 """
 
 from __future__ import annotations
@@ -15,9 +10,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import structlog
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QFont
+from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QCloseEvent, QColor, QFont, QMouseEvent, QPainter, QPaintEvent
 from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -32,16 +29,71 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+_CYAN = "#68F8F8"
+_NAVY = "#000810"
+_NAVY_SURFACE = "#001020"
+_ON_SURFACE = "#E8F7FF"
+_MUTED = "#8AA4B5"
+
+_COLLAPSED = 96
+_EXPANDED_WIDTH = 300
+_EXPANDED_HEIGHT = 360
+_DRAG_THRESHOLD = 6
+
+
+class _BubbleButton(QWidget):
+    """Circular cyan bubble painted without a native button chrome."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._muted = False
+        self.setFixedSize(_COLLAPSED, _COLLAPSED)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_muted(self, muted: bool) -> None:
+        """Update the glyph to reflect mute state."""
+        self._muted = muted
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent | None) -> None:  # noqa: ARG002
+        """Draw the circular bubble and glyph."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        margin = 6
+        rect = self.rect().adjusted(margin, margin, -margin, -margin)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(_CYAN))
+        painter.drawEllipse(rect)
+        painter.setPen(QColor(_NAVY))
+        font = QFont()
+        font.setBold(True)
+        font.setPointSize(16)
+        painter.setFont(font)
+        glyph = "M" if self._muted else "LT"
+        painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), glyph)
+
 
 class DubbedWindow(QWidget):
     """
-    Floating window that displays live translated (dubbed) text.
+    Compact always-on-top overlay for a live translation session.
 
     Emitted signals:
-        reattach_requested: User clicked the dock button to re-attach.
+        reattach_requested: Overlay closed while idle (legacy dock).
+        stop_requested: User tapped Stop.
+        mute_toggled: Mute button toggled (payload is new muted state).
+        volume_changed: Volume slider released (0.0–1.0).
+        voice_selected: Voice combo changed (voice id).
+        clone_requested: User tapped Clone.
+        home_requested: User tapped Home (show main window, keep session).
     """
 
     reattach_requested = pyqtSignal()
+    stop_requested = pyqtSignal()
+    mute_toggled = pyqtSignal(bool)
+    volume_changed = pyqtSignal(float)
+    voice_selected = pyqtSignal(str)
+    clone_requested = pyqtSignal()
+    home_requested = pyqtSignal()
 
     def __init__(
         self,
@@ -50,231 +102,460 @@ class DubbedWindow(QWidget):
     ) -> None:
         super().__init__(parent)
         self._ui_config = ui_config
+        self._expanded = False
+        self._muted = False
+        self._cloning = False
+        self._session_active = False
+        self._font_size = ui_config.dubbed_font_size
+        self._window_opacity = ui_config.dubbed_opacity
+        self._text_opacity = ui_config.dubbed_text_opacity
+        self._press_global: QPoint | None = None
+        self._press_window = QPoint()
+        self._dragging = False
+        self._updating_voice = False
 
         self._setup_window()
         self._setup_ui()
         self._apply_settings()
+        self._set_expanded(False, save_corner=False)
 
     # ── Window setup ──────────────────────────────────────────────────────
 
     def _setup_window(self) -> None:
-        """Configure window flags and restore geometry."""
-        self.setWindowTitle("Live Translation")
+        """Configure frameless always-on-top tool window."""
+        self.setWindowTitle("Live Translate")
         self.setWindowFlags(
-            Qt.WindowType.Window
+            Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.CustomizeWindowHint
-            | Qt.WindowType.WindowCloseButtonHint
-            | Qt.WindowType.WindowMinMaxButtonsHint
+            | Qt.WindowType.Tool
         )
-        self.setMinimumSize(250, 120)
-
-        # Restore position/size
-        w = max(250, self._ui_config.dubbed_window_width or 500)
-        h = max(120, self._ui_config.dubbed_window_height or 300)
-        self.resize(w, h)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
 
         if self._ui_config.dubbed_window_x is not None:
             self.move(
                 self._ui_config.dubbed_window_x,
                 self._ui_config.dubbed_window_y or 100,
             )
+        else:
+            self._move_to_default_position()
+
+    def _move_to_default_position(self) -> None:
+        """Place the collapsed bubble on the right edge of the primary screen."""
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        geo = screen.availableGeometry()
+        self.move(geo.right() - _COLLAPSED - 16, geo.center().y() - _COLLAPSED // 2)
 
     def _setup_ui(self) -> None:
-        """Build the internal layout."""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
+        """Build collapsed bubble and expanded panel."""
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # ── Toolbar row ───────────────────────────────────────────────────
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(6)
+        self._bubble = _BubbleButton(self)
+        self._bubble.installEventFilter(self)
+        root.addWidget(self._bubble, alignment=Qt.AlignmentFlag.AlignTop)
 
-        # Font size control
-        toolbar.addWidget(QLabel("Size:"))
-        self._font_slider = QSlider(Qt.Orientation.Horizontal)
-        self._font_slider.setRange(8, 48)
-        self._font_slider.setFixedWidth(80)
-        self._font_slider.setToolTip("Adjust text font size")
-        self._font_slider.valueChanged.connect(self._on_font_size_changed)
-        toolbar.addWidget(self._font_slider)
-
-        self._font_label = QLabel("14")
-        self._font_label.setFixedWidth(24)
-        toolbar.addWidget(self._font_label)
-
-        toolbar.addSpacing(8)
-
-        # Window opacity control
-        toolbar.addWidget(QLabel("Window:"))
-        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
-        self._opacity_slider.setRange(20, 100)  # 0.2 – 1.0 mapped to 20–100
-        self._opacity_slider.setFixedWidth(80)
-        self._opacity_slider.setToolTip(
-            "Adjust window background transparency (independent of text visibility)"
-        )
-        self._opacity_slider.valueChanged.connect(self._on_opacity_changed)
-        toolbar.addWidget(self._opacity_slider)
-
-        self._opacity_label = QLabel("100%")
-        self._opacity_label.setFixedWidth(36)
-        toolbar.addWidget(self._opacity_label)
-
-        toolbar.addSpacing(8)
-
-        # Text opacity control
-        toolbar.addWidget(QLabel("Text:"))
-        self._text_opacity_slider = QSlider(Qt.Orientation.Horizontal)
-        self._text_opacity_slider.setRange(20, 100)  # 0.2 – 1.0
-        self._text_opacity_slider.setFixedWidth(80)
-        self._text_opacity_slider.setToolTip(
-            "Adjust text visibility only (independent of window transparency)"
-        )
-        self._text_opacity_slider.valueChanged.connect(self._on_text_opacity_changed)
-        toolbar.addWidget(self._text_opacity_slider)
-
-        self._text_opacity_label = QLabel("100%")
-        self._text_opacity_label.setFixedWidth(36)
-        toolbar.addWidget(self._text_opacity_label)
-
-        toolbar.addStretch()
-
-        # Dock button (re-attach)
-        self._dock_btn = QPushButton("Dock")
-        self._dock_btn.setToolTip("Re-attach this window to the main window")
-        self._dock_btn.setFixedWidth(50)
-        self._dock_btn.clicked.connect(self._on_dock_clicked)
-        toolbar.addWidget(self._dock_btn)
-
-        # Clear button
-        self._clear_btn = QPushButton("Clear")
-        self._clear_btn.setToolTip("Clear all text")
-        self._clear_btn.setFixedWidth(50)
-        self._clear_btn.clicked.connect(self._on_clear_clicked)
-        toolbar.addWidget(self._clear_btn)
-
-        layout.addLayout(toolbar)
-
-        # ── Text display ──────────────────────────────────────────────────
-        self._text_display = QTextEdit()
-        self._text_display.setReadOnly(True)
-        self._text_display.setPlaceholderText(
-            "Translated text will appear here..."
-        )
-        self._text_display.setStyleSheet(
-            """
-            QTextEdit {
-                background-color: #1a1a2e;
-                color: #eaeaea;
-                border: 1px solid #333;
+        self._panel = QWidget(self)
+        self._panel.setObjectName("overlayPanel")
+        self._panel.setStyleSheet(
+            f"""
+            QWidget#overlayPanel {{
+                background-color: {_NAVY_SURFACE};
+                border: 1px solid #003050;
+                border-radius: 16px;
+            }}
+            QLabel {{
+                color: {_ON_SURFACE};
+            }}
+            QComboBox {{
+                background-color: {_NAVY};
+                color: {_ON_SURFACE};
+                border: 1px solid #003050;
                 border-radius: 4px;
-                padding: 8px;
-            }
+                padding: 4px 8px;
+            }}
+            QTextEdit {{
+                background-color: {_NAVY};
+                color: {_ON_SURFACE};
+                border: 1px solid #003050;
+                border-radius: 6px;
+                padding: 6px;
+            }}
+            QPushButton {{
+                background-color: #002040;
+                color: {_ON_SURFACE};
+                border: 1px solid #003050;
+                border-radius: 6px;
+                padding: 6px 10px;
+            }}
+            QPushButton:hover {{
+                background-color: #003050;
+            }}
+            QPushButton:disabled {{
+                color: {_MUTED};
+            }}
+            QSlider::groove:horizontal {{
+                height: 4px;
+                background: #002040;
+                border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {_CYAN};
+                width: 12px;
+                margin: -5px 0;
+                border-radius: 6px;
+            }}
             """
         )
-        layout.addWidget(self._text_display, 1)
+        panel_layout = QVBoxLayout(self._panel)
+        panel_layout.setContentsMargins(12, 8, 8, 8)
+        panel_layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        header.setSpacing(4)
+        self._status_label = QLabel("Listening…")
+        self._status_label.setStyleSheet("font-weight: 600;")
+        self._status_label.installEventFilter(self)
+        header.addWidget(self._status_label, 1)
+
+        self._collapse_btn = QPushButton("–")
+        self._collapse_btn.setFixedSize(28, 28)
+        self._collapse_btn.setToolTip("Collapse")
+        self._collapse_btn.clicked.connect(lambda: self._set_expanded(False))
+        header.addWidget(self._collapse_btn)
+
+        self._home_btn = QPushButton("Home")
+        self._home_btn.setFixedWidth(52)
+        self._home_btn.setToolTip("Show the main window without stopping")
+        self._home_btn.clicked.connect(self.home_requested.emit)
+        header.addWidget(self._home_btn)
+        panel_layout.addLayout(header)
+
+        self._voice_combo = QComboBox()
+        self._voice_combo.setToolTip("TTS voice")
+        self._voice_combo.currentIndexChanged.connect(self._on_voice_index_changed)
+        panel_layout.addWidget(self._voice_combo)
+
+        vol_row = QHBoxLayout()
+        self._vol_icon = QLabel("Vol")
+        self._vol_icon.setFixedWidth(28)
+        vol_row.addWidget(self._vol_icon)
+        self._volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self._volume_slider.setRange(0, 100)
+        self._volume_slider.setValue(100)
+        self._volume_slider.setToolTip("TTS output volume")
+        self._volume_slider.valueChanged.connect(self._on_volume_slider_moved)
+        self._volume_slider.sliderReleased.connect(self._on_volume_slider_released)
+        vol_row.addWidget(self._volume_slider, 1)
+        self._volume_label = QLabel("100%")
+        self._volume_label.setFixedWidth(36)
+        self._volume_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        vol_row.addWidget(self._volume_label)
+        panel_layout.addLayout(vol_row)
+
+        src_label = QLabel("Source")
+        src_label.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
+        panel_layout.addWidget(src_label)
+        self._source_caption = QTextEdit()
+        self._source_caption.setReadOnly(True)
+        self._source_caption.setPlaceholderText("Source captions appear here.")
+        panel_layout.addWidget(self._source_caption, 1)
+
+        tr_label = QLabel("Translation")
+        tr_label.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
+        panel_layout.addWidget(tr_label)
+        self._translated_caption = QTextEdit()
+        self._translated_caption.setReadOnly(True)
+        self._translated_caption.setPlaceholderText("Translation appears here.")
+        panel_layout.addWidget(self._translated_caption, 1)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+        self._clone_btn = QPushButton("Clone")
+        self._clone_btn.setToolTip("Clone the current speaker from live audio")
+        self._clone_btn.clicked.connect(self._on_clone_clicked)
+        actions.addWidget(self._clone_btn, 1)
+
+        self._mute_btn = QPushButton("Mute")
+        self._mute_btn.setToolTip("Mute or unmute TTS")
+        self._mute_btn.clicked.connect(self._on_mute_clicked)
+        actions.addWidget(self._mute_btn)
+
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setToolTip("Stop translation and restore the main window")
+        self._stop_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {_CYAN};
+                color: {_NAVY};
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 12px;
+            }}
+            QPushButton:hover {{ background-color: #9AFFFF; }}
+            """
+        )
+        self._stop_btn.clicked.connect(self.stop_requested.emit)
+        actions.addWidget(self._stop_btn)
+        panel_layout.addLayout(actions)
+
+        root.addWidget(self._panel)
 
     def _apply_settings(self) -> None:
-        """Apply saved font size, window opacity and text opacity from config."""
-        font_size = self._ui_config.dubbed_font_size
-        opacity_pct = int(self._ui_config.dubbed_opacity * 100)
-        text_opacity_pct = int(self._ui_config.dubbed_text_opacity * 100)
-
-        self._font_slider.setValue(font_size)
-        self._opacity_slider.setValue(opacity_pct)
-        self._text_opacity_slider.setValue(text_opacity_pct)
-
-        self._update_font(font_size)
-        self._update_opacity(opacity_pct)
-        self._update_text_opacity(text_opacity_pct)
+        """Apply saved font size and opacities from config."""
+        self._update_font(self._font_size)
+        self._update_window_opacity(self._window_opacity)
+        self._update_text_opacity(self._text_opacity)
 
     # ── Public API ────────────────────────────────────────────────────────
 
     def append_text(self, text: str) -> None:
         """Append translated text to the display."""
-        self._text_display.append(text)
-        scrollbar = self._text_display.verticalScrollBar()
-        if scrollbar is not None:
-            scrollbar.setValue(scrollbar.maximum())
+        self._append_to(self._translated_caption, text)
+
+    def append_source_text(self, text: str) -> None:
+        """Append source (original) transcription text."""
+        self._append_to(self._source_caption, text)
 
     def clear_text(self) -> None:
-        """Clear all text from the display."""
-        self._text_display.clear()
+        """Clear source and translation captions."""
+        self._source_caption.clear()
+        self._translated_caption.clear()
 
     def get_font_size(self) -> int:
-        """Return the current font size."""
-        return self._font_slider.value()
+        """Return the current caption font size."""
+        return self._font_size
 
     def get_opacity(self) -> float:
         """Return the current window opacity (0.2 – 1.0)."""
-        return self._opacity_slider.value() / 100.0
+        return self._window_opacity
 
     def get_text_opacity(self) -> float:
         """Return the current text opacity (0.2 – 1.0)."""
-        return self._text_opacity_slider.value() / 100.0
+        return self._text_opacity
+
+    def set_font_size(self, size: int) -> None:
+        """Update caption font size and persist it."""
+        self._font_size = max(8, min(48, size))
+        self._ui_config.dubbed_font_size = self._font_size
+        self._update_font(self._font_size)
+
+    def set_text_opacity(self, opacity: float) -> None:
+        """Update caption text opacity (0.2 – 1.0) and persist it."""
+        self._text_opacity = max(0.2, min(1.0, opacity))
+        self._ui_config.dubbed_text_opacity = self._text_opacity
+        self._update_text_opacity(self._text_opacity)
+
+    def set_status(self, text: str) -> None:
+        """Update the status line in the expanded panel."""
+        self._status_label.setText(text or "Listening…")
+
+    def set_muted(self, muted: bool) -> None:
+        """Sync mute UI without emitting mute_toggled."""
+        self._muted = muted
+        self._mute_btn.setText("Unmute" if muted else "Mute")
+        self._bubble.set_muted(muted)
+        self._volume_slider.setEnabled(not muted)
+
+    def set_volume(self, volume: float) -> None:
+        """Sync volume slider without emitting volume_changed. volume is 0.0–1.0."""
+        pct = int(max(0.0, min(1.0, volume)) * 100)
+        self._volume_slider.blockSignals(True)
+        self._volume_slider.setValue(pct)
+        self._volume_slider.blockSignals(False)
+        self._volume_label.setText(f"{pct}%")
+
+    def set_voices(
+        self,
+        voices: list[tuple[str, str]],
+        selected_id: str | None = None,
+    ) -> None:
+        """Populate the voice combo. Each item is (voice_id, name)."""
+        self._updating_voice = True
+        self._voice_combo.blockSignals(True)
+        self._voice_combo.clear()
+        select_index = 0
+        for i, (voice_id, name) in enumerate(voices):
+            self._voice_combo.addItem(name or voice_id, voice_id)
+            if selected_id and voice_id == selected_id:
+                select_index = i
+        if self._voice_combo.count() == 0:
+            self._voice_combo.addItem("No voices yet", "")
+        self._voice_combo.setCurrentIndex(select_index)
+        self._voice_combo.blockSignals(False)
+        self._updating_voice = False
+
+    def set_cloning(self, cloning: bool) -> None:
+        """Disable clone/stop-adjacent controls while a clone is in progress."""
+        self._cloning = cloning
+        self._clone_btn.setText("Cloning…" if cloning else "Clone")
+        self._clone_btn.setEnabled(not cloning)
+        self._mute_btn.setEnabled(not cloning)
+        if cloning:
+            self.set_status("Cloning voice…")
+
+    def set_session_active(self, active: bool) -> None:
+        """Track whether a live session is running (affects close behavior)."""
+        self._session_active = active
+
+    def expand(self) -> None:
+        """Show the expanded control panel."""
+        self._set_expanded(True)
+
+    def collapse(self) -> None:
+        """Show the collapsed bubble."""
+        self._set_expanded(False)
 
     # ── Internal ──────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _append_to(widget: QTextEdit, text: str) -> None:
+        if not text:
+            return
+        widget.append(text)
+        scrollbar = widget.verticalScrollBar()
+        if scrollbar is not None:
+            scrollbar.setValue(scrollbar.maximum())
+
     def _update_font(self, size: int) -> None:
-        """Update the text display font size."""
         font = QFont()
         font.setPointSize(size)
-        self._text_display.setFont(font)
-        self._font_label.setText(str(size))
+        self._source_caption.setFont(font)
+        translated = QFont()
+        translated.setPointSize(size)
+        translated.setBold(True)
+        self._translated_caption.setFont(translated)
 
-    def _update_opacity(self, pct: int) -> None:
-        """Update window opacity. pct is 20–100."""
-        self.setWindowOpacity(pct / 100.0)
-        self._opacity_label.setText(f"{pct}%")
+    def _update_window_opacity(self, opacity: float) -> None:
+        self.setWindowOpacity(max(0.2, min(1.0, opacity)))
 
-    def _update_text_opacity(self, pct: int) -> None:
-        """Update text colour opacity via stylesheet. pct is 20–100."""
-        alpha = int(pct * 2.55)  # 0-255
-        self._text_display.setStyleSheet(
-            f"""
-            QTextEdit {{
-                background-color: #1a1a2e;
-                color: rgba(234, 234, 234, {alpha});
-                border: 1px solid #333;
-                border-radius: 4px;
-                padding: 8px;
-            }}
-            """
+    def _update_text_opacity(self, opacity: float) -> None:
+        alpha = int(max(0.2, min(1.0, opacity)) * 255)
+        color = f"rgba(232, 247, 255, {alpha})"
+        self._source_caption.setStyleSheet(
+            f"background-color: {_NAVY}; color: {color}; "
+            f"border: 1px solid #003050; border-radius: 6px; padding: 6px;"
         )
-        self._text_opacity_label.setText(f"{pct}%")
+        self._translated_caption.setStyleSheet(
+            f"background-color: {_NAVY}; color: {color}; "
+            f"border: 1px solid #003050; border-radius: 6px; padding: 6px;"
+        )
 
-    def _on_font_size_changed(self, value: int) -> None:
-        self._update_font(value)
-        self._ui_config.dubbed_font_size = value
-
-    def _on_opacity_changed(self, value: int) -> None:
-        self._update_opacity(value)
-        self._ui_config.dubbed_opacity = value / 100.0
-
-    def _on_text_opacity_changed(self, value: int) -> None:
-        self._update_text_opacity(value)
-        self._ui_config.dubbed_text_opacity = value / 100.0
-
-    def _on_dock_clicked(self) -> None:
+    def _set_expanded(self, expanded: bool, save_corner: bool = True) -> None:
+        """Toggle collapsed bubble vs expanded panel, keeping the right edge."""
+        old = self.geometry()
+        self._expanded = expanded
+        self._bubble.setVisible(not expanded)
+        self._panel.setVisible(expanded)
+        if expanded:
+            size = QSize(_EXPANDED_WIDTH, _EXPANDED_HEIGHT)
+        else:
+            size = QSize(_COLLAPSED, _COLLAPSED)
+        self.setFixedSize(size)
+        if save_corner:
+            new_x = old.x() + old.width() - size.width()
+            new_y = old.y()
+            self._clamp_and_move(new_x, new_y)
         self._save_geometry()
-        self.reattach_requested.emit()
-        self.hide()
 
-    def _on_clear_clicked(self) -> None:
-        self._text_display.clear()
+    def _clamp_and_move(self, x: int, y: int) -> None:
+        """Keep the overlay on the available screen."""
+        screen = QApplication.screenAt(QPoint(x, y)) or QApplication.primaryScreen()
+        if screen is not None:
+            geo = screen.availableGeometry()
+            x = max(geo.left(), min(x, geo.right() - self.width()))
+            y = max(geo.top(), min(y, geo.bottom() - self.height()))
+        self.move(x, y)
+
+    def _on_volume_slider_moved(self, value: int) -> None:
+        self._volume_label.setText(f"{value}%")
+
+    def _on_volume_slider_released(self) -> None:
+        self.volume_changed.emit(self._volume_slider.value() / 100.0)
+
+    def _on_mute_clicked(self) -> None:
+        self.set_muted(not self._muted)
+        self.mute_toggled.emit(self._muted)
+
+    def _on_clone_clicked(self) -> None:
+        if self._cloning:
+            return
+        self.clone_requested.emit()
+
+    def _on_voice_index_changed(self, index: int) -> None:
+        if self._updating_voice or index < 0:
+            return
+        voice_id = self._voice_combo.itemData(index)
+        if isinstance(voice_id, str) and voice_id:
+            self.voice_selected.emit(voice_id)
 
     def _save_geometry(self) -> None:
-        """Persist position and size to config."""
+        """Persist position (and expanded size) to config."""
         self._ui_config.dubbed_window_x = self.x()
         self._ui_config.dubbed_window_y = self.y()
-        self._ui_config.dubbed_window_width = self.width()
-        self._ui_config.dubbed_window_height = self.height()
+        if self._expanded:
+            self._ui_config.dubbed_window_width = self.width()
+            self._ui_config.dubbed_window_height = self.height()
 
-    # ── Overrides ─────────────────────────────────────────────────────────
+    def _begin_drag(self, global_pos: QPoint) -> None:
+        self._press_global = global_pos
+        self._press_window = self.pos()
+        self._dragging = False
+
+    def _update_drag(self, global_pos: QPoint) -> None:
+        if self._press_global is None:
+            return
+        delta = global_pos - self._press_global
+        if not self._dragging and delta.manhattanLength() > _DRAG_THRESHOLD:
+            self._dragging = True
+        if self._dragging:
+            self._clamp_and_move(
+                self._press_window.x() + delta.x(),
+                self._press_window.y() + delta.y(),
+            )
+
+    def _end_drag(self) -> bool:
+        """Finish a drag. Returns True if this was a click (not a drag)."""
+        was_click = not self._dragging
+        if self._dragging:
+            self._save_geometry()
+        self._press_global = None
+        self._dragging = False
+        return was_click
+
+    def eventFilter(self, obj: QObject | None, event: QEvent | None) -> bool:
+        """Drag the overlay from the bubble or status label."""
+        if event is None or obj not in (self._bubble, self._status_label):
+            return super().eventFilter(obj, event)
+        et = event.type()
+        if et == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._begin_drag(event.globalPosition().toPoint())
+            return False
+        if et == QEvent.Type.MouseMove and isinstance(event, QMouseEvent):
+            self._update_drag(event.globalPosition().toPoint())
+            return self._dragging
+        if et == QEvent.Type.MouseButtonRelease and isinstance(event, QMouseEvent):
+            if event.button() == Qt.MouseButton.LeftButton:
+                was_click = self._end_drag()
+                if was_click and obj is self._bubble and not self._expanded:
+                    self._set_expanded(True)
+                    return True
+            return False
+        return super().eventFilter(obj, event)
 
     def closeEvent(self, event: QCloseEvent | None) -> None:
-        """Intercept close — treat as dock instead of destroy."""
+        """Session overlay collapses; idle overlay re-docks."""
         self._save_geometry()
+        if self._session_active:
+            self._set_expanded(False)
+            if event is not None:
+                event.ignore()
+            return
         self.reattach_requested.emit()
         if event is not None:
             event.accept()
