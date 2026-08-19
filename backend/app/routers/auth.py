@@ -228,6 +228,8 @@ class DesktopSsoCompleteRequest(BaseModel):
     password: str | None = None
     api_key: str | None = None
     access_token: str | None = None
+    oauth_code: str | None = None
+    code_verifier: str | None = None
 
 
 @router.get("/desktop-sso", response_class=HTMLResponse, include_in_schema=False)
@@ -260,6 +262,25 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
 
     pasted = (body.api_key or "").strip()
     access_token = (body.access_token or "").strip()
+    oauth_code = (body.oauth_code or "").strip()
+    if oauth_code and not access_token:
+        try:
+            exchange_params: dict = {"auth_code": oauth_code}
+            if body.code_verifier:
+                exchange_params["code_verifier"] = body.code_verifier.strip()
+            exchanged = await sb.auth.exchange_code_for_session(exchange_params)
+        except Exception as exc:
+            logger.error("Desktop SSO OAuth code exchange failed", error=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Google sign-in expired. Close this tab and try again from the app.",
+            ) from exc
+        if exchanged is None or exchanged.session is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Google sign-in did not return a session",
+            )
+        access_token = exchanged.session.access_token
     if pasted:
         result = await sb.table("users").select("*").eq("api_key", pasted).maybe_single().execute()
         if not result or not result.data:
@@ -348,7 +369,7 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provide email/password, api_key, or access_token",
+            detail="Provide email/password, api_key, access_token, or oauth_code",
         )
 
     # Sync website Pricing Plan → users.tier so desktop usage matches Wix package.
@@ -537,11 +558,16 @@ _OAUTH_REDIRECT_URI_QUERY = Query(
         "Must be in Supabase → Auth → URL Configuration → Additional Redirect URLs."
     ),
 )
+_OAUTH_CODE_CHALLENGE_QUERY = Query(
+    None,
+    description="PKCE S256 challenge. Required for the HTTPS desktop-sso bridge.",
+)
 
 
 @router.get("/oauth/google")
 async def google_oauth_url(
     redirect_uri: str = _OAUTH_REDIRECT_URI_QUERY,
+    code_challenge: str | None = _OAUTH_CODE_CHALLENGE_QUERY,
 ) -> JSONResponse:
     """
     Return the Google OAuth redirect URL for the desktop client.
@@ -558,13 +584,29 @@ async def google_oauth_url(
     """
     cfg = get_settings()
     supabase_base = cfg.supabase_url.rstrip("/")
-    params = urllib.parse.urlencode({
+    params: dict[str, str] = {
         "provider": "google",
         "redirect_to": redirect_uri,
-        "flow_type": "pkce",
-    })
-    url = f"{supabase_base}/auth/v1/authorize?{params}"
-    logger.info("Generated Google OAuth URL", redirect_uri=redirect_uri)
+    }
+    challenge = (code_challenge or "").strip()
+    if challenge:
+        params["code_challenge"] = challenge
+        params["code_challenge_method"] = "S256"
+    else:
+        # Native localhost callbacks still advertise PKCE; the desktop client
+        # injects code_challenge itself. Do not set flow_type=pkce for the
+        # HTTPS bridge — without a challenge the user lands on ?code= and
+        # the page cannot finish.
+        parsed = urllib.parse.urlparse(redirect_uri)
+        host = (parsed.hostname or "").lower()
+        if host in ("localhost", "127.0.0.1"):
+            params["flow_type"] = "pkce"
+    url = f"{supabase_base}/auth/v1/authorize?{urllib.parse.urlencode(params)}"
+    logger.info(
+        "Generated Google OAuth URL",
+        redirect_uri=redirect_uri,
+        pkce=bool(challenge) or "flow_type" in params,
+    )
     return JSONResponse({"url": url})
 
 
