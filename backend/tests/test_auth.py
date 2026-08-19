@@ -115,6 +115,7 @@ def test_desktop_sso_page_handles_pkce_code(client: TestClient) -> None:
     assert "code_challenge" in body
     assert "lt_pkce" in body
     assert "window.location.replace(appUrl)" in body
+    assert "function isSafeDesktopRedirect" in body
 
 
 def test_desktop_sso_complete_oauth_code_stores_handoff(

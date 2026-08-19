@@ -150,26 +150,65 @@
     msg.className = ok ? "err ok" : "err";
   }
 
+  function isSafeDesktopRedirect(uri) {
+    // Same allow-list as backend _is_valid_desktop_redirect: localhost HTTP
+    // or Live Translate HTTPS. Reject other schemes and hosts.
+    var parsed;
+    try {
+      parsed = new URL(uri);
+    } catch (e) {
+      return false;
+    }
+    if (parsed.username || parsed.password) return false;
+    var host = (parsed.hostname || "").toLowerCase();
+    var protocol = parsed.protocol;
+    if ((host === "localhost" || host === "127.0.0.1") && protocol === "http:") {
+      return true;
+    }
+    if (protocol !== "https:") return false;
+    var trusted = [
+      "livetranslate.app",
+      "www.livetranslate.app",
+      "livetranslate.net",
+      "www.livetranslate.net",
+    ];
+    for (var i = 0; i < trusted.length; i++) {
+      var t = trusted[i];
+      if (host === t || host.slice(-(t.length + 1)) === "." + t) return true;
+    }
+    return false;
+  }
+
+  function safeAppCallback(uri, apiKey) {
+    if (!uri || !isSafeDesktopRedirect(uri)) return "";
+    var parsed = new URL(uri);
+    var clean = new URL(parsed.protocol + "//" + parsed.host + (parsed.pathname || "/"));
+    parsed.searchParams.forEach(function (value, key) { clean.searchParams.set(key, value); });
+    if (apiKey) clean.searchParams.set("api_key", apiKey);
+    return clean.href;
+  }
+
   function showOpenApp(url) {
-    openApp.href = url;
+    var safe = safeAppCallback(url, "");
+    if (!safe) return;
+    openApp.href = safe;
     openApp.style.display = "inline-flex";
   }
 
-  function finishLocal(apiKey) {
+  function finishLocal(apiKey, serverRedirect) {
     setMsg("Signed in! Returning to the Live Translate app…", true);
-    var appUrl = "";
-    if (redirectUri) {
-      var sep = redirectUri.indexOf("?") >= 0 ? "&" : "?";
-      appUrl = redirectUri + sep + "api_key=" + encodeURIComponent(apiKey);
-      showOpenApp(appUrl);
+    var appUrl = safeAppCallback(serverRedirect || "", apiKey) ||
+      safeAppCallback(redirectUri, apiKey);
+    if (!appUrl) {
+      setMsg("Signed in! You can close this tab and return to the Live Translate app.", true);
+      return;
     }
+    showOpenApp(appUrl);
     // Handoff is stored so the app can finish by polling even if this
     // navigation fails (browser blocks localhost, or the callback already closed).
-    if (appUrl) {
-      window.setTimeout(function () {
-        window.location.replace(appUrl);
-      }, 250);
-    }
+    window.setTimeout(function () {
+      window.location.replace(appUrl);
+    }, 250);
   }
 
   function detailMessage(data, status) {
@@ -197,7 +236,7 @@
         throw new Error(detailMessage(data, res.status));
       }
       if (data.api_key) {
-        finishLocal(data.api_key);
+        finishLocal(data.api_key, data.redirect || "");
         return;
       }
       if (data.redirect) {
