@@ -97,6 +97,8 @@ class _OverlayBubbleState extends State<OverlayBubble> {
   double _translatedFocus = 1;
   bool _sourceFollowLatest = true;
   bool _translatedFollowLatest = true;
+  bool _sourceLive = false;
+  bool _translatedLive = false;
   double _fontSize = 14;
   double _opacity = 1;
   double _volume = 1;
@@ -166,6 +168,21 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     });
   }
 
+  int _lineIndexFor(List<String> lines, String needle) {
+    final t = needle.trim();
+    if (t.isEmpty || lines.isEmpty) return -1;
+    for (var i = lines.length - 1; i >= 0; i--) {
+      final line = lines[i];
+      if (line == t || line.contains(t) || t.contains(line)) return i;
+    }
+    return -1;
+  }
+
+  double _focusForIndex(int index, int length) {
+    if (length <= 1) return 1;
+    return (index.clamp(0, length - 1)) / (length - 1);
+  }
+
   void _applyUpdate(dynamic event) {
     Map<String, dynamic>? map;
     if (event is Map) {
@@ -186,6 +203,13 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     final status = (map['status'] as String?) ?? _status;
     final source = (map['source'] as String?) ?? _source;
     final translated = (map['translated'] as String?) ?? _translated;
+    final highlightSource =
+        (map['highlightSource'] as String?)?.trim() ?? '';
+    final highlightTranslated =
+        (map['highlightTranslated'] as String?)?.trim() ?? '';
+    final sourceLive = (map['sourceLive'] as bool?) ?? _sourceLive;
+    final translatedLive =
+        (map['translatedLive'] as bool?) ?? _translatedLive;
     final muted = (map['muted'] as bool?) ?? _muted;
     final cloning = (map['cloning'] as bool?) ?? _cloning;
     var fontSize = _fontSize;
@@ -219,19 +243,27 @@ class _OverlayBubbleState extends State<OverlayBubble> {
 
     final voiceKey = voices.map((v) => v['id']).join(',');
     final key =
-        '$status|$source|$translated|$muted|$cloning|$fontSize|$opacity|$volume|$voiceId|$voiceKey';
+        '$status|$source|$translated|$highlightSource|$highlightTranslated|'
+        '$sourceLive|$translatedLive|$muted|$cloning|$fontSize|$opacity|'
+        '$volume|$voiceId|$voiceKey';
     if (key == _lastUpdateKey) return;
     _lastUpdateKey = key;
 
     final sourceAdded = source.trim().isNotEmpty &&
         (_sourceLines.isEmpty || _sourceLines.last != source.trim());
     final translatedAdded = translated.trim().isNotEmpty &&
-        (_translatedLines.isEmpty || _translatedLines.last != translated.trim());
+        (_translatedLines.isEmpty ||
+            _translatedLines.last != translated.trim());
+
+    var nextSourceFocus = _sourceFocus;
+    var nextTranslatedFocus = _translatedFocus;
 
     setState(() {
       _status = status;
       _source = source;
       _translated = translated;
+      _sourceLive = sourceLive;
+      _translatedLive = translatedLive;
       _muted = muted;
       _cloning = cloning;
       _fontSize = fontSize;
@@ -241,18 +273,39 @@ class _OverlayBubbleState extends State<OverlayBubble> {
       _voices = voices;
       if (sourceAdded) {
         _appendCaptionLine(_sourceLines, source);
-        if (_sourceFollowLatest) _sourceFocus = 1;
       }
       if (translatedAdded) {
         _appendCaptionLine(_translatedLines, translated);
-        if (_translatedFollowLatest) _translatedFocus = 1;
       }
+      if (_sourceFollowLatest) {
+        final hi = highlightSource.isNotEmpty
+            ? _lineIndexFor(_sourceLines, highlightSource)
+            : -1;
+        if (hi >= 0) {
+          nextSourceFocus = _focusForIndex(hi, _sourceLines.length);
+        } else if (sourceAdded) {
+          nextSourceFocus = 1;
+        }
+      }
+      if (_translatedFollowLatest) {
+        final hi = highlightTranslated.isNotEmpty
+            ? _lineIndexFor(_translatedLines, highlightTranslated)
+            : -1;
+        if (hi >= 0) {
+          nextTranslatedFocus = _focusForIndex(hi, _translatedLines.length);
+        } else if (translatedAdded) {
+          nextTranslatedFocus = 1;
+        }
+      }
+      _sourceFocus = nextSourceFocus;
+      _translatedFocus = nextTranslatedFocus;
     });
 
-    if (sourceAdded && _sourceFollowLatest) {
+    if (_sourceFollowLatest && (sourceAdded || highlightSource.isNotEmpty)) {
       _ensureHighlightVisible(_sourceHighlightKey);
     }
-    if (translatedAdded && _translatedFollowLatest) {
+    if (_translatedFollowLatest &&
+        (translatedAdded || highlightTranslated.isNotEmpty)) {
       _ensureHighlightVisible(_translatedHighlightKey);
     }
   }
@@ -445,6 +498,7 @@ class _OverlayBubbleState extends State<OverlayBubble> {
                       fontSize: _fontSize,
                       textOpacity: _opacity,
                       highlightKey: _sourceHighlightKey,
+                      live: _sourceLive,
                       onFocusChanged: _setSourceFocus,
                       emptyHint:
                           'Source captions appear here while Live Translate runs.',
@@ -460,6 +514,7 @@ class _OverlayBubbleState extends State<OverlayBubble> {
                       textOpacity: _opacity,
                       highlightKey: _translatedHighlightKey,
                       emphasize: true,
+                      live: _translatedLive,
                       onFocusChanged: _setTranslatedFocus,
                       emptyHint: 'Translations appear here.',
                     ),
@@ -563,6 +618,7 @@ class _CaptionLane extends StatelessWidget {
     required this.onFocusChanged,
     required this.emptyHint,
     this.emphasize = false,
+    this.live = false,
   });
 
   final String title;
@@ -574,6 +630,7 @@ class _CaptionLane extends StatelessWidget {
   final ValueChanged<double> onFocusChanged;
   final String emptyHint;
   final bool emphasize;
+  final bool live;
 
   @override
   Widget build(BuildContext context) {
@@ -586,11 +643,25 @@ class _CaptionLane extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          title,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
               ),
+            ),
+            if (live)
+              Text(
+                title == 'Source' ? 'Capturing' : 'Active',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+          ],
         ),
         const SizedBox(height: 2),
         Expanded(
@@ -602,6 +673,11 @@ class _CaptionLane extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
                     borderRadius: BorderRadius.circular(8),
+                    border: live
+                        ? Border.all(
+                            color: scheme.primary.withValues(alpha: 0.45),
+                          )
+                        : null,
                   ),
                   child: hasLines
                       ? ListView.builder(
@@ -609,6 +685,7 @@ class _CaptionLane extends StatelessWidget {
                           itemCount: lines.length,
                           itemBuilder: (context, i) {
                             final active = i == idx;
+                            final activeLive = active && live;
                             return Container(
                               key: active ? highlightKey : null,
                               margin: const EdgeInsets.only(bottom: 4),
@@ -618,13 +695,17 @@ class _CaptionLane extends StatelessWidget {
                               ),
                               decoration: BoxDecoration(
                                 color: active
-                                    ? scheme.primary.withValues(alpha: 0.22)
+                                    ? scheme.primary.withValues(
+                                        alpha: activeLive ? 0.34 : 0.22,
+                                      )
                                     : null,
                                 borderRadius: BorderRadius.circular(6),
                                 border: active
                                     ? Border.all(
-                                        color: scheme.primary
-                                            .withValues(alpha: 0.55),
+                                        color: scheme.primary.withValues(
+                                          alpha: activeLive ? 0.9 : 0.55,
+                                        ),
+                                        width: activeLive ? 1.5 : 1,
                                       )
                                     : null,
                               ),
@@ -635,7 +716,8 @@ class _CaptionLane extends StatelessWidget {
                                     .bodySmall
                                     ?.copyWith(
                                       fontSize: fontSize,
-                                      fontWeight: emphasize && active
+                                      fontWeight: (emphasize && active) ||
+                                              activeLive
                                           ? FontWeight.w600
                                           : FontWeight.w400,
                                       color: scheme.onSurface.withValues(

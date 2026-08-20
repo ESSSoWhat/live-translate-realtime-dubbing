@@ -304,7 +304,7 @@ class ProcessingPipeline:
 
         # Silence tracking — bridge short pauses so we capture full sentences
         self._silence_count = 0  # consecutive silence chunks
-        self._silence_flush_threshold = 6  # flush after ~600ms silence; avoids splitting mid-sentence pauses
+        self._silence_flush_threshold = 11  # ~1.1s silence; avoid mid-clause splits
 
         # Output suppression — prevent feedback loop when dubbed audio plays back
         # through the same device being captured (system loopback mode)

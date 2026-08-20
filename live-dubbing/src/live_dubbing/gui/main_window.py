@@ -2361,6 +2361,7 @@ class MainWindow(QMainWindow):
             scrollbar.setValue(scrollbar.maximum())
         if self._dubbed_window is not None:
             self._dubbed_window.append_source_text(text)
+            self._dubbed_window.highlight_source_text(text)
 
     @pyqtSlot(object)
     def _on_translation(self, event: Event) -> None:

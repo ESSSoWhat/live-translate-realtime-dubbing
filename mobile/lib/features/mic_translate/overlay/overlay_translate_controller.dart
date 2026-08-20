@@ -32,12 +32,17 @@ class OverlayTranslateController {
   StreamSubscription<String>? _statusSub;
   StreamSubscription<String>? _sourceSub;
   StreamSubscription<String>? _translatedSub;
+  StreamSubscription<Map<String, dynamic>>? _activitySub;
   Timer? _pushDebounce;
   String? _lastPayload;
 
   String _status = '';
   String _source = '';
   String _translated = '';
+  String _highlightSource = '';
+  String _highlightTranslated = '';
+  bool _sourceLive = false;
+  bool _translatedLive = false;
   List<Map<String, String>> _voices = const [];
   bool _active = false;
   bool _overlayShown = false;
@@ -339,17 +344,33 @@ class OverlayTranslateController {
     _statusSub?.cancel();
     _sourceSub?.cancel();
     _translatedSub?.cancel();
+    _activitySub?.cancel();
     _statusSub = service.statusStream.listen((s) {
       _status = s;
       _schedulePush();
     });
     _sourceSub = service.sourceTextStream.listen((s) {
       _source = s;
+      _highlightSource = s;
       _schedulePush();
     });
     _translatedSub = service.translatedTextStream.listen((s) {
       _translated = s;
+      _highlightTranslated = s;
       _schedulePush();
+    });
+    _activitySub = service.captionActivityStream.listen((activity) {
+      final source = activity['source'];
+      final translated = activity['translated'];
+      if (source is String && source.trim().isNotEmpty) {
+        _highlightSource = source.trim();
+      }
+      if (translated is String && translated.trim().isNotEmpty) {
+        _highlightTranslated = translated.trim();
+      }
+      _sourceLive = activity['sourceLive'] == true;
+      _translatedLive = activity['translatedLive'] == true;
+      _schedulePush(immediate: true);
     });
   }
 
@@ -372,6 +393,10 @@ class OverlayTranslateController {
       'status': _status,
       'source': _source,
       'translated': _translated,
+      'highlightSource': _highlightSource,
+      'highlightTranslated': _highlightTranslated,
+      'sourceLive': _sourceLive,
+      'translatedLive': _translatedLive,
       'muted': service.muted,
       'volume': service.volume,
       'voiceId': service.voiceId,
@@ -398,9 +423,11 @@ class OverlayTranslateController {
     _statusSub?.cancel();
     _sourceSub?.cancel();
     _translatedSub?.cancel();
+    _activitySub?.cancel();
     _statusSub = null;
     _sourceSub = null;
     _translatedSub = null;
+    _activitySub = null;
     if (_overlayShown) {
       try {
         await FlutterOverlayWindow.closeOverlay();

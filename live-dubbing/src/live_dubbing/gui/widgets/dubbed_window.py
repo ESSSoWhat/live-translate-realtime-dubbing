@@ -104,6 +104,7 @@ class _CaptionPane(QWidget):
         self._spans: list[tuple[int, int]] = []
         self._index = 0
         self._follow = True
+        self._live = False
         self._bold = bold
         self._font_size = 14
         self._text_alpha = 255
@@ -152,8 +153,8 @@ class _CaptionPane(QWidget):
         self._follow = True
         self._refresh(scroll_to_index=True)
 
-    def highlight_matching(self, text: str) -> None:
-        """Highlight the chunk currently being read (TTS / latest STT)."""
+    def highlight_matching(self, text: str, *, live: bool = False) -> None:
+        """Highlight the chunk currently being captured / translated / spoken."""
         needle = (text or "").strip()
         if not self._chunks:
             return
@@ -166,7 +167,15 @@ class _CaptionPane(QWidget):
                     break
         self._index = index
         self._follow = index == len(self._chunks) - 1
+        self._live = live
         self._refresh(scroll_to_index=True)
+
+    def set_live(self, live: bool) -> None:
+        """Toggle stronger highlight for the active pipeline section."""
+        if self._live == live:
+            return
+        self._live = live
+        self._apply_highlight()
 
     def clear(self) -> None:
         """Remove all caption history."""
@@ -174,6 +183,7 @@ class _CaptionPane(QWidget):
         self._spans.clear()
         self._index = 0
         self._follow = True
+        self._live = False
         self._text.clear()
         self._slider.blockSignals(True)
         self._slider.setRange(0, 0)
@@ -245,8 +255,12 @@ class _CaptionPane(QWidget):
         cursor.setPosition(start)
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         fmt = QTextCharFormat()
-        fmt.setBackground(QColor("#0A4A68"))
-        fmt.setForeground(QColor(_CYAN))
+        if self._live:
+            fmt.setBackground(QColor("#0E6A8F"))
+            fmt.setForeground(QColor("#B8FFFF"))
+        else:
+            fmt.setBackground(QColor("#0A4A68"))
+            fmt.setForeground(QColor(_CYAN))
         selection = QTextEdit.ExtraSelection()
         selection.format = fmt
         selection.cursor = cursor
@@ -531,16 +545,24 @@ class DubbedWindow(QWidget):
     # ── Public API ────────────────────────────────────────────────────────
 
     def append_text(self, text: str) -> None:
-        """Append translated text and highlight it as the latest utterance."""
+        """Append translated text and highlight it as the active translation."""
         self._translated_pane.append_chunk(text)
+        self._translated_pane.set_live(True)
+        self._source_pane.set_live(False)
 
     def append_source_text(self, text: str) -> None:
-        """Append source transcription and highlight it as the latest utterance."""
+        """Append source transcription and highlight it as the active capture."""
         self._source_pane.append_chunk(text)
+        self._source_pane.set_live(True)
 
     def highlight_spoken_text(self, text: str) -> None:
         """Highlight the translation chunk currently being spoken."""
-        self._translated_pane.highlight_matching(text)
+        self._translated_pane.highlight_matching(text, live=True)
+        self._source_pane.set_live(False)
+
+    def highlight_source_text(self, text: str) -> None:
+        """Highlight the source chunk currently being captured / translated."""
+        self._source_pane.highlight_matching(text, live=True)
 
     def clear_text(self) -> None:
         """Clear source and translation captions."""

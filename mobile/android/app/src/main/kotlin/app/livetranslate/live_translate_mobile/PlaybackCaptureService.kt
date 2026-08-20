@@ -182,15 +182,14 @@ class PlaybackCaptureService : Service() {
         capturing = true
         record.startRecording()
         captureThread = thread(name = "PlaybackCapture", isDaemon = true) {
-            // ~20 ms frames for energy VAD. Overlapping windows + mid-speech emits
-            // keep translation continuous instead of hard phrase cuts.
+            // Phrase-oriented windows: accumulate until a real pause (or max length).
+            // Mid-speech soft emits made translation feel like disconnected chunks.
             val frameBytes = (SAMPLE_RATE / 50) * BYTES_PER_SAMPLE
             val readBuf = ByteArray(frameBytes.coerceAtMost(bufferSize))
             val chunk = ByteArrayOutputStream(SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_MAX_SECONDS + 64)
             val silenceFramesNeeded = SILENCE_FLUSH_MS / 20
             val minSpeechBytes = (SAMPLE_RATE * BYTES_PER_SAMPLE * MIN_SPEECH_MS) / 1000
             val maxChunkBytes = SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_MAX_SECONDS
-            val emitIntervalBytes = (SAMPLE_RATE * BYTES_PER_SAMPLE * EMIT_INTERVAL_MS) / 1000
             val overlapBytes = (SAMPLE_RATE * BYTES_PER_SAMPLE * OVERLAP_MS) / 1000
             var carry = ByteArray(0)
             while (capturing) {
@@ -226,10 +225,6 @@ class PlaybackCaptureService : Service() {
                                 chunk.write(readBuf, 0, n)
                                 collected += n
                                 newSpeechBytes += n
-                                // Soft emit during continuous speech for ongoing STT.
-                                if (newSpeechBytes >= emitIntervalBytes) {
-                                    break
-                                }
                             }
                         }
                         n < 0 -> {
@@ -256,7 +251,9 @@ class PlaybackCaptureService : Service() {
                     continue
                 }
                 emitWav(pcmToWav(pcm, SAMPLE_RATE))
-                val keep = minOf(overlapBytes, pcm.size)
+                // Overlap only when we hit the hard max mid-sentence (not on silence flush).
+                val hitMax = collected >= maxChunkBytes
+                val keep = if (hitMax) minOf(overlapBytes, pcm.size) else 0
                 carry = if (keep > 0) {
                     pcm.copyOfRange(pcm.size - keep, pcm.size)
                 } else {
@@ -449,16 +446,14 @@ class PlaybackCaptureService : Service() {
         const val NOTIFICATION_ID = 4202
         const val SAMPLE_RATE = 16000
         const val BYTES_PER_SAMPLE = 2
-        /** Hard cap so phrases are not held forever without a pause. */
-        const val CHUNK_MAX_SECONDS = 4
-        /** Flush after this much trailing silence once speech was heard. */
-        const val SILENCE_FLUSH_MS = 700
-        /** Soft emit during continuous speech so translation stays ongoing. */
-        const val EMIT_INTERVAL_MS = 1200
-        /** PCM tail kept as the start of the next window (avoids cutting words). */
-        const val OVERLAP_MS = 700
+        /** Hard cap so long monologues still flush without a pause. */
+        const val CHUNK_MAX_SECONDS = 8
+        /** Flush after a real phrase pause (avoids cutting mid-clause). */
+        const val SILENCE_FLUSH_MS = 1100
+        /** PCM tail kept only when max length forces a mid-sentence cut. */
+        const val OVERLAP_MS = 1500
         /** Do not flush until at least this much *new* speech was collected. */
-        const val MIN_SPEECH_MS = 350
+        const val MIN_SPEECH_MS = 500
         const val SCREEN_MAX_EDGE = 720
         const val FRAME_INTERVAL_MS = 900L
         const val JPEG_QUALITY = 70

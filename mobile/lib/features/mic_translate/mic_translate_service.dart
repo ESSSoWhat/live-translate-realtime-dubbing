@@ -112,24 +112,35 @@ class MicTranslateService {
     unawaited(_player.setVolume(_volume));
   }
 
-  /// Mic capture window (ms). Shorter = lower latency; silence-aware Live
-  /// capture is handled natively in [PlaybackCaptureService].
-  static const int chunkMs = 800;
+  /// Mic capture window (ms). Longer windows keep more phrase context.
+  /// Live capture is silence-aware in [PlaybackCaptureService].
+  static const int chunkMs = 1600;
   static const _backoff = Duration(seconds: 1);
   /// Let speaker audio die out so the next mic chunk does not re-hear TTS.
   static const _postTtsCooldown = Duration(milliseconds: 180);
   static const _ocrDedupeWindow = Duration(milliseconds: 1200);
   /// Max Live WAV chunks queued while STT/translate runs (drop oldest if full).
-  static const int _livePendingMax = 6;
-  /// Cap when briefly merging two tiny Live WAVs (~2.5s mono 16-bit @ 16k).
-  static const int _liveCoalesceMaxPcmBytes = 16000 * 2 * 25 ~/ 10;
+  static const int _livePendingMax = 8;
+  /// Cap coalesced Live audio (~8s mono 16-bit @ 16k) to match native max window.
+  static const int _liveCoalesceMaxPcmBytes = 16000 * 2 * 8;
   /// Rolling source text passed to translate for continuity across windows.
-  static const int _priorContextMaxChars = 280;
+  static const int _priorContextMaxChars = 400;
 
   /// Last full STT string (for stripping overlap from the next window).
   String _lastSttRaw = '';
   /// Recent source deltas used as translate prior_context.
   String _recentSourceContext = '';
+
+  /// Caption line currently being captured / transcribed / translated.
+  String _highlightSource = '';
+  /// Caption line currently being translated / spoken.
+  String _highlightTranslated = '';
+  final _captionActivityController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
+  /// Active source/translation highlight + pipeline phase for caption UI.
+  Stream<Map<String, dynamic>> get captionActivityStream =>
+      _captionActivityController.stream;
 
   /// Serializes TTS so overlapping Live chunks do not stomp each other.
   Future<void> _ttsChain = Future<void>.value();
@@ -354,6 +365,9 @@ class MicTranslateService {
     await _ensureAudioSession();
     _lastSttRaw = '';
     _recentSourceContext = '';
+    _highlightSource = '';
+    _highlightTranslated = '';
+    _emitCaptionActivity('idle');
     _running = true;
     _statusController.add('Starting…');
     unawaited(_runLoop().catchError((e, s) {
@@ -400,6 +414,9 @@ class MicTranslateService {
     _running = false;
     _lastSttRaw = '';
     _recentSourceContext = '';
+    _highlightSource = '';
+    _highlightTranslated = '';
+    _emitCaptionActivity('idle');
     _abortCloneCapture();
     await _playbackSub?.cancel();
     _playbackSub = null;
@@ -437,6 +454,7 @@ class MicTranslateService {
     _paywallController.close();
     _sourceTextController.close();
     _translatedTextController.close();
+    _captionActivityController.close();
     unawaited(_voiceProfiles.dispose());
   }
 
@@ -472,19 +490,18 @@ class MicTranslateService {
       pumping = true;
       try {
         while (_running && pending.isNotEmpty) {
-          // Prefer low latency: process FIFO one (or two tiny) chunk(s).
-          // Overlapping native windows + STT dedupe carry continuity.
-          final first = pending.removeAt(0);
-          List<List<int>> batch = [first];
-          if (pending.isNotEmpty && first.length < 32000) {
-            batch = [first, pending.removeAt(0)];
-          }
-          final merged = batch.length == 1
-              ? (first is Uint8List ? first : Uint8List.fromList(first))
-              : _coalesceWavChunks(batch);
+          // Merge the whole backlog into one STT/translate call so speech that
+          // arrived while we were busy becomes one continuous phrase — not a
+          // burst of tiny disconnected chunks.
+          final batch = List<List<int>>.from(pending);
+          pending.clear();
+          final merged = _coalesceWavChunks(batch);
           final bytes = merged ??
-              (first is Uint8List ? first : Uint8List.fromList(first));
+              (batch.first is Uint8List
+                  ? batch.first as Uint8List
+                  : Uint8List.fromList(batch.first));
           if (bytes.isNotEmpty) {
+            _emitCaptionActivity('capturing');
             await _processWavBytes(
               bytes,
               emptySpeechMessage:
@@ -648,6 +665,7 @@ class MicTranslateService {
         // recorder inside TTS already reduce feedback. Blocking here was
         // dropping all speech spoken while the translation played.
         _statusController.add('Listening…');
+        _emitCaptionActivity('capturing');
         path = await _recordToFile();
         if (!_running || path == null) {
           await Future<void>.delayed(_backoff);
@@ -702,10 +720,12 @@ class MicTranslateService {
             );
 
       _statusController.add('Transcribing…');
+      _emitCaptionActivity('transcribing');
       final text = stripNonVerbal(await _transcribe(bytes));
       if (!_running) return;
       if (text.isEmpty) {
         _statusController.add(emptySpeechMessage);
+        _emitCaptionActivity('idle');
         return;
       }
       await _processSourceText(text, awaitTts: awaitTts, voiceId: voiceId);
@@ -738,24 +758,34 @@ class MicTranslateService {
       _recentSourceContext = _appendPriorContext(_recentSourceContext, delta);
 
       _sourceTextController.add(delta);
+      _highlightSource = delta;
       _statusController.add('Translating…');
+      _emitCaptionActivity('translating');
       final translated = stripNonVerbal(
         await _translate(delta, priorContext: prior),
       );
       if (translated.isEmpty || !_running) return;
       _translatedTextController.add(translated);
+      _highlightTranslated = translated;
       if (_muted) {
         _statusController.add('Muted');
+        _emitCaptionActivity('idle');
         return;
       }
       _statusController.add('Speaking…');
       if (awaitTts) {
+        _emitCaptionActivity('speaking');
         await _synthesizeAndPlay(translated, voiceId: ttsVoice);
+        if (_running) _emitCaptionActivity('idle');
       } else {
+        final speakText = translated;
         _ttsChain = _ttsChain
             .then((_) async {
               if (!_running || _muted) return;
-              await _synthesizeAndPlay(translated, voiceId: ttsVoice);
+              _highlightTranslated = speakText;
+              _emitCaptionActivity('speaking');
+              await _synthesizeAndPlay(speakText, voiceId: ttsVoice);
+              if (_running) _emitCaptionActivity('idle');
             })
             .catchError((Object _) {});
       }
@@ -808,6 +838,19 @@ class MicTranslateService {
     final joined = existing.isEmpty ? next : '$existing $next';
     if (joined.length <= _priorContextMaxChars) return joined;
     return joined.substring(joined.length - _priorContextMaxChars).trimLeft();
+  }
+
+  void _emitCaptionActivity(String phase) {
+    if (!_captionActivityController.isClosed) {
+      _captionActivityController.add({
+        'phase': phase,
+        'source': _highlightSource,
+        'translated': _highlightTranslated,
+        'sourceLive':
+            phase == 'transcribing' || phase == 'translating' || phase == 'capturing',
+        'translatedLive': phase == 'translating' || phase == 'speaking',
+      });
+    }
   }
 
   Future<String?> _recordToFile() async {
