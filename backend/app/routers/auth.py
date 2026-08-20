@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field  # pylint: disable=import-error
 from app.config import get_settings
 from app.models.requests import ApiKeyRequest, ForgotPasswordRequest, LoginRequest, RefreshRequest, RegisterRequest
 from app.models.responses import AuthResponse, TokenResponse
-from app.services.supabase_client import get_supabase
+from app.services.supabase_client import create_auth_client, get_supabase
 from app.services.usage import get_usage_snapshot
 
 logger = structlog.get_logger(__name__)
@@ -268,7 +268,10 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
             exchange_params: dict = {"auth_code": oauth_code}
             if body.code_verifier:
                 exchange_params["code_verifier"] = body.code_verifier.strip()
-            exchanged = await sb.auth.exchange_code_for_session(exchange_params)
+            # Throwaway client: exchanging PKCE on the service-role singleton
+            # would attach the user JWT and make put_handoff fail RLS (403).
+            auth_sb = await create_auth_client()
+            exchanged = await auth_sb.auth.exchange_code_for_session(exchange_params)
         except Exception as exc:
             logger.error("Desktop SSO OAuth code exchange failed", error=str(exc))
             raise HTTPException(
@@ -330,7 +333,8 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
         api_key = await _ensure_user_api_key(sb, user_row)
     elif body.email and body.password:
         try:
-            resp = await sb.auth.sign_in_with_password(
+            auth_sb = await create_auth_client()
+            resp = await auth_sb.auth.sign_in_with_password(
                 {"email": body.email.strip(), "password": body.password}
             )
         except Exception as exc:
@@ -385,7 +389,14 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     except Exception as exc:
         logger.warning("Desktop SSO Wix tier refresh skipped", error=str(exc))
 
-    await put_handoff(session_id, api_key)
+    try:
+        await put_handoff(session_id, api_key)
+    except Exception as exc:
+        logger.error("Desktop SSO handoff store failed", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Signed in, but the app could not receive the session. Try again.",
+        ) from exc
     logger.info("Desktop SSO complete", session_prefix=session_id[:8])
 
     out: dict = {"ok": True, "api_key": api_key}
