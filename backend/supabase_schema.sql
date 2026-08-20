@@ -129,6 +129,12 @@ ALTER TABLE tier_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE nudge_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE desktop_handoffs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE desktop_handoffs DISABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE desktop_handoffs FROM anon;
+
+-- Production SSO used to attach the user JWT to the shared Supabase client.
+-- RLS with no policies blocked those INSERTs. Disable RLS for this ephemeral
+-- table (10-minute session tokens) and keep it off the anon Data API.
 
 -- Service role can do everything (RLS is bypassed for service role)
 DROP POLICY IF EXISTS users_select_own ON users;
