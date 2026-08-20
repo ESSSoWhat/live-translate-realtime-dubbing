@@ -126,7 +126,8 @@ def auth_client(
         return _usage_snapshot()
 
     with patch("app.routers.auth.get_supabase", AsyncMock(return_value=mock_supabase)):
-        with patch("app.routers.auth.get_usage_snapshot", side_effect=fake_usage_snapshot):
-            app = create_app()
-            with TestClient(app) as c:
-                yield c
+        with patch("app.routers.auth.create_auth_client", AsyncMock(return_value=mock_supabase)):
+            with patch("app.routers.auth.get_usage_snapshot", side_effect=fake_usage_snapshot):
+                app = create_app()
+                with TestClient(app) as c:
+                    yield c

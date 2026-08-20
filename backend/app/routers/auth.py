@@ -309,7 +309,8 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
         if not result or not result.data:
             # Resolve email from JWT user if needed — create row like OAuth exchange
             try:
-                user_resp = await sb.auth.get_user(access_token)
+                auth_sb = await create_auth_client()
+                user_resp = await auth_sb.auth.get_user(access_token)
                 email = (user_resp.user.email if user_resp and user_resp.user else None) or ""
             except Exception:
                 email = ""
@@ -412,7 +413,8 @@ async def register(body: RegisterRequest) -> AuthResponse:
     sb = await get_supabase()
 
     try:
-        resp = await sb.auth.sign_up({"email": body.email, "password": body.password})
+        auth_sb = await create_auth_client()
+        resp = await auth_sb.auth.sign_up({"email": body.email, "password": body.password})
     except Exception as exc:
         logger.exception("Registration failed")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Authentication failed") from exc
@@ -478,7 +480,8 @@ async def login(body: LoginRequest) -> AuthResponse:
     sb = await get_supabase()
 
     try:
-        resp = await sb.auth.sign_in_with_password({"email": body.email, "password": body.password})
+        auth_sb = await create_auth_client()
+        resp = await auth_sb.auth.sign_in_with_password({"email": body.email, "password": body.password})
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -530,10 +533,9 @@ async def login(body: LoginRequest) -> AuthResponse:
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(body: RefreshRequest) -> TokenResponse:
     """Exchange a refresh token for a new access token."""
-    sb = await get_supabase()
-
     try:
-        resp = await sb.auth.refresh_session(body.refresh_token)
+        auth_sb = await create_auth_client()
+        resp = await auth_sb.auth.refresh_session(body.refresh_token)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -642,7 +644,8 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
         exchange_params: dict = {"auth_code": body.code}
         if body.code_verifier:
             exchange_params["code_verifier"] = body.code_verifier
-        resp = await sb.auth.exchange_code_for_session(exchange_params)
+        auth_sb = await create_auth_client()
+        resp = await auth_sb.auth.exchange_code_for_session(exchange_params)
     except Exception as exc:
         logger.error("OAuth code exchange failed", error=str(exc), code_len=len(body.code))
         raise HTTPException(
@@ -721,7 +724,8 @@ async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> Au
         sign_in_params: dict = {"provider": provider, "token": id_token}
         if nonce:
             sign_in_params["nonce"] = nonce
-        resp = await sb.auth.sign_in_with_id_token(sign_in_params)
+        auth_sb = await create_auth_client()
+        resp = await auth_sb.auth.sign_in_with_id_token(sign_in_params)
     except Exception as exc:
         logger.error(f"{provider} ID token sign-in failed", error=str(exc))
         raise HTTPException(

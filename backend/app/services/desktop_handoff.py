@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import structlog
 
-from app.services.supabase_client import get_supabase
+from app.services.supabase_client import create_auth_client
 
 logger = structlog.get_logger(__name__)
 
@@ -19,7 +19,9 @@ _TTL = timedelta(minutes=10)
 
 async def put_handoff(session_id: str, api_key: str) -> None:
     """Store api_key for session_id (overwrites existing)."""
-    sb = await get_supabase()
+    # Fresh service-role client: get_supabase() may still hold a user JWT from
+    # login/refresh/OAuth on this worker, which fails RLS (no INSERT policy).
+    sb = await create_auth_client()
     now = datetime.now(timezone.utc)
     await (
         sb.table("desktop_handoffs")
@@ -41,7 +43,7 @@ async def put_handoff(session_id: str, api_key: str) -> None:
 
 async def take_handoff(session_id: str) -> str | None:
     """Return api_key once and delete the row. Expired rows are ignored."""
-    sb = await get_supabase()
+    sb = await create_auth_client()
     result = (
         await sb.table("desktop_handoffs")
         .delete()
