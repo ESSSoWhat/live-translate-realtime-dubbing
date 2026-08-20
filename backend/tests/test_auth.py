@@ -129,6 +129,7 @@ def test_desktop_sso_complete_oauth_code_stores_handoff(
     )
     with (
         patch("app.dependencies._verify_supabase_jwt", return_value="supa-1"),
+        patch("app.routers.auth.create_auth_client", AsyncMock(return_value=mock_supabase)),
         patch("app.services.desktop_handoff.put_handoff", new_callable=AsyncMock) as put,
         patch(
             "app.routers.auth._ensure_user_api_key",
