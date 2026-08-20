@@ -813,6 +813,14 @@ class Orchestrator:
             {"speaker_name": speaker_name},
         )
 
+    async def cancel_voice_capture(self) -> None:
+        """Abort an in-progress capture without sending audio to the API."""
+        if not self._processing_pipeline:
+            return
+        vm = self._processing_pipeline._voice_manager
+        if vm is not None:
+            vm.cancel_capture()
+
     async def finish_voice_capture(self) -> ClonedVoice | None:
         """Finish capturing and create the voice clone.
 

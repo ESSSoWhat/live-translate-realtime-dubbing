@@ -146,7 +146,7 @@ class AudioConfig(BaseModel):
 class VoiceCloneConfig(BaseModel):
     """Voice cloning configuration."""
 
-    dynamic_capture_duration_sec: float = Field(default=5.0, ge=3.0, le=120.0)
+    dynamic_capture_duration_sec: float = Field(default=15.0, ge=3.0, le=120.0)
     voice_stability: float = Field(default=0.5, ge=0.0, le=1.0)
     voice_similarity: float = Field(default=0.75, ge=0.0, le=1.0)
     # If set, skip voice cloning and use this ElevenLabs voice ID.

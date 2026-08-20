@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
+import re
 
 import httpx
 import structlog
@@ -100,6 +102,36 @@ def _elevenlabs() -> AsyncElevenLabs:
     return AsyncElevenLabs(api_key=key, timeout=60.0)
 
 
+def _elevenlabs_error_message(text: str) -> str:
+    """Extract ElevenLabs' own message from compact or pretty JSON exception text."""
+    body = text
+    marker = "body:"
+    if marker in text.lower():
+        idx = text.lower().rfind(marker)
+        body = text[idx + len(marker) :].strip()
+    try:
+        payload = json.loads(body)
+    except (ValueError, TypeError):
+        payload = None
+    if isinstance(payload, dict):
+        detail = payload.get("detail", payload)
+        if isinstance(detail, dict):
+            return str(detail.get("message") or detail.get("status") or "").strip()
+        if isinstance(detail, str):
+            return detail.strip()
+        if isinstance(detail, list) and detail:
+            first = detail[0]
+            if isinstance(first, dict):
+                return str(first.get("msg") or first.get("message") or "").strip()
+    match = re.search(r'"message"\s*:\s*"((?:\\.|[^"\\])*)"', text)
+    if match:
+        return match.group(1).replace('\\"', '"').replace("\\n", " ")
+    match = re.search(r'"status"\s*:\s*"((?:\\.|[^"\\])*)"', text)
+    if match:
+        return match.group(1).replace("_", " ")
+    return ""
+
+
 def _elevenlabs_upstream_error(action: str, exc: Exception) -> HTTPException:
     """Map ElevenLabs failures to a short client-facing detail (avoid dumping headers)."""
     text = str(exc)
@@ -135,25 +167,7 @@ def _elevenlabs_upstream_error(action: str, exc: Exception) -> HTTPException:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"{action} failed: server ElevenLabs API key rejected. Check Railway ELEVENLABS_API_KEY.",
         )
-    # Prefer ElevenLabs' own message when present in the SDK exception text.
-    message = ""
-    for marker in ("'message': '", '"message": "'):
-        start = text.find(marker)
-        if start >= 0:
-            start += len(marker)
-            end = text.find("'", start) if marker.endswith("'") else text.find('"', start)
-            if end > start:
-                message = text[start:end]
-                break
-    if not message:
-        for marker in ("'code': '", '"code": "'):
-            start = text.find(marker)
-            if start >= 0:
-                start += len(marker)
-                end = text.find("'", start) if marker.endswith("'") else text.find('"', start)
-                if end > start:
-                    message = text[start:end]
-                    break
+    message = _elevenlabs_error_message(text)
     logger.error("ElevenLabs upstream error", action=action, error=text[:500])
     if message:
         return HTTPException(status_code=502, detail=f"{action} failed: {message[:180]}")
@@ -584,6 +598,17 @@ async def clone_voice(
     audio_bytes = await audio.read()
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Audio file is empty")
+    duration_sec = _audio_duration_seconds(
+        audio_bytes, audio.content_type or "audio/wav", 16000
+    )
+    if duration_sec < 4.0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Voice cloning failed: audio is too short. "
+                "Keep the speaker talking and try Clone again."
+            ),
+        )
 
     cfg = get_settings()
     key = (cfg.elevenlabs_api_key or "").strip()
@@ -601,6 +626,8 @@ async def clone_voice(
     form_data: dict[str, str] = {
         "name": name.strip() or "cloned_voice",
         "labels": "{}",
+        # Game/app audio is rarely a clean vocal booth; isolation improves IVC.
+        "remove_background_noise": "true",
     }
     desc = (description or "").strip()
     if desc:

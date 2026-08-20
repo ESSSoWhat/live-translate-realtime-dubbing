@@ -168,7 +168,7 @@ class BackendProxyService:
         if response.status_code == 401:
             raise AuthExpiredException("Session expired — please log in again")
 
-        if response.status_code >= 500:
+        if response.status_code >= 400:
             detail = ""
             try:
                 body = response.json()

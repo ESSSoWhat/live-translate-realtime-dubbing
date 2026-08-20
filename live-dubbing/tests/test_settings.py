@@ -18,7 +18,7 @@ class TestAppSettings:
 
         assert settings.audio.sample_rate == 16000
         assert settings.audio.chunk_size_ms == 100
-        assert settings.voice_clone.dynamic_capture_duration_sec == 5.0
+        assert settings.voice_clone.dynamic_capture_duration_sec == 15.0
         assert settings.translation.default_target_language == "en"
         assert settings.ui.dark_mode is True
 
@@ -39,7 +39,7 @@ class TestAppSettings:
         from live_dubbing.config.settings import VoiceCloneConfig
 
         config = VoiceCloneConfig()
-        assert config.dynamic_capture_duration_sec == 5.0
+        assert config.dynamic_capture_duration_sec == 15.0
         assert config.voice_stability == 0.5
         assert config.voice_similarity == 0.75
 

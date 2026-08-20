@@ -113,6 +113,7 @@ class MainWindow(QMainWindow):
         self._force_quit = False
         self._tray: QSystemTrayIcon | None = None
         self._overlay_clone_timer: QTimer | None = None
+        self._overlay_clone_pending = False
 
         # Usage meter created here so mypy sees the attribute; _setup_ui() adds it to layout
         self._usage_meter: UsageMeterWidget = UsageMeterWidget(self._settings)
@@ -1212,41 +1213,52 @@ class MainWindow(QMainWindow):
         self._async_worker.run_coroutine(self._orchestrator.switch_voice(voice_id))
 
     def _on_overlay_clone(self) -> None:
-        """Start a timed live clone from overlay audio, matching mobile Clone."""
-        if not self._is_running:
+        """Capture live speech until the clone buffer is full, matching mobile Clone."""
+        if not self._is_running or self._overlay_clone_pending:
             return
-        if self._overlay_clone_timer is not None:
-            return
+        self._overlay_clone_pending = True
         if self._dubbed_window is not None:
             self._dubbed_window.set_cloning(True)
+            self._dubbed_window.set_status("Recording speech…")
         name = datetime.now().strftime("Clone %H:%M")
         if self._async_worker:
             self._async_worker.run_coroutine(
                 self._orchestrator.start_voice_capture(name),
                 on_error=self._on_overlay_clone_error,
             )
-        duration_ms = int(
-            self._settings.voice_clone.dynamic_capture_duration_sec * 1000
-        )
+        duration_sec = self._settings.voice_clone.dynamic_capture_duration_sec
+        timeout_ms = int(max(30.0, duration_sec * 8) * 1000)
         self._overlay_clone_timer = QTimer(self)
         self._overlay_clone_timer.setSingleShot(True)
-        self._overlay_clone_timer.timeout.connect(self._finish_overlay_clone)
-        self._overlay_clone_timer.start(max(3000, duration_ms))
+        self._overlay_clone_timer.timeout.connect(self._on_overlay_clone_timeout)
+        self._overlay_clone_timer.start(timeout_ms)
 
-    def _finish_overlay_clone(self) -> None:
-        """Finish overlay live clone capture."""
-        self._overlay_clone_timer = None
-        if self._async_worker:
-            self._async_worker.run_coroutine(
-                self._orchestrator.finish_voice_capture(),
-                on_error=self._on_overlay_clone_error,
-            )
-
-    def _on_overlay_clone_error(self, error_msg: str) -> None:
-        """Reset overlay clone UI after a failure."""
+    def _clear_overlay_clone_pending(self) -> None:
+        """Stop waiting for an overlay clone result."""
+        self._overlay_clone_pending = False
         if self._overlay_clone_timer is not None:
             self._overlay_clone_timer.stop()
             self._overlay_clone_timer = None
+
+    def _on_overlay_clone_timeout(self) -> None:
+        """Give up if not enough speech arrived before the wait expired."""
+        self._overlay_clone_timer = None
+        if not self._overlay_clone_pending:
+            return
+        self._overlay_clone_pending = False
+        if self._async_worker:
+            self._async_worker.run_coroutine(
+                self._orchestrator.cancel_voice_capture(),
+                on_error=self._on_overlay_clone_error,
+            )
+        if self._dubbed_window is not None:
+            self._dubbed_window.set_cloning(False)
+            self._dubbed_window.set_status("Need more speech — try Clone again")
+        logger.warning("Overlay clone timed out before enough speech was captured")
+
+    def _on_overlay_clone_error(self, error_msg: str) -> None:
+        """Reset overlay clone UI after a failure."""
+        self._clear_overlay_clone_pending()
         if self._dubbed_window is not None:
             self._dubbed_window.set_cloning(False)
             self._dubbed_window.set_status("Clone failed")
@@ -1675,9 +1687,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot()
     def _on_stop_clicked(self) -> None:
         """Handle stop button click."""
-        if self._overlay_clone_timer is not None:
-            self._overlay_clone_timer.stop()
-            self._overlay_clone_timer = None
+        self._clear_overlay_clone_pending()
         self._start_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
         self._app_selector.set_enabled(True)
@@ -1791,6 +1801,8 @@ class MainWindow(QMainWindow):
         else:
             label = f"Recording... keep speaking ({pct}%)"
         self._clone_progress.setFormat(label)
+        if self._overlay_clone_pending and self._dubbed_window is not None:
+            self._dubbed_window.set_status(f"Recording speech… {pct}%")
 
     @pyqtSlot(object)
     def _on_clone_completed(self, event: Event) -> None:
@@ -1822,6 +1834,9 @@ class MainWindow(QMainWindow):
         # Refresh the voice list so the new clone appears
         self._refresh_voice_list()
         self._refresh_profile_list()
+        if event.data.get("is_temporary"):
+            return
+        self._clear_overlay_clone_pending()
         if self._dubbed_window is not None:
             self._dubbed_window.set_cloning(False)
             self._sync_overlay_state()
@@ -1839,9 +1854,15 @@ class MainWindow(QMainWindow):
         self._capture_voice_btn.setEnabled(True)
         self._import_voice_btn.setText("Import Voice")
         self._import_voice_btn.setEnabled(True)
+        self._clear_overlay_clone_pending()
         if self._dubbed_window is not None:
             self._dubbed_window.set_cloning(False)
-            self._dubbed_window.set_status("Clone failed")
+            short = error_msg.split("\n")[0].strip()
+            if len(short) > 80:
+                short = short[:77] + "..."
+            self._dubbed_window.set_status(
+                f"Clone failed: {short}" if short else "Clone failed"
+            )
 
     # ── Voice panel handlers ─────────────────────────────────────────────
 
@@ -2486,9 +2507,7 @@ class MainWindow(QMainWindow):
                 )
             return
 
-        if self._overlay_clone_timer is not None:
-            self._overlay_clone_timer.stop()
-            self._overlay_clone_timer = None
+        self._clear_overlay_clone_pending()
         if self._is_running and self._async_worker:
             self._async_worker.run_coroutine(
                 self._orchestrator.stop_translation()

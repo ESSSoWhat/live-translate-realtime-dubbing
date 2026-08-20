@@ -100,6 +100,7 @@ class VoiceCloneManager:
         self._audio_buffer: list[np.ndarray] = []
         self._buffer_duration_sec = 0.0
         self._is_capturing = False
+        self._ready_emitted = False
         self._capture_speaker_label: str | None = None
         self._capture_profile_id: str | None = None
         self._sample_rate = 16000
@@ -156,6 +157,7 @@ class VoiceCloneManager:
         self._audio_buffer = []
         self._buffer_duration_sec = 0.0
         self._is_capturing = True
+        self._ready_emitted = False
         self._sample_rate = sample_rate
         self._capture_speaker_label = speaker_label
         self._capture_profile_id = profile_id
@@ -183,18 +185,14 @@ class VoiceCloneManager:
         chunk_duration = len(audio) / self._sample_rate
         self._buffer_duration_sec += chunk_duration
 
-        # Check if we have enough audio
-        if self._buffer_duration_sec >= self._min_sample_duration:
+        enough = (
+            self._buffer_duration_sec >= self._min_sample_duration
+            or self._buffer_duration_sec >= self._max_sample_duration
+        )
+        if enough and not self._ready_emitted:
+            self._ready_emitted = True
             logger.info(
                 "Enough audio captured for cloning",
-                duration_sec=self._buffer_duration_sec,
-            )
-            return True
-
-        # Stop if we've captured too much
-        if self._buffer_duration_sec >= self._max_sample_duration:
-            logger.warning(
-                "Max capture duration reached",
                 duration_sec=self._buffer_duration_sec,
             )
             return True
@@ -219,6 +217,11 @@ class VoiceCloneManager:
         async with self._buffer_lock:
             if not self._audio_buffer:
                 raise RuntimeError("No audio captured for cloning")
+            if self._buffer_duration_sec < self._min_sample_duration:
+                raise RuntimeError(
+                    "Not enough speech captured for cloning. "
+                    "Keep the speaker talking, then try Clone again."
+                )
 
             # Combine audio buffer
             combined_audio = np.concatenate(self._audio_buffer)
@@ -494,6 +497,7 @@ class VoiceCloneManager:
         self._audio_buffer = []
         self._buffer_duration_sec = 0.0
         self._is_capturing = False
+        self._ready_emitted = False
         self._capture_speaker_label = None
         self._capture_profile_id = None
         logger.info("Dynamic capture cancelled")
