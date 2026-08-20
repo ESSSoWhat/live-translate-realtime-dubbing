@@ -393,11 +393,9 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     try:
         await put_handoff(session_id, api_key)
     except Exception as exc:
+        # Google already succeeded. Keep returning the API key so the SSO page
+        # can bounce to localhost even if PostgREST RLS blocks the poll row.
         logger.error("Desktop SSO handoff store failed", error=str(exc))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Signed in, but the app could not receive the session. Try again.",
-        ) from exc
     logger.info("Desktop SSO complete", session_prefix=session_id[:8])
 
     out: dict = {"ok": True, "api_key": api_key}

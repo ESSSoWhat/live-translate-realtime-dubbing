@@ -156,3 +156,41 @@ def test_desktop_sso_complete_oauth_code_stores_handoff(
     assert exchanged is not None
     assert exchanged.args[0]["auth_code"] == "auth-code"
     assert exchanged.args[0]["code_verifier"] == "verifier"
+
+
+def test_desktop_sso_complete_returns_key_when_handoff_store_fails(
+    auth_client: TestClient, mock_supabase: MagicMock
+) -> None:
+    """Handoff RLS failures must not hide the API key from the SSO page."""
+    session = MagicMock()
+    session.access_token = "google-at"
+    mock_supabase.auth.exchange_code_for_session = AsyncMock(
+        return_value=MagicMock(session=session, user=MagicMock(id="supa-1", email="user@test.com"))
+    )
+    with (
+        patch("app.dependencies._verify_supabase_jwt", return_value="supa-1"),
+        patch("app.routers.auth.create_auth_client", AsyncMock(return_value=mock_supabase)),
+        patch(
+            "app.services.desktop_handoff.put_handoff",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("rls"),
+        ),
+        patch(
+            "app.routers.auth._ensure_user_api_key",
+            new_callable=AsyncMock,
+            return_value="lt_api_key",
+        ),
+    ):
+        r = auth_client.post(
+            "/api/v1/auth/desktop-sso/complete",
+            json={
+                "session_id": "desktop-session-id-24chars",
+                "redirect_uri": "http://127.0.0.1:18765/",
+                "oauth_code": "auth-code",
+                "code_verifier": "verifier",
+            },
+        )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["api_key"] == "lt_api_key"
+    assert "api_key=" in data["redirect"]

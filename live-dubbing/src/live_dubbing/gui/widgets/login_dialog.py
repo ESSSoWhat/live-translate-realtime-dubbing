@@ -706,7 +706,7 @@ class _WixSsoWorker(QThread):
 
         logger.info("Waiting for Wix SSO (handoff poll + localhost callback)…")
         result = None
-        remaining = 300.0
+        remaining = 900.0
         # Prefer short non-blocking polls. wait_for_token must not starve handoff checks —
         # Wix cannot redirect to localhost, so backend handoff is the real path.
         with httpx.Client(timeout=5.0) as client:
