@@ -182,18 +182,26 @@ class PlaybackCaptureService : Service() {
         capturing = true
         record.startRecording()
         captureThread = thread(name = "PlaybackCapture", isDaemon = true) {
-            // ~20 ms frames for energy VAD; flush on short silence or max length.
+            // ~20 ms frames for energy VAD. Overlapping windows + mid-speech emits
+            // keep translation continuous instead of hard phrase cuts.
             val frameBytes = (SAMPLE_RATE / 50) * BYTES_PER_SAMPLE
             val readBuf = ByteArray(frameBytes.coerceAtMost(bufferSize))
             val chunk = ByteArrayOutputStream(SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_MAX_SECONDS + 64)
             val silenceFramesNeeded = SILENCE_FLUSH_MS / 20
             val minSpeechBytes = (SAMPLE_RATE * BYTES_PER_SAMPLE * MIN_SPEECH_MS) / 1000
             val maxChunkBytes = SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_MAX_SECONDS
+            val emitIntervalBytes = (SAMPLE_RATE * BYTES_PER_SAMPLE * EMIT_INTERVAL_MS) / 1000
+            val overlapBytes = (SAMPLE_RATE * BYTES_PER_SAMPLE * OVERLAP_MS) / 1000
+            var carry = ByteArray(0)
             while (capturing) {
                 chunk.reset()
-                var collected = 0
-                var heardSpeech = false
+                if (carry.isNotEmpty()) {
+                    chunk.write(carry)
+                }
+                var collected = chunk.size()
+                var heardSpeech = carry.isNotEmpty()
                 var silenceFrames = 0
+                var newSpeechBytes = 0
                 while (capturing && collected < maxChunkBytes) {
                     val n = record.read(readBuf, 0, minOf(readBuf.size, frameBytes))
                     when {
@@ -206,7 +214,7 @@ class PlaybackCaptureService : Service() {
                                     collected += n
                                     silenceFrames++
                                     if (silenceFrames >= silenceFramesNeeded &&
-                                        collected >= minSpeechBytes
+                                        newSpeechBytes >= minSpeechBytes
                                     ) {
                                         break
                                     }
@@ -217,6 +225,11 @@ class PlaybackCaptureService : Service() {
                                 silenceFrames = 0
                                 chunk.write(readBuf, 0, n)
                                 collected += n
+                                newSpeechBytes += n
+                                // Soft emit during continuous speech for ongoing STT.
+                                if (newSpeechBytes >= emitIntervalBytes) {
+                                    break
+                                }
                             }
                         }
                         n < 0 -> {
@@ -229,8 +242,26 @@ class PlaybackCaptureService : Service() {
                 if (!capturing) break
                 if (!heardSpeech) continue
                 val pcm = chunk.toByteArray()
-                if (pcm.isEmpty() || isSilent(pcm)) continue
+                if (pcm.isEmpty() || isSilent(pcm)) {
+                    carry = ByteArray(0)
+                    continue
+                }
+                // Not enough new speech yet — keep the buffer as carry and continue.
+                if (newSpeechBytes < minSpeechBytes / 2 && collected < maxChunkBytes) {
+                    carry = if (pcm.size > maxChunkBytes) {
+                        pcm.copyOfRange(pcm.size - maxChunkBytes, pcm.size)
+                    } else {
+                        pcm
+                    }
+                    continue
+                }
                 emitWav(pcmToWav(pcm, SAMPLE_RATE))
+                val keep = minOf(overlapBytes, pcm.size)
+                carry = if (keep > 0) {
+                    pcm.copyOfRange(pcm.size - keep, pcm.size)
+                } else {
+                    ByteArray(0)
+                }
             }
         }
     }
@@ -419,11 +450,15 @@ class PlaybackCaptureService : Service() {
         const val SAMPLE_RATE = 16000
         const val BYTES_PER_SAMPLE = 2
         /** Hard cap so phrases are not held forever without a pause. */
-        const val CHUNK_MAX_SECONDS = 3
-        /** Flush after this much trailing silence once speech was heard (~desktop VAD). */
-        const val SILENCE_FLUSH_MS = 550
-        /** Do not flush on silence until at least this much audio was collected. */
-        const val MIN_SPEECH_MS = 400
+        const val CHUNK_MAX_SECONDS = 4
+        /** Flush after this much trailing silence once speech was heard. */
+        const val SILENCE_FLUSH_MS = 700
+        /** Soft emit during continuous speech so translation stays ongoing. */
+        const val EMIT_INTERVAL_MS = 1200
+        /** PCM tail kept as the start of the next window (avoids cutting words). */
+        const val OVERLAP_MS = 700
+        /** Do not flush until at least this much *new* speech was collected. */
+        const val MIN_SPEECH_MS = 350
         const val SCREEN_MAX_EDGE = 720
         const val FRAME_INTERVAL_MS = 900L
         const val JPEG_QUALITY = 70

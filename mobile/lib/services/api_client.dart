@@ -123,6 +123,7 @@ class ApiClient {
     required String text,
     required String targetLanguage,
     String sourceLanguage = 'auto',
+    String priorContext = '',
   }) async {
     final r = await _dio.post(
       '/proxy/translate',
@@ -130,6 +131,7 @@ class ApiClient {
         'text': text,
         'target_language': targetLanguage,
         'source_language': sourceLanguage,
+        if (priorContext.trim().isNotEmpty) 'prior_context': priorContext.trim(),
       },
     );
     final data = r.data;

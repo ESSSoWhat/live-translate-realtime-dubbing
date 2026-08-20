@@ -395,15 +395,30 @@ async def translate(
         try:
             from openai import AsyncOpenAI
             client = AsyncOpenAI(api_key=cfg.openai_api_key)
+            prior = (body.prior_context or "").strip()
+            if prior:
+                system = (
+                    f"You are translating live speech to {body.target_language}. "
+                    "Translate only the NEW utterance. Use prior context for "
+                    "continuity (pronouns, topic). Do not re-translate prior text. "
+                    "Return only the translation of the new utterance."
+                )
+                user_content = (
+                    f"Prior context (already spoken, do not translate again):\n{prior}\n\n"
+                    f"New utterance to translate:\n{body.text}"
+                )
+            else:
+                system = (
+                    f"Translate the following text to {body.target_language}. "
+                    "Return only the translated text, no explanations."
+                )
+                user_content = body.text
             response = await asyncio.wait_for(
                 client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": (
-                            f"Translate the following text to {body.target_language}. "
-                            "Return only the translated text, no explanations."
-                        )},
-                        {"role": "user", "content": body.text},
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_content},
                     ],
                     max_tokens=2000,
                 ),

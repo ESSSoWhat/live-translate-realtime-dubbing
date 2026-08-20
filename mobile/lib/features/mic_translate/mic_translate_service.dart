@@ -114,15 +114,22 @@ class MicTranslateService {
 
   /// Mic capture window (ms). Shorter = lower latency; silence-aware Live
   /// capture is handled natively in [PlaybackCaptureService].
-  static const int chunkMs = 900;
+  static const int chunkMs = 800;
   static const _backoff = Duration(seconds: 1);
   /// Let speaker audio die out so the next mic chunk does not re-hear TTS.
   static const _postTtsCooldown = Duration(milliseconds: 180);
   static const _ocrDedupeWindow = Duration(milliseconds: 1200);
   /// Max Live WAV chunks queued while STT/translate runs (drop oldest if full).
-  static const int _livePendingMax = 4;
-  /// Cap coalesced Live audio so STT stays snappy (~3.5s mono 16-bit @ 16k).
-  static const int _liveCoalesceMaxPcmBytes = 16000 * 2 * 35 ~/ 10;
+  static const int _livePendingMax = 6;
+  /// Cap when briefly merging two tiny Live WAVs (~2.5s mono 16-bit @ 16k).
+  static const int _liveCoalesceMaxPcmBytes = 16000 * 2 * 25 ~/ 10;
+  /// Rolling source text passed to translate for continuity across windows.
+  static const int _priorContextMaxChars = 280;
+
+  /// Last full STT string (for stripping overlap from the next window).
+  String _lastSttRaw = '';
+  /// Recent source deltas used as translate prior_context.
+  String _recentSourceContext = '';
 
   /// Serializes TTS so overlapping Live chunks do not stomp each other.
   Future<void> _ttsChain = Future<void>.value();
@@ -345,6 +352,8 @@ class MicTranslateService {
       }
     }
     await _ensureAudioSession();
+    _lastSttRaw = '';
+    _recentSourceContext = '';
     _running = true;
     _statusController.add('Starting…');
     unawaited(_runLoop().catchError((e, s) {
@@ -389,6 +398,8 @@ class MicTranslateService {
 
   Future<void> stop() async {
     _running = false;
+    _lastSttRaw = '';
+    _recentSourceContext = '';
     _abortCloneCapture();
     await _playbackSub?.cancel();
     _playbackSub = null;
@@ -461,26 +472,25 @@ class MicTranslateService {
       pumping = true;
       try {
         while (_running && pending.isNotEmpty) {
-          final batch = List<List<int>>.from(pending);
-          pending.clear();
-          final merged = _coalesceWavChunks(batch);
-          if (merged != null && merged.isNotEmpty) {
+          // Prefer low latency: process FIFO one (or two tiny) chunk(s).
+          // Overlapping native windows + STT dedupe carry continuity.
+          final first = pending.removeAt(0);
+          List<List<int>> batch = [first];
+          if (pending.isNotEmpty && first.length < 32000) {
+            batch = [first, pending.removeAt(0)];
+          }
+          final merged = batch.length == 1
+              ? (first is Uint8List ? first : Uint8List.fromList(first))
+              : _coalesceWavChunks(batch);
+          final bytes = merged ??
+              (first is Uint8List ? first : Uint8List.fromList(first));
+          if (bytes.isNotEmpty) {
             await _processWavBytes(
-              merged,
+              bytes,
               emptySpeechMessage:
                   'No speech in app audio — play media with dialogue',
               awaitTts: false,
             );
-          } else {
-            for (final bytes in batch) {
-              if (!_running) break;
-              await _processWavBytes(
-                bytes,
-                emptySpeechMessage:
-                    'No speech in app audio — play media with dialogue',
-                awaitTts: false,
-              );
-            }
           }
         }
       } finally {
@@ -717,9 +727,21 @@ class MicTranslateService {
   }) async {
     final ttsVoice = (voiceId != null && voiceId.isNotEmpty) ? voiceId : _voiceId;
     try {
-      _sourceTextController.add(text);
+      // Overlapping capture windows re-hear the same words — keep only the delta.
+      final delta = _stripSttOverlap(_lastSttRaw, text);
+      _lastSttRaw = text;
+      if (delta.isEmpty) {
+        _statusController.add('Listening…');
+        return;
+      }
+      final prior = _recentSourceContext;
+      _recentSourceContext = _appendPriorContext(_recentSourceContext, delta);
+
+      _sourceTextController.add(delta);
       _statusController.add('Translating…');
-      final translated = stripNonVerbal(await _translate(text));
+      final translated = stripNonVerbal(
+        await _translate(delta, priorContext: prior),
+      );
       if (translated.isEmpty || !_running) return;
       _translatedTextController.add(translated);
       if (_muted) {
@@ -746,6 +768,46 @@ class MicTranslateService {
         _statusController.add(_formatPipelineError(e));
       }
     }
+  }
+
+  /// Drop words already heard in the previous overlapping STT window.
+  String _stripSttOverlap(String previous, String current) {
+    final prev = previous.trim();
+    final cur = current.trim();
+    if (cur.isEmpty) return '';
+    if (prev.isEmpty) return cur;
+    final a = prev.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    final b = cur.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    if (a.isEmpty) return cur;
+    if (b.isEmpty) return '';
+    var best = 0;
+    final maxCheck = a.length < b.length ? a.length : b.length;
+    for (var n = maxCheck; n >= 1; n--) {
+      var match = true;
+      for (var i = 0; i < n; i++) {
+        if (a[a.length - n + i].toLowerCase() != b[i].toLowerCase()) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        best = n;
+        break;
+      }
+    }
+    if (best == 0) {
+      // Exact / near-exact duplicate of the previous window.
+      if (cur.toLowerCase() == prev.toLowerCase()) return '';
+      return cur;
+    }
+    if (best >= b.length) return '';
+    return b.sublist(best).join(' ');
+  }
+
+  String _appendPriorContext(String existing, String next) {
+    final joined = existing.isEmpty ? next : '$existing $next';
+    if (joined.length <= _priorContextMaxChars) return joined;
+    return joined.substring(joined.length - _priorContextMaxChars).trimLeft();
   }
 
   Future<String?> _recordToFile() async {
@@ -796,11 +858,12 @@ class MicTranslateService {
     return (r['text'] as String?)?.trim() ?? '';
   }
 
-  Future<String> _translate(String text) async {
+  Future<String> _translate(String text, {String priorContext = ''}) async {
     final r = await _api.translate(
       text: text,
       targetLanguage: _targetLanguage,
       sourceLanguage: _sourceLanguage,
+      priorContext: priorContext,
     );
     return (r['translated_text'] as String?)?.trim() ?? '';
   }

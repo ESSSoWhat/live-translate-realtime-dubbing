@@ -88,6 +88,8 @@ class TranslateRequest(BaseModel):
     text: str = Field(max_length=10000)
     target_language: str
     source_language: str = "auto"
+    # Recent prior source text so live chunks translate coherently.
+    prior_context: str = Field(default="", max_length=2000)
 
 
 class CloneVoiceRequest(BaseModel):
