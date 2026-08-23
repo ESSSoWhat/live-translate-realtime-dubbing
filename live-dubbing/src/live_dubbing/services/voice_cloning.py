@@ -32,6 +32,15 @@ logger = structlog.get_logger(__name__)
 _FALLBACK_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 
 
+def _is_cloneable_speech(audio: np.ndarray) -> bool:
+    """True when a chunk looks like speech, not clipped SFX or silence."""
+    if audio.size == 0:
+        return False
+    peak = float(np.max(np.abs(audio)))
+    rms = float(np.sqrt(np.mean(np.square(audio.astype(np.float64)))))
+    return peak < 0.98 and rms >= 0.012
+
+
 @dataclass
 class ClonedVoice:
     """Information about a cloned voice."""
@@ -105,6 +114,11 @@ class VoiceCloneManager:
         self._capture_profile_id: str | None = None
         self._sample_rate = 16000
         self._buffer_lock = asyncio.Lock()
+
+        # Per-profile clone capture (unique source voices)
+        self._profile_clone_buffers: dict[str, list[np.ndarray]] = {}
+        self._profile_clone_dur: dict[str, float] = {}
+        self._profile_clone_inflight: set[str] = set()
 
         # Load previously saved voices from persistent store
         if self._voice_store:
@@ -180,6 +194,8 @@ class VoiceCloneManager:
         """
         if not self._is_capturing:
             return False
+        if not _is_cloneable_speech(audio):
+            return False
 
         self._audio_buffer.append(audio)
         chunk_duration = len(audio) / self._sample_rate
@@ -198,6 +214,90 @@ class VoiceCloneManager:
             return True
 
         return False
+
+    def feed_profile_clone_audio(self, profile_id: str, audio: np.ndarray) -> bool:
+        """Accumulate speech for an uncloned profile.
+
+        Returns True once enough audio is buffered to clone (and not already inflight).
+        """
+        if self._is_capturing or profile_id in self._profile_clone_inflight:
+            return False
+        profile = self._profiles.get(profile_id)
+        if not profile or profile.assigned_voice_id:
+            return False
+        if not _is_cloneable_speech(audio):
+            return False
+
+        buf = self._profile_clone_buffers.setdefault(profile_id, [])
+        buf.append(audio)
+        duration = self._profile_clone_dur.get(profile_id, 0.0)
+        duration += len(audio) / self._sample_rate
+        self._profile_clone_dur[profile_id] = duration
+
+        if duration >= self._min_sample_duration:
+            self._profile_clone_inflight.add(profile_id)
+            logger.info(
+                "Enough audio captured for profile clone",
+                profile_id=profile_id,
+                duration_sec=round(duration, 2),
+            )
+            return True
+        return False
+
+    async def create_clone_for_profile(self, profile_id: str) -> ClonedVoice:
+        """Clone TTS from audio accumulated for a unique source speaker."""
+        profile = self._profiles.get(profile_id)
+        if profile is None:
+            self._profile_clone_inflight.discard(profile_id)
+            raise RuntimeError("Unknown voice profile")
+
+        chunks = self._profile_clone_buffers.pop(profile_id, [])
+        duration = self._profile_clone_dur.pop(profile_id, 0.0)
+        try:
+            if not chunks:
+                raise RuntimeError("No audio captured for cloning")
+            if duration < self._min_sample_duration:
+                raise RuntimeError(
+                    "Not enough speech captured for cloning. "
+                    "Keep the speaker talking, then try Clone again."
+                )
+
+            combined_audio = np.concatenate(chunks)
+            audio_bytes = self._audio_to_wav(combined_audio)
+            name = profile.name
+            voice_id = await self._service.clone_voice(
+                audio_data=audio_bytes,
+                name=name,
+                description=f"Cloned voice for speaker: {name}",
+            )
+            cloned_voice = ClonedVoice(
+                voice_id=voice_id,
+                name=name,
+                sample_duration_sec=duration,
+                is_dynamic=True,
+                speaker_id=name,
+            )
+            self._voice_cache[voice_id] = cloned_voice
+            self._link_clone_to_profile(
+                audio=combined_audio,
+                voice_id=voice_id,
+                label=name,
+                profile_id=profile_id,
+            )
+            if self._voice_store:
+                try:
+                    self._voice_store.save(cloned_voice)
+                except Exception as e:
+                    logger.warning("Could not persist voice", error=str(e))
+            logger.info(
+                "Per-profile voice clone created",
+                voice_id=voice_id,
+                profile_id=profile_id,
+                duration_sec=round(duration, 2),
+            )
+            return cloned_voice
+        finally:
+            self._profile_clone_inflight.discard(profile_id)
 
     async def create_dynamic_clone(
         self,
@@ -597,11 +697,51 @@ class VoiceCloneManager:
             return False
         return True
 
-    def resolve_tts_voice(self, profile: VoiceProfile | None) -> ClonedVoice | None:
-        """Resolve the TTS clone for a profile, falling back to default / Rachel."""
+    def closest_cloned_match(
+        self,
+        audio: np.ndarray,
+    ) -> tuple[ClonedVoice | None, VoiceProfile | None, float]:
+        """Closest profile that already has a clone, with similarity score."""
+        for profile_id, score in self._speaker_id.ranked_matches(audio):
+            profile = self._profiles.get(profile_id)
+            if not profile or not profile.assigned_voice_id:
+                continue
+            voice = self._voice_cache.get(profile.assigned_voice_id)
+            if voice:
+                return voice, profile, score
+        return None, None, 0.0
+
+    def resolve_tts_voice(
+        self,
+        profile: VoiceProfile | None,
+        audio: np.ndarray | None = None,
+    ) -> ClonedVoice | None:
+        """Resolve TTS: assigned clone, else closest cloned match, else Rachel.
+
+        A closest match at or above the speaker threshold is persisted onto
+        *profile*. Weaker matches are used only as interim TTS while we clone.
+        """
         if profile and profile.assigned_voice_id:
             voice = self._voice_cache.get(profile.assigned_voice_id)
             if voice:
+                return voice
+
+        if audio is not None:
+            voice, source, score = self.closest_cloned_match(audio)
+            if voice and source:
+                if (
+                    profile is not None
+                    and not profile.assigned_voice_id
+                    and score >= self._speaker_id.threshold
+                ):
+                    self.set_profile_voice(profile.id, voice.voice_id)
+                    logger.info(
+                        "Assigned closest cloned voice to profile",
+                        profile_id=profile.id,
+                        source_profile_id=source.id,
+                        voice_id=voice.voice_id,
+                        confidence=f"{score:.2f}",
+                    )
                 return voice
 
         default = self.get_default_profile()
@@ -645,12 +785,22 @@ class VoiceCloneManager:
         self._active_profile_id = default.id if default else None
         return default, confidence
 
+    def _auto_profile_count(self) -> int:
+        """Count auto-created 'Speaker N' profiles (safety cap, not a product limit)."""
+        n = 0
+        for p in self._profiles.values():
+            if p.name.startswith("Speaker "):
+                suffix = p.name[len("Speaker ") :].strip()
+                if suffix.isdigit():
+                    n += 1
+        return n
+
     def _maybe_auto_create_profile(self, audio: np.ndarray) -> VoiceProfile | None:
-        """Create a capped auto profile for an unmatched speaker."""
-        if len(self._profiles) >= self._max_auto_profiles:
+        """Create a new profile for an unmatched unique source voice."""
+        if self._auto_profile_count() >= self._max_auto_profiles:
             logger.debug(
                 "Auto profile cap reached",
-                count=len(self._profiles),
+                count=self._auto_profile_count(),
                 cap=self._max_auto_profiles,
             )
             return None

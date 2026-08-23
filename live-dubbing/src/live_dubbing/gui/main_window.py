@@ -640,12 +640,13 @@ class MainWindow(QMainWindow):
 
         self._profile_list = QListWidget()
         self._profile_list.setMinimumHeight(80)
-        self._profile_list.setMaximumHeight(140)
+        self._profile_list.setMaximumHeight(240)
         self._profile_list.setAlternatingRowColors(True)
         self._profile_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._profile_list.setStyleSheet(self._voice_list.styleSheet())
         self._profile_list.setToolTip(
-            "Detected speakers. Assign a clone for TTS; unmatched speech uses the default profile."
+            "One profile per unique voice in the source audio. "
+            "Assign a clone for TTS; unmatched speech uses the default profile."
         )
         self._profile_list.currentItemChanged.connect(self._on_profile_selection_changed)
         voice_layout.addWidget(self._profile_list)
@@ -1857,12 +1858,15 @@ class MainWindow(QMainWindow):
         self._clear_overlay_clone_pending()
         if self._dubbed_window is not None:
             self._dubbed_window.set_cloning(False)
-            short = error_msg.split("\n")[0].strip()
-            if len(short) > 80:
-                short = short[:77] + "..."
-            self._dubbed_window.set_status(
-                f"Clone failed: {short}" if short else "Clone failed"
-            )
+            lower = error_msg.lower()
+            if "upstream" in lower or "too short" in lower:
+                status = "Clone failed — too noisy. Try Clone during clear speech."
+            else:
+                short = error_msg.split("\n")[0].strip()
+                if len(short) > 80:
+                    short = short[:77] + "..."
+                status = f"Clone failed: {short}" if short else "Clone failed"
+            self._dubbed_window.set_status(status)
 
     # ── Voice panel handlers ─────────────────────────────────────────────
 
@@ -2420,6 +2424,9 @@ class MainWindow(QMainWindow):
         """Handle warning event."""
         message = event.data.get("message", "Unknown warning")
         logger.warning("Warning", message=message)
+        # Clone fallback is expected during game audio; overlay status is enough.
+        if "voice clone failed" in message.lower():
+            return
         QMessageBox.warning(self, "Warning", message)
 
     @pyqtSlot(object)

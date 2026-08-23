@@ -1,23 +1,29 @@
 """
 Floating always-on-top Live Translate overlay HUD.
 
-Collapsed: a cyan bubble. Expanded: captions plus session controls
-(status, voice, volume, mute, clone, stop, home), matching the mobile overlay.
+Collapsed: the Live Translate globe mark. Expanded: captions plus session
+controls (status, voice, volume, mute, clone, stop, home).
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
+    QBrush,
     QCloseEvent,
     QColor,
     QFont,
     QMouseEvent,
     QPainter,
+    QPainterPath,
     QPaintEvent,
+    QPen,
+    QPixmap,
+    QRadialGradient,
     QTextCharFormat,
     QTextCursor,
     QWheelEvent,
@@ -40,47 +46,117 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _CYAN = "#68F8F8"
+_CYAN_SOFT = "#3CF0F0"
 _NAVY = "#000810"
-_NAVY_SURFACE = "#001020"
+_NAVY_SURFACE = "#001018"
+_NAVY_CARD = "#001830"
 _ON_SURFACE = "#E8F7FF"
 _MUTED = "#8AA4B5"
+_LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "logo.png"
 
 _COLLAPSED = 96
 _EXPANDED_WIDTH = 320
-_EXPANDED_HEIGHT = 460
+_EXPANDED_HEIGHT = 484
 _DRAG_THRESHOLD = 6
+
+_brand_square: QPixmap | None = None
+
+
+def _brand_square_pixmap() -> QPixmap:
+    """Return a cached square crop of the globe mark (wordmark cropped off)."""
+    global _brand_square
+    if _brand_square is not None:
+        return _brand_square
+    pix = QPixmap(str(_LOGO_PATH))
+    if pix.isNull():
+        _brand_square = QPixmap()
+        return _brand_square
+    crop_h = max(1, int(pix.height() * 0.72))
+    cropped = pix.copy(0, 0, pix.width(), crop_h)
+    side = min(cropped.width(), cropped.height())
+    x = (cropped.width() - side) // 2
+    y = (cropped.height() - side) // 2
+    _brand_square = cropped.copy(x, y, side, side)
+    return _brand_square
+
+
+def _scaled_brand_mark(size: int) -> QPixmap:
+    """Scale the brand mark to ``size``×``size`` for labels and the bubble."""
+    src = _brand_square_pixmap()
+    if src.isNull() or size <= 0:
+        return QPixmap()
+    return src.scaled(
+        size,
+        size,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
 
 
 class _BubbleButton(QWidget):
-    """Circular cyan bubble painted without a native button chrome."""
+    """Circular brand-mark bubble painted without native button chrome."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._muted = False
         self.setFixedSize(_COLLAPSED, _COLLAPSED)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Live Translate")
 
     def set_muted(self, muted: bool) -> None:
-        """Update the glyph to reflect mute state."""
+        """Dim the mark when TTS is muted."""
         self._muted = muted
         self.update()
 
     def paintEvent(self, event: QPaintEvent | None) -> None:  # noqa: ARG002
-        """Draw the circular bubble and glyph."""
+        """Draw a neon cyan ring around the Live Translate globe mark."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        margin = 6
-        rect = self.rect().adjusted(margin, margin, -margin, -margin)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+        center = self.rect().center()
+        glow = QRadialGradient(center, self.width() / 2)
+        glow.setColorAt(0.52, QColor(104, 248, 248, 0))
+        glow.setColorAt(0.78, QColor(104, 248, 248, 80))
+        glow.setColorAt(1.0, QColor(104, 248, 248, 0))
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(_CYAN))
+        painter.setBrush(QBrush(glow))
+        painter.drawEllipse(self.rect())
+
+        margin = 8
+        rect = self.rect().adjusted(margin, margin, -margin, -margin)
+        painter.setBrush(QColor(_NAVY))
         painter.drawEllipse(rect)
-        painter.setPen(QColor(_NAVY))
-        font = QFont()
-        font.setBold(True)
-        font.setPointSize(16)
-        painter.setFont(font)
-        glyph = "M" if self._muted else "LT"
-        painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), glyph)
+
+        clip = QPainterPath()
+        clip.addEllipse(rect)
+        painter.save()
+        painter.setClipPath(clip)
+        mark = _scaled_brand_mark(max(rect.width(), rect.height()))
+        if mark.isNull():
+            painter.setPen(QColor(_CYAN))
+            font = QFont("Segoe UI", 11, QFont.Weight.Bold)
+            painter.setFont(font)
+            painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), "LT")
+        else:
+            x = rect.x() + (rect.width() - mark.width()) // 2
+            y = rect.y() + (rect.height() - mark.height()) // 2
+            painter.drawPixmap(x, y, mark)
+        painter.restore()
+
+        if self._muted:
+            painter.setBrush(QColor(0, 8, 16, 150))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(rect)
+            painter.setPen(QPen(QColor(_CYAN), 3))
+            inset = rect.adjusted(18, 18, -18, -18)
+            painter.drawLine(inset.topLeft(), inset.bottomRight())
+
+        ring = QPen(QColor(_CYAN))
+        ring.setWidth(2)
+        painter.setPen(ring)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(rect.adjusted(1, 1, -1, -1))
 
 
 def _split_chunks(text: str) -> list[str]:
@@ -374,35 +450,37 @@ class DubbedWindow(QWidget):
             f"""
             QWidget#overlayPanel {{
                 background-color: {_NAVY_SURFACE};
-                border: 1px solid #003050;
-                border-radius: 16px;
+                border: 1px solid {_CYAN_SOFT};
+                border-radius: 18px;
             }}
             QLabel {{
                 color: {_ON_SURFACE};
+                font-family: "Segoe UI";
             }}
             QComboBox {{
-                background-color: {_NAVY};
+                background-color: {_NAVY_CARD};
                 color: {_ON_SURFACE};
-                border: 1px solid #003050;
-                border-radius: 4px;
+                border: 1px solid #0A4A5A;
+                border-radius: 8px;
                 padding: 4px 8px;
             }}
             QTextEdit {{
                 background-color: {_NAVY};
                 color: {_ON_SURFACE};
-                border: 1px solid #003050;
-                border-radius: 6px;
+                border: 1px solid #0A4A5A;
+                border-radius: 10px;
                 padding: 6px;
             }}
             QPushButton {{
-                background-color: #002040;
+                background-color: {_NAVY_CARD};
                 color: {_ON_SURFACE};
-                border: 1px solid #003050;
-                border-radius: 6px;
+                border: 1px solid #0A4A5A;
+                border-radius: 8px;
                 padding: 6px 10px;
             }}
             QPushButton:hover {{
-                background-color: #003050;
+                background-color: #00283C;
+                border-color: {_CYAN};
             }}
             QPushButton:disabled {{
                 color: {_MUTED};
@@ -432,13 +510,29 @@ class DubbedWindow(QWidget):
             """
         )
         panel_layout = QVBoxLayout(self._panel)
-        panel_layout.setContentsMargins(12, 8, 8, 8)
+        panel_layout.setContentsMargins(12, 10, 10, 10)
         panel_layout.setSpacing(6)
+
+        brand = QHBoxLayout()
+        brand.setSpacing(8)
+        logo_label = QLabel()
+        logo_label.setFixedSize(28, 28)
+        mark = _scaled_brand_mark(28)
+        if not mark.isNull():
+            logo_label.setPixmap(mark)
+            logo_label.setScaledContents(True)
+        brand.addWidget(logo_label)
+        wordmark = QLabel("LIVE TRANSLATE")
+        wordmark.setStyleSheet(
+            f"color: {_CYAN}; font-weight: 800; font-size: 12px; letter-spacing: 1px;"
+        )
+        brand.addWidget(wordmark, 1)
+        panel_layout.addLayout(brand)
 
         header = QHBoxLayout()
         header.setSpacing(4)
         self._status_label = QLabel("Listening…")
-        self._status_label.setStyleSheet("font-weight: 600;")
+        self._status_label.setStyleSheet(f"font-weight: 600; color: {_ON_SURFACE};")
         self._status_label.installEventFilter(self)
         header.addWidget(self._status_label, 1)
 

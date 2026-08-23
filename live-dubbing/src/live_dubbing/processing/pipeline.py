@@ -19,12 +19,13 @@ import numpy as np
 import soundfile as sf
 import structlog
 
-from live_dubbing.core.events import EventBus, EventType
 from live_dubbing.config.settings import redact_secrets
+from live_dubbing.core.events import EventBus, EventType
 from live_dubbing.processing.text_filter import strip_non_verbal
 from live_dubbing.processing.vad import SileroVAD
 from live_dubbing.services.elevenlabs_service import ElevenLabsService
 from live_dubbing.services.voice_cloning import ClonedVoice, VoiceCloneManager
+from live_dubbing.services.voice_profiles import VoiceProfile
 
 logger = structlog.get_logger(__name__)
 
@@ -273,6 +274,7 @@ class ProcessingPipeline:
         # State
         self._state = PipelineState.IDLE
         self._cloned_voice: ClonedVoice | None = None
+        self._last_resolved_profile_id: str | None = None
         self._stats = PipelineStats()
         self._voice_capture_start_time: float = 0.0
         self._is_cloning_in_background = False
@@ -376,20 +378,17 @@ class ProcessingPipeline:
             )
             logger.info("Using premade voice, skipping clone", voice_id=premade_id)
         elif self._voice_manager and self._config.auto_clone_voice:
-            # Start voice capture for dynamic cloning IN PARALLEL with processing.
-            # TTS uses the fallback voice until clone is ready, then swaps.
-            self._voice_capture_start_time = time.time()
-            self._is_cloning_in_background = True
-            await self._voice_manager.start_dynamic_capture()
-            # Emit COMPLETED immediately so orchestrator transitions to TRANSLATING state
-            # (the fallback voice is usable right now; clone will upgrade it later)
+            # Match each unique source speaker to the closest existing clone.
+            # Unmatched speakers are cloned from their own audio (not a mixed
+            # 15s capture of everyone). TTS uses fallback / closest match until
+            # that speaker's clone is ready.
+            self._stats.voice_clone_ready = True
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
                 {"voice_id": self._cloned_voice.voice_id, "is_temporary": True},
             )
-            self._event_bus.emit(EventType.VOICE_CLONE_STARTED, {})
             logger.info(
-                "Started voice capture in background, using fallback voice for now",
+                "Speaker matching enabled; unmatched voices will be cloned",
                 fallback_voice=initial_voice_id,
             )
         else:
@@ -434,6 +433,7 @@ class ProcessingPipeline:
         self._output_suppress_until = 0.0
         self._output_playing = False
         self._is_cloning_in_background = False
+        self._last_resolved_profile_id = None
         self._vad.reset_state()
 
         # Shutdown VAD executor (don't wait for pending tasks)
@@ -531,23 +531,29 @@ class ProcessingPipeline:
         """Identify the current speaker profile and resolve TTS voice."""
         if not self._voice_manager:
             return
-        if self._voice_manager.is_capturing:
-            return  # Don't switch while actively capturing a new voice
 
         profile, confidence = self._voice_manager.resolve_profile_for_audio(audio)
-        resolved = self._voice_manager.resolve_tts_voice(profile)
+        resolved = self._voice_manager.resolve_tts_voice(profile, audio)
         if not resolved:
             return
 
-        if self._cloned_voice and resolved.voice_id == self._cloned_voice.voice_id:
-            return  # Already using this voice
+        profile_id = profile.id if profile else None
+        voice_changed = (
+            self._cloned_voice is None
+            or resolved.voice_id != self._cloned_voice.voice_id
+        )
+        profile_changed = profile_id != self._last_resolved_profile_id
+        if not voice_changed and not profile_changed:
+            self._maybe_feed_profile_clone(profile, audio)
+            return
 
         self._cloned_voice = resolved
+        self._last_resolved_profile_id = profile_id
         profile_name = profile.name if profile else "Default"
         self._event_bus.emit(
             EventType.VOICE_PROFILE_CHANGED,
             {
-                "profile_id": profile.id if profile else None,
+                "profile_id": profile_id,
                 "profile_name": profile_name,
                 "voice_id": resolved.voice_id,
                 "name": resolved.name,
@@ -567,12 +573,28 @@ class ProcessingPipeline:
         )
         logger.info(
             "Resolved TTS voice from speaker profile",
-            profile_id=profile.id if profile else None,
+            profile_id=profile_id,
             profile_name=profile_name,
             voice_id=resolved.voice_id,
             name=resolved.name,
             confidence=f"{confidence:.2f}",
         )
+        self._maybe_feed_profile_clone(profile, audio)
+
+    def _maybe_feed_profile_clone(
+        self,
+        profile: VoiceProfile | None,
+        audio: np.ndarray,
+    ) -> None:
+        """Buffer speech until an uncloned unique speaker can be cloned."""
+        if not self._voice_manager or not self._config.auto_clone_voice:
+            return
+        if profile is None or profile.assigned_voice_id:
+            return
+        if self._voice_manager.feed_profile_clone_audio(profile.id, audio):
+            self._tasks.append(
+                asyncio.create_task(self._run_profile_voice_clone(profile.id))
+            )
 
     async def process_chunk(
         self,
@@ -793,11 +815,57 @@ class ProcessingPipeline:
             elif "402" in err_s or "quota" in lower:
                 hint = " Voice clone limit reached. Upgrade your plan for more."
             elif "upstream" in lower or "too short" in lower:
-                hint = " Need a longer stretch of clear speech (about 15s), then try Clone again."
-            self._event_bus.emit_warning(
-                "Voice clone failed — using default voice for TTS. You can still hear translated speech."
-                + hint,
-                {"error": err_s[:100]},
+                hint = "Audio too noisy or unclear. Try Clone during a stretch of voice without game effects."
+            else:
+                hint = err_s[:120]
+            # Overlay/main already handle VOICE_CLONE_FAILED. A QMessageBox
+            # steals focus from the game — keep this as a status event only.
+            logger.warning("Voice clone using default TTS", hint=hint)
+
+    async def _run_profile_voice_clone(self, profile_id: str) -> None:
+        """Clone TTS for one unique source speaker without blocking VAD."""
+        try:
+            if not self._voice_manager:
+                return
+            cloned = await self._voice_manager.create_clone_for_profile(profile_id)
+            if self._last_resolved_profile_id == profile_id:
+                self._cloned_voice = cloned
+            self._stats.voice_clone_ready = True
+            if self._config.usage_reporter:
+                self._config.usage_reporter.report("clone", 1)
+            profile = self._voice_manager.get_profile(profile_id)
+            profile_name = profile.name if profile else cloned.name
+            self._event_bus.emit(
+                EventType.VOICE_PROFILE_CHANGED,
+                {
+                    "profile_id": profile_id,
+                    "profile_name": profile_name,
+                    "voice_id": cloned.voice_id,
+                    "name": cloned.name,
+                    "auto_switched": True,
+                },
+            )
+            self._event_bus.emit(
+                EventType.VOICE_CLONE_COMPLETED,
+                {
+                    "voice_id": cloned.voice_id,
+                    "name": cloned.name,
+                    "profile_id": profile_id,
+                    "profile_name": profile_name,
+                },
+            )
+            logger.info(
+                "Profile voice clone ready",
+                profile_id=profile_id,
+                voice_id=cloned.voice_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception(
+                "Profile voice clone failed, keeping default TTS",
+                profile_id=profile_id,
+                error=str(e),
             )
 
     async def _run_manual_voice_clone(self) -> None:

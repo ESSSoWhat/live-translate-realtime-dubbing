@@ -30,7 +30,7 @@ class SpeakerIdentifier:
         sample_rate: int = 16000,
         n_mfcc: int = 20,
         n_mels: int = 40,
-        similarity_threshold: float = 0.60,
+        similarity_threshold: float = 0.78,
     ) -> None:
         self._sample_rate = sample_rate
         self._n_mfcc = n_mfcc
@@ -85,22 +85,31 @@ class SpeakerIdentifier:
         """Remove a speaker embedding."""
         self._embeddings.pop(speaker_key, None)
 
-    def identify(self, audio: np.ndarray) -> tuple[str | None, float]:
-        """Return ``(speaker_key, confidence)`` of the best match, or ``(None, 0)``."""
+    @property
+    def threshold(self) -> float:
+        """Minimum cosine similarity to treat two clips as the same speaker."""
+        return self._threshold
+
+    def ranked_matches(self, audio: np.ndarray) -> list[tuple[str, float]]:
+        """All registered speakers sorted by cosine similarity (highest first)."""
         if not self._embeddings or len(audio) < self._sample_rate * 0.3:
-            return None, 0.0
+            return []
 
         emb = self._compute_embedding(audio)
+        ranked = [
+            (speaker_key, float(np.dot(emb, stored)))
+            for speaker_key, stored in self._embeddings.items()
+        ]
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        return ranked
 
-        best_id: str | None = None
-        best_score = -1.0
+    def identify(self, audio: np.ndarray) -> tuple[str | None, float]:
+        """Return ``(speaker_key, confidence)`` of the best match, or ``(None, 0)``."""
+        ranked = self.ranked_matches(audio)
+        if not ranked:
+            return None, 0.0
 
-        for speaker_key, stored in self._embeddings.items():
-            score = float(np.dot(emb, stored))  # cosine sim (both L2-normed)
-            if score > best_score:
-                best_score = score
-                best_id = speaker_key
-
+        best_id, best_score = ranked[0]
         if best_score >= self._threshold:
             return best_id, best_score
 

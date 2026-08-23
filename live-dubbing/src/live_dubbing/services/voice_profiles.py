@@ -24,7 +24,8 @@ _DEFAULT_DIR = os.path.join(
 )
 _DEFAULT_PATH = os.path.join(_DEFAULT_DIR, "voice_profiles.json")
 
-MAX_AUTO_PROFILES = 8
+# Safety valve only — unique source speakers each get a profile.
+MAX_AUTO_PROFILES = 64
 
 
 @dataclass
