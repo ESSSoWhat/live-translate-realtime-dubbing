@@ -43,6 +43,13 @@ class TestAppSettings:
         assert config.voice_stability == 0.5
         assert config.voice_similarity == 0.75
 
+    def test_short_legacy_capture_duration_is_raised(self):
+        """Saved 5s capture (old default) is too short for ElevenLabs IVC."""
+        from live_dubbing.config.settings import VoiceCloneConfig
+
+        config = VoiceCloneConfig(dynamic_capture_duration_sec=5.0)
+        assert config.dynamic_capture_duration_sec == 15.0
+
 
 class TestConfigManager:
     """Tests for ConfigManager."""

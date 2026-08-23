@@ -785,12 +785,15 @@ class ProcessingPipeline:
                 {"error": err_s},
             )
             hint = ""
-            if "getaddrinfo" in err_s or "connection" in err_s.lower():
+            lower = err_s.lower()
+            if "getaddrinfo" in err_s or "connection" in lower:
                 hint = " Check that the backend URL is reachable (or clear LIVE_TRANSLATE_BACKEND_URL to use production)."
-            elif "401" in err_s or "session" in err_s.lower() or "expired" in err_s.lower():
+            elif "401" in err_s or "session" in lower or "expired" in lower:
                 hint = " Sign in again from Account → Sign in."
-            elif "402" in err_s or "quota" in err_s.lower():
+            elif "402" in err_s or "quota" in lower:
                 hint = " Voice clone limit reached. Upgrade your plan for more."
+            elif "upstream" in lower or "too short" in lower:
+                hint = " Need a longer stretch of clear speech (about 15s), then try Clone again."
             self._event_bus.emit_warning(
                 "Voice clone failed — using default voice for TTS. You can still hear translated speech."
                 + hint,

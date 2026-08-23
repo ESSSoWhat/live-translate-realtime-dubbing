@@ -9,7 +9,7 @@ from pathlib import Path
 
 import structlog
 from platformdirs import user_config_dir
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = structlog.get_logger(__name__)
 
@@ -147,6 +147,14 @@ class VoiceCloneConfig(BaseModel):
     """Voice cloning configuration."""
 
     dynamic_capture_duration_sec: float = Field(default=15.0, ge=3.0, le=120.0)
+
+    @field_validator("dynamic_capture_duration_sec")
+    @classmethod
+    def _migrate_short_legacy_capture(cls, value: float) -> float:
+        # Old default was 5s. ElevenLabs IVC rejects short/noisy game clips.
+        if value < 10.0:
+            return 15.0
+        return value
     voice_stability: float = Field(default=0.5, ge=0.0, le=1.0)
     voice_similarity: float = Field(default=0.75, ge=0.0, le=1.0)
     # If set, skip voice cloning and use this ElevenLabs voice ID.
@@ -479,6 +487,11 @@ class ConfigManager:
             try:
                 data = json.loads(self.config_file.read_text(encoding="utf-8"))
                 settings = AppSettings.model_validate(data)
+                raw_capture = (data.get("voice_clone") or {}).get(
+                    "dynamic_capture_duration_sec"
+                )
+                if raw_capture is not None and float(raw_capture) < 10.0:
+                    self.save(settings)
                 logger.info("Settings loaded", path=str(self.config_file))
                 return settings
             except Exception as e:

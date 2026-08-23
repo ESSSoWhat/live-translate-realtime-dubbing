@@ -1,4 +1,4 @@
-"""Desktop login dialog uses the SSO bridge for Google sign-in."""
+"""Desktop login uses Live Translate SSO; Google is only on that website page."""
 
 from pathlib import Path
 
@@ -12,11 +12,10 @@ _LOGIN_DIALOG = (
 )
 
 
-def test_google_signin_uses_desktop_sso_bridge() -> None:
-    """In-dialog Google must not open a random localhost OAuth callback."""
+def test_login_dialog_has_no_separate_google_button() -> None:
     src = _LOGIN_DIALOG.read_text(encoding="utf-8")
-    start = src.index("def _on_google_signin")
-    end = src.index("def _on_oauth_error")
-    body = src[start:end]
-    assert "self._on_wix_signin()" in body
-    assert "_OAuthWorker" not in body
+    assert "Sign in with Google" not in src
+    assert "def _on_google_signin" not in src
+    assert "class _OAuthWorker" not in src
+    assert "def _on_wix_signin" in src
+    assert "Sign in with livetranslate.net" in src
