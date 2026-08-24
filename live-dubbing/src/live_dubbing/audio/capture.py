@@ -197,6 +197,10 @@ class AudioCapture:
                 target_rate=self._sample_rate,
             )
 
+            silent_streak = 0
+            heard_audio = False
+            tried_indexes: set[object] = {device_info.get("index")}
+
             # Capture loop
             assert self._stream is not None
             while self._is_capturing.is_set():
@@ -223,18 +227,36 @@ class AudioCapture:
                             audio_data, device_sample_rate, self._sample_rate
                         )
 
+                    peak = (
+                        float(np.max(np.abs(audio_data))) if audio_data.size else 0.0
+                    )
+                    if not heard_audio:
+                        if peak < 1e-4:
+                            silent_streak += 1
+                            if silent_streak >= 20:
+                                nxt = self._next_loopback_device(tried_indexes)
+                                if nxt is not None:
+                                    device_info = nxt
+                                    tried_indexes.add(nxt.get("index"))
+                                    device_sample_rate, device_channels = (
+                                        self._reopen_input_stream(device_info)
+                                    )
+                                    silent_streak = 0
+                                    continue
+                        else:
+                            heard_audio = True
+
                     # Debug: Log audio levels periodically
-                    if not hasattr(self, '_chunk_count'):
+                    if not hasattr(self, "_chunk_count"):
                         self._chunk_count = 0
                     self._chunk_count += 1
                     if self._chunk_count <= 3 or self._chunk_count % 100 == 0:
-                        level = np.sqrt(np.mean(audio_data ** 2))
-                        max_val = np.max(np.abs(audio_data))
+                        level = np.sqrt(np.mean(audio_data**2))
                         logger.info(
                             "Audio chunk captured",
                             chunk_num=self._chunk_count,
                             rms_level=f"{level:.4f}",
-                            max_amplitude=f"{max_val:.4f}",
+                            max_amplitude=f"{peak:.4f}",
                             samples=len(audio_data),
                         )
 
@@ -278,6 +300,47 @@ class AudioCapture:
             logger.exception("Capture loop error", error=str(e))
         finally:
             self._cleanup_stream()
+
+    def _close_input_stream(self) -> None:
+        """Close the input stream without terminating PyAudio."""
+        if self._stream:
+            with contextlib.suppress(Exception):
+                self._stream.stop_stream()
+                self._stream.close()
+            self._stream = None
+
+    def _next_loopback_device(self, tried_indexes: set[object]) -> dict | None:
+        """Return the next unused WASAPI loopback device, if any."""
+        if self._pa is None:
+            return None
+        for dev in self._pa.get_loopback_device_info_generator():
+            if dev.get("index") not in tried_indexes:
+                return dev  # type: ignore[return-value]
+        return None
+
+    def _reopen_input_stream(self, device_info: dict) -> tuple[int, int]:
+        """Reopen capture on a different loopback device. Returns rate, channels."""
+        import pyaudiowpatch as pyaudio
+
+        self._close_input_stream()
+        assert self._pa is not None
+        device_sample_rate = int(device_info.get("defaultSampleRate", 44100))
+        device_channels = min(int(device_info.get("maxInputChannels", 2)), 2)
+        chunk_frames = int(device_sample_rate * self._chunk_size_ms / 1000)
+        self._stream = self._pa.open(
+            format=pyaudio.paFloat32,
+            channels=device_channels,
+            rate=device_sample_rate,
+            input=True,
+            input_device_index=device_info.get("index"),
+            frames_per_buffer=chunk_frames * 2,
+        )
+        logger.warning(
+            "Capture was silent; switched loopback device",
+            name=device_info.get("name"),
+            index=device_info.get("index"),
+        )
+        return device_sample_rate, device_channels
 
     def _get_loopback_device_by_index(self, index: int) -> dict | None:
         """Get loopback device by index using pyaudiowpatch generator."""

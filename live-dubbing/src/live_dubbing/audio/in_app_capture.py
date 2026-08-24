@@ -73,7 +73,10 @@ def get_capture_channels() -> list[tuple[str, str]]:
     return channels
 
 
-def get_system_loopback_device_id(capture_device_id: str | None = None) -> str | None:
+def get_system_loopback_device_id(
+    capture_device_id: str | None = None,
+    output_device_id: str | None = None,
+) -> str | None:
     """Get the device ID for system loopback capture."""
     try:
         from live_dubbing.audio.routing import VirtualAudioRouter
@@ -81,6 +84,8 @@ def get_system_loopback_device_id(capture_device_id: str | None = None) -> str |
         router = VirtualAudioRouter()
         if capture_device_id:
             return router.get_loopback_device_or_default(capture_device_id)
+        if output_device_id:
+            return router.find_loopback_id_for_output(output_device_id)
         return router.get_default_output_device()
     except Exception as e:
         logger.warning("Could not get system loopback device", error=str(e))
@@ -93,6 +98,7 @@ def get_capture_config(
     target_pid: int | None = None,
     target_process_name: str | None = None,
     capture_device_id: str | None = None,
+    output_device_id: str | None = None,
 ) -> CaptureConfig:
     """
     Get capture configuration for in-app software capture.
@@ -104,12 +110,15 @@ def get_capture_config(
         target_pid: Process ID for per-app capture when use_system_only is False.
         target_process_name: Process name (e.g. chrome.exe) — used to skip process
             loopback for apps known to fail (Chrome, Edge).
+        output_device_id: Sounddevice output index; loopback follows this device.
 
     Returns:
         CaptureConfig with device_id (system) or pid (process loopback).
     """
     if use_system_only:
-        device_id = get_system_loopback_device_id(capture_device_id)
+        device_id = get_system_loopback_device_id(
+            capture_device_id, output_device_id
+        )
         if device_id:
             return CaptureConfig(
                 device_id=device_id,
@@ -119,7 +128,10 @@ def get_capture_config(
         raise RuntimeError("No output device found for loopback capture.")
 
     # Skip process loopback for apps that often fail (0x8000000E)
-    skip_process_loopback = target_process_name and target_process_name.lower() in PROCESS_LOOPBACK_UNRELIABLE
+    skip_process_loopback = (
+        target_process_name
+        and target_process_name.lower() in PROCESS_LOOPBACK_UNRELIABLE
+    )
     if skip_process_loopback:
         logger.info(
             "Using system loopback (process loopback unreliable for this app)",
@@ -129,7 +141,7 @@ def get_capture_config(
     if not skip_process_loopback and target_pid and is_process_loopback_supported():
         return CaptureConfig(pid=target_pid, mode="process_loopback")
 
-    device_id = get_system_loopback_device_id(capture_device_id)
+    device_id = get_system_loopback_device_id(capture_device_id, output_device_id)
     if device_id:
         return CaptureConfig(
             device_id=device_id,

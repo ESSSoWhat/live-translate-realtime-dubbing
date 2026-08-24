@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
-from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QCloseEvent,
@@ -80,11 +80,40 @@ def _brand_square_pixmap() -> QPixmap:
     return _brand_square
 
 
+def _globe_pixmap(size: int) -> QPixmap:
+    """Draw the Live Translate globe mark when logo.png is missing."""
+    pix = QPixmap(size, size)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    margin = max(2, size // 14)
+    rect = pix.rect().adjusted(margin, margin, -margin, -margin)
+    painter.setPen(QPen(QColor(_CYAN), max(2.0, size / 22.0)))
+    painter.setBrush(QColor("#001A28"))
+    painter.drawEllipse(rect)
+    clip = QPainterPath()
+    clip.addEllipse(QRectF(rect))
+    painter.setClipPath(clip)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    cx = rect.center().x()
+    for scale in (0.42, 0.72, 1.0):
+        width = max(4, int(rect.width() * scale))
+        mer = QRect(cx - width // 2, rect.top(), width, rect.height())
+        painter.drawEllipse(mer)
+    for t in (0.32, 0.5, 0.68):
+        y = rect.top() + int(rect.height() * t)
+        painter.drawLine(rect.left() + 1, y, rect.right() - 1, y)
+    painter.end()
+    return pix
+
+
 def _scaled_brand_mark(size: int) -> QPixmap:
     """Scale the brand mark to ``size``×``size`` for labels and the bubble."""
-    src = _brand_square_pixmap()
-    if src.isNull() or size <= 0:
+    if size <= 0:
         return QPixmap()
+    src = _brand_square_pixmap()
+    if src.isNull():
+        return _globe_pixmap(size)
     return src.scaled(
         size,
         size,
@@ -114,8 +143,8 @@ class _BubbleButton(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
-        center = self.rect().center()
-        glow = QRadialGradient(center, self.width() / 2)
+        center = QPointF(self.rect().center())
+        glow = QRadialGradient(center, self.width() / 2.0)
         glow.setColorAt(0.52, QColor(104, 248, 248, 0))
         glow.setColorAt(0.78, QColor(104, 248, 248, 80))
         glow.setColorAt(1.0, QColor(104, 248, 248, 0))
@@ -129,7 +158,7 @@ class _BubbleButton(QWidget):
         painter.drawEllipse(rect)
 
         clip = QPainterPath()
-        clip.addEllipse(rect)
+        clip.addEllipse(QRectF(rect))
         painter.save()
         painter.setClipPath(clip)
         mark = _scaled_brand_mark(max(rect.width(), rect.height()))
@@ -762,6 +791,10 @@ class DubbedWindow(QWidget):
         self._translated_pane.set_font_size(size, bold=True)
 
     def _update_window_opacity(self, opacity: float) -> None:
+        # Collapsed bubble stays fully opaque so the globe mark stays visible.
+        if not self._expanded:
+            self.setWindowOpacity(1.0)
+            return
         self.setWindowOpacity(max(0.2, min(1.0, opacity)))
 
     def _update_text_opacity(self, opacity: float) -> None:
@@ -787,6 +820,7 @@ class DubbedWindow(QWidget):
         else:
             size = QSize(_COLLAPSED, _COLLAPSED)
         self.setFixedSize(size)
+        self._update_window_opacity(self._window_opacity)
         if save_corner:
             new_x = old.x() + old.width() - size.width()
             new_y = old.y()

@@ -315,6 +315,47 @@ Only that app's audio will be captured. Other apps play to normal speakers.
 
         return None
 
+    def find_loopback_id_for_output(self, output_device_id: str | None) -> str | None:
+        """Map a sounddevice output index to the matching WASAPI loopback device."""
+        if not output_device_id or not str(output_device_id).strip():
+            return self.get_default_output_device()
+        try:
+            import sounddevice as sd
+
+            info = sd.query_devices(int(output_device_id))
+            out_name = ""
+            if isinstance(info, dict):
+                out_name = str(info.get("name", "")).strip()
+            if not out_name:
+                return self.get_default_output_device()
+
+            import pyaudiowpatch as pyaudio
+
+            pa = pyaudio.PyAudio()
+            match_id: str | None = None
+            needle = out_name.lower()
+            for loopback in pa.get_loopback_device_info_generator():
+                name = str(loopback.get("name", "")).lower()
+                display = name.replace(" [loopback]", "").strip()
+                if display.startswith(needle) or needle.startswith(display):
+                    match_id = str(loopback.get("index"))
+                    logger.info(
+                        "Matched output device to loopback",
+                        output_name=out_name,
+                        loopback_name=loopback.get("name"),
+                        loopback_index=match_id,
+                    )
+                    break
+            pa.terminate()
+            return match_id or self.get_default_output_device()
+        except Exception as e:
+            logger.warning(
+                "Could not map output device to loopback",
+                output_device_id=output_device_id,
+                error=str(e),
+            )
+            return self.get_default_output_device()
+
     def get_loopback_device_or_default(self, device_id: str | None) -> str | None:
         """
         Return device_id if it's a valid loopback device, else default.

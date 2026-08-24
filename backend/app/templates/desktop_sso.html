@@ -306,12 +306,9 @@
       sessionStorage.setItem("lt_pkce_" + sessionId, verifier);
       sessionStorage.setItem("lt_pkce", verifier);
       var challenge = await sha256b64url(verifier);
-      // Return to this bridge (not localhost) so we can store handoff even if localhost is blocked.
-      var bridgeUrl =
-        window.location.origin +
-        window.location.pathname +
-        "?session_id=" + encodeURIComponent(sessionId) +
-        (redirectUri ? "&redirect_uri=" + encodeURIComponent(redirectUri) : "");
+      // Stable URL only — query params in redirect_to make Google return 500/1500.
+      // session_id / localhost callback are restored from sessionStorage on return.
+      var bridgeUrl = window.location.origin + window.location.pathname;
       var res = await fetch(
         "/api/v1/auth/oauth/google?redirect_uri=" + encodeURIComponent(bridgeUrl) +
         "&code_challenge=" + encodeURIComponent(challenge)

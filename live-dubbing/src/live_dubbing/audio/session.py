@@ -97,46 +97,67 @@ class AudioSessionEnumerator:
     def __init__(self) -> None:
         self._sessions: list[AudioSessionInfo] = []
 
+    @staticmethod
+    def _session_has_audio(session: Any) -> bool:
+        """True when the WASAPI session is actively outputting audio."""
+        try:
+            # 0 = Inactive, 1 = Active, 2 = Expired
+            if int(session.State) == 1:
+                return True
+        except Exception:
+            pass
+        try:
+            from pycaw.api.endpointvolume import IAudioMeterInformation
+
+            meter = session._ctl.QueryInterface(IAudioMeterInformation)
+            return float(meter.GetPeakValue()) > 0.001
+        except Exception:
+            return False
+
     def get_active_sessions(self) -> list[AudioSessionInfo]:
         """
-        Get all active audio sessions.
+        Get apps that currently have audio present.
+
+        Only WASAPI sessions that are active or showing a peak meter are
+        returned — idle processes are omitted.
 
         Returns:
-            List of AudioSessionInfo objects for active sessions
+            List of AudioSessionInfo objects for sessions with audio
         """
         try:
             from pycaw.pycaw import AudioUtilities
 
-            sessions = []
+            sessions: list[AudioSessionInfo] = []
+            seen_pids: set[int] = set()
 
-            # Get all audio sessions
-            audio_sessions = AudioUtilities.GetAllSessions()
-
-            for session in audio_sessions:
+            for session in AudioUtilities.GetAllSessions():
                 try:
-                    # Get process info
-                    if session.Process:
-                        pid = session.Process.pid
-                        name = session.Process.name()
+                    if not session.Process:
+                        continue
+                    if not self._session_has_audio(session):
+                        continue
 
-                        # Get volume interface
-                        volume_interface = session.SimpleAudioVolume
-                        current_volume = (
-                            volume_interface.GetMasterVolume()
-                            if volume_interface
-                            else 1.0
-                        )
-                        is_muted = (
-                            volume_interface.GetMute() if volume_interface else False
-                        )
+                    pid = session.Process.pid
+                    name = session.Process.name()
+                    if self._is_system_process(name) or pid in seen_pids:
+                        continue
 
-                        # Try to get icon path
-                        icon_path = None
-                        with contextlib.suppress(Exception):
-                            if session.Process:
-                                icon_path = session.Process.exe()
+                    volume_interface = session.SimpleAudioVolume
+                    current_volume = (
+                        volume_interface.GetMasterVolume()
+                        if volume_interface
+                        else 1.0
+                    )
+                    is_muted = (
+                        volume_interface.GetMute() if volume_interface else False
+                    )
 
-                        session_info = AudioSessionInfo(
+                    icon_path = None
+                    with contextlib.suppress(Exception):
+                        icon_path = session.Process.exe()
+
+                    sessions.append(
+                        AudioSessionInfo(
                             pid=pid,
                             name=name,
                             icon_path=icon_path,
@@ -144,12 +165,14 @@ class AudioSessionEnumerator:
                             volume=current_volume,
                             is_muted=bool(is_muted),
                         )
-                        sessions.append(session_info)
+                    )
+                    seen_pids.add(pid)
 
                 except Exception as e:
                     logger.debug("Failed to get session info", error=str(e))
                     continue
 
+            sessions.sort(key=lambda s: s.name.lower())
             self._sessions = sessions
             logger.info("Enumerated audio sessions", count=len(sessions))
             return sessions

@@ -259,11 +259,10 @@ class Orchestrator:
         from live_dubbing.audio.session import AudioSessionEnumerator
 
         enumerator = AudioSessionEnumerator()
-        # Use combined method to get all processes, not just active audio sessions
-        all_sessions = enumerator.get_sessions_combined()
+        # Only apps currently producing audio — not every running process
+        playing = enumerator.get_active_sessions()
         self_pid = os.getpid()
-        # Never include our own process — app must not capture its own audio
-        self._audio_sessions = [s for s in all_sessions if s.pid != self_pid]
+        self._audio_sessions = [s for s in playing if s.pid != self_pid]
 
         for session in self._audio_sessions:
             self._event_bus.emit(
@@ -344,13 +343,14 @@ class Orchestrator:
             if self._audio_routing is None:
                 raise RuntimeError("Audio routing not initialized")
 
-            # System loopback: use default device. Process loopback uses target_pid.
-            # Do not pass settings.capture_device_id—it may store a PID from channel selection.
+            # System loopback follows the selected playback device. Do not pass
+            # settings.capture_device_id—it may store a PID from channel selection.
             config = get_capture_config(
                 use_system_only=use_system_fallback,
                 target_pid=None if use_system_fallback else target_app.pid,
                 target_process_name=None if use_system_fallback else target_app.name,
                 capture_device_id=None,
+                output_device_id=self._settings.audio.output_device_id,
             )
             from live_dubbing.audio.in_app_capture import configure_routing
 
