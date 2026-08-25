@@ -15,6 +15,10 @@ logger = structlog.get_logger(__name__)
 SYSTEM_PROCESS_NAMES: set[str] = {
     # Windows core processes
     "System",
+    "Idle",
+    "Registry",
+    "Secure System",
+    "Memory Compression",
     "svchost.exe",
     "csrss.exe",
     "wininit.exe",
@@ -39,6 +43,7 @@ SYSTEM_PROCESS_NAMES: set[str] = {
     "explorer.exe",
     "SearchHost.exe",
     "ShellExperienceHost.exe",
+    "ShellHost.exe",
     "RuntimeBroker.exe",
     "ApplicationFrameHost.exe",
     "SystemSettings.exe",
@@ -51,7 +56,7 @@ SYSTEM_PROCESS_NAMES: set[str] = {
     "python.exe",
     "pythonw.exe",
     "python3.exe",
-    # Common background services
+    # Common background / audio-graph services
     "OneDrive.exe",
     "SearchApp.exe",
     "backgroundTaskHost.exe",
@@ -61,7 +66,47 @@ SYSTEM_PROCESS_NAMES: set[str] = {
     "dasHost.exe",
     "SettingSyncHost.exe",
     "UserOOBEBroker.exe",
+    "RtkAudUService64.exe",
+    "RtkAudUService.exe",
+    "NahimicService.exe",
+    "NahimicSvc64.exe",
+    "NahimicSvc32.exe",
+    "WavesSvc64.exe",
+    "DolbyDAX2.exe",
+    "DolbyDAXAPI.exe",
+    "IntelAudioService.exe",
+    "AMDNoiseSuppression.exe",
+    "AMDFDPP.exe",
 }
+
+_SYSTEM_PROCESS_NAMES_LOWER: frozenset[str] = frozenset(
+    name.lower() for name in SYSTEM_PROCESS_NAMES
+)
+
+# Browsers and players that process-loopback can capture even when WASAPI
+# does not expose their session (common for Chrome/Firefox on some devices).
+_KNOWN_MEDIA_PROCESSES: frozenset[str] = frozenset(
+    {
+        "chrome.exe",
+        "firefox.exe",
+        "msedge.exe",
+        "brave.exe",
+        "opera.exe",
+        "vivaldi.exe",
+        "discord.exe",
+        "spotify.exe",
+        "vlc.exe",
+        "mpv.exe",
+        "wmplayer.exe",
+        "steam.exe",
+        "obs64.exe",
+        "obs.exe",
+        "slack.exe",
+        "zoom.exe",
+        "teams.exe",
+        "telegram.exe",
+    }
+)
 
 
 @dataclass
@@ -98,72 +143,189 @@ class AudioSessionEnumerator:
         self._sessions: list[AudioSessionInfo] = []
 
     @staticmethod
-    def _session_has_audio(session: Any) -> bool:
-        """True when the WASAPI session is actively outputting audio."""
-        try:
-            # 0 = Inactive, 1 = Active, 2 = Expired
-            if int(session.State) == 1:
-                return True
-        except Exception:
-            pass
+    def _session_state(session: Any) -> int:
+        """WASAPI state: 0 Inactive, 1 Active, 2 Expired, -1 unknown."""
+        with contextlib.suppress(Exception):
+            return int(session.State)
+        return -1
+
+    @staticmethod
+    def _session_peak(session: Any) -> float:
+        """Peak meter in 0..1, or 0 when unavailable."""
         try:
             from pycaw.api.endpointvolume import IAudioMeterInformation
 
             meter = session._ctl.QueryInterface(IAudioMeterInformation)
-            return float(meter.GetPeakValue()) > 0.001
+            return float(meter.GetPeakValue())
         except Exception:
+            return 0.0
+
+    @classmethod
+    def _session_has_audio(cls, session: Any) -> bool:
+        """True when the session exists on an endpoint and is not expired.
+
+        Chrome/Firefox often report Inactive (0) while playing, so we keep
+        those. Expired sessions are dropped.
+        """
+        state = cls._session_state(session)
+        if state == 2:
             return False
+        if state == 1 or cls._session_peak(session) > 0.0001:
+            return True
+        return state != 2
+
+    @staticmethod
+    def _is_system_sounds(session: Any) -> bool:
+        """True for the Windows System Sounds session (no app to capture)."""
+        with contextlib.suppress(Exception):
+            if int(session.ProcessId) == 0:
+                return True
+        with contextlib.suppress(Exception):
+            # S_OK (0) means this *is* the system-sounds session
+            if int(session._ctl.IsSystemSoundsSession()) == 0:
+                return True
+        return False
+
+    @staticmethod
+    def _resolve_session_identity(session: Any) -> tuple[int, str, str | None]:
+        """Return pid, process name, and exe path; tolerate AccessDenied."""
+        pid = 0
+        with contextlib.suppress(Exception):
+            pid = int(session.ProcessId)
+        if pid <= 0:
+            return 0, "", None
+
+        name = ""
+        icon_path: str | None = None
+        with contextlib.suppress(Exception):
+            proc = session.Process
+            if proc is not None:
+                with contextlib.suppress(Exception):
+                    name = proc.name() or ""
+                with contextlib.suppress(Exception):
+                    icon_path = proc.exe()
+        if not name:
+            with contextlib.suppress(Exception):
+                name = psutil.Process(pid).name() or ""
+        if not name:
+            display = ""
+            with contextlib.suppress(Exception):
+                display = session.DisplayName or ""
+            name = (
+                display
+                if display and not display.startswith("@")
+                else f"PID {pid}"
+            )
+        if not icon_path:
+            with contextlib.suppress(Exception):
+                icon_path = psutil.Process(pid).exe()
+        return pid, name, icon_path
+
+    def _iter_wasapi_sessions(self) -> list[Any]:
+        """WASAPI sessions on every active render device, not just the default."""
+        from pycaw.constants import DEVICE_STATE, EDataFlow
+        from pycaw.pycaw import AudioSession, AudioUtilities
+
+        with contextlib.suppress(Exception):
+            import comtypes
+
+            comtypes.CoInitialize()
+
+        from pycaw.api.audiopolicy import IAudioSessionControl2
+
+        collected: list[Any] = []
+        devices = []
+        with contextlib.suppress(Exception):
+            devices = AudioUtilities.GetAllDevices(
+                data_flow=EDataFlow.eRender.value,
+                device_state=DEVICE_STATE.ACTIVE.value,
+            )
+
+        managers = []
+        for device in devices or []:
+            with contextlib.suppress(Exception):
+                managers.append(device.AudioSessionManager)
+
+        if not managers:
+            with contextlib.suppress(Exception):
+                mgr = AudioUtilities.GetAudioSessionManager()
+                if mgr is not None:
+                    managers.append(mgr)
+
+        seen_ctl: set[int] = set()
+        for mgr in managers:
+            try:
+                enumerator = mgr.GetSessionEnumerator()
+                count = enumerator.GetCount()
+                for i in range(count):
+                    ctl = enumerator.GetSession(i)
+                    if ctl is None:
+                        continue
+                    ctl2 = ctl.QueryInterface(IAudioSessionControl2)
+                    if ctl2 is None:
+                        continue
+                    key = id(ctl2)
+                    if key in seen_ctl:
+                        continue
+                    seen_ctl.add(key)
+                    collected.append(AudioSession(ctl2))
+            except Exception as e:
+                logger.debug("Failed to enumerate sessions on device", error=str(e))
+                continue
+
+        return collected
 
     def get_active_sessions(self) -> list[AudioSessionInfo]:
         """
-        Get apps that currently have audio present.
+        Get apps that have a live WASAPI audio session.
 
-        Only WASAPI sessions that are active or showing a peak meter are
-        returned — idle processes are omitted.
+        Scans every active playback device. Includes Active sessions and
+        Inactive (not Expired) app sessions — browsers often stay Inactive
+        while playing. System sounds and OS audio-graph processes are omitted.
 
         Returns:
             List of AudioSessionInfo objects for sessions with audio
         """
         try:
-            from pycaw.pycaw import AudioUtilities
-
             sessions: list[AudioSessionInfo] = []
             seen_pids: set[int] = set()
 
-            for session in AudioUtilities.GetAllSessions():
+            for session in self._iter_wasapi_sessions():
                 try:
-                    if not session.Process:
+                    if self._is_system_sounds(session):
                         continue
                     if not self._session_has_audio(session):
                         continue
 
-                    pid = session.Process.pid
-                    name = session.Process.name()
+                    pid, name, icon_path = self._resolve_session_identity(session)
+                    if pid <= 0 or not name:
+                        continue
                     if self._is_system_process(name) or pid in seen_pids:
                         continue
 
-                    volume_interface = session.SimpleAudioVolume
-                    current_volume = (
-                        volume_interface.GetMasterVolume()
-                        if volume_interface
-                        else 1.0
-                    )
-                    is_muted = (
-                        volume_interface.GetMute() if volume_interface else False
-                    )
-
-                    icon_path = None
+                    volume_interface = None
                     with contextlib.suppress(Exception):
-                        icon_path = session.Process.exe()
+                        volume_interface = session.SimpleAudioVolume
+                    current_volume = 1.0
+                    is_muted = False
+                    if volume_interface:
+                        with contextlib.suppress(Exception):
+                            current_volume = volume_interface.GetMasterVolume()
+                        with contextlib.suppress(Exception):
+                            is_muted = bool(volume_interface.GetMute())
 
+                    is_playing = (
+                        self._session_state(session) == 1
+                        or self._session_peak(session) > 0.0001
+                    )
                     sessions.append(
                         AudioSessionInfo(
                             pid=pid,
                             name=name,
                             icon_path=icon_path,
-                            is_active=True,
+                            is_active=is_playing,
                             volume=current_volume,
-                            is_muted=bool(is_muted),
+                            is_muted=is_muted,
                         )
                     )
                     seen_pids.add(pid)
@@ -172,9 +334,16 @@ class AudioSessionEnumerator:
                     logger.debug("Failed to get session info", error=str(e))
                     continue
 
-            sessions.sort(key=lambda s: s.name.lower())
+            sessions = self._collapse_sessions_by_name(sessions)
+            self._add_running_media_apps(sessions, seen_pids)
+            sessions.sort(key=lambda s: (not s.is_active, s.name.lower()))
             self._sessions = sessions
-            logger.info("Enumerated audio sessions", count=len(sessions))
+            logger.info(
+                "Enumerated audio sessions",
+                count=len(sessions),
+                playing=sum(1 for s in sessions if s.is_active),
+                names=[s.name for s in sessions],
+            )
             return sessions
 
         except ImportError:
@@ -220,7 +389,65 @@ class AudioSessionEnumerator:
         Returns:
             True if this is a system process, False otherwise
         """
-        return name in SYSTEM_PROCESS_NAMES
+        return name.lower() in _SYSTEM_PROCESS_NAMES_LOWER
+
+    @staticmethod
+    def _collapse_sessions_by_name(
+        sessions: list[AudioSessionInfo],
+    ) -> list[AudioSessionInfo]:
+        """Keep one row per process name; prefer the session that is playing."""
+        by_name: dict[str, AudioSessionInfo] = {}
+        for session in sessions:
+            key = session.name.lower()
+            existing = by_name.get(key)
+            if existing is None:
+                by_name[key] = session
+                continue
+            prefer_playing = session.is_active and not existing.is_active
+            prefer_lower_pid = (
+                session.is_active == existing.is_active and session.pid < existing.pid
+            )
+            if prefer_playing or prefer_lower_pid:
+                by_name[key] = session
+        return list(by_name.values())
+
+    def _add_running_media_apps(
+        self,
+        sessions: list[AudioSessionInfo],
+        seen_pids: set[int],
+    ) -> None:
+        """Include running browsers/players even if WASAPI hid their session."""
+        seen_names = {s.name.lower() for s in sessions}
+        best_by_name: dict[str, AudioSessionInfo] = {}
+        for proc in psutil.process_iter(["pid", "name", "exe"]):
+            try:
+                info = proc.info
+                name = info.get("name") or ""
+                key = name.lower()
+                if key not in _KNOWN_MEDIA_PROCESSES:
+                    continue
+                if key in seen_names:
+                    continue
+                pid = int(info.get("pid") or 0)
+                if pid <= 0 or pid in seen_pids:
+                    continue
+                candidate = AudioSessionInfo(
+                    pid=pid,
+                    name=name,
+                    icon_path=info.get("exe"),
+                    is_active=False,
+                    volume=1.0,
+                    is_muted=False,
+                )
+                existing = best_by_name.get(key)
+                if existing is None or pid < existing.pid:
+                    best_by_name[key] = candidate
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+        for extra in best_by_name.values():
+            sessions.append(extra)
+            seen_pids.add(extra.pid)
+            logger.info("Added running media app without WASAPI session", name=extra.name)
 
     def get_all_audio_capable_processes(self) -> list[AudioSessionInfo]:
         """

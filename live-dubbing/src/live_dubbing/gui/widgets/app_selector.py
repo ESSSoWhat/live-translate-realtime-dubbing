@@ -56,7 +56,7 @@ class AppSelectorWidget(QWidget):
         self._combo.setMinimumWidth(250)
         self._combo.setMaxVisibleItems(10)  # Limit dropdown size
         self._combo.activated.connect(self._on_selection_changed)  # User-initiated only
-        self._combo.setPlaceholderText("Play audio, then Refresh…")
+        self._combo.setPlaceholderText("Play audio in an app, then Refresh…")
         selector_layout.addWidget(self._combo, 1)
 
         # Refresh button
@@ -93,6 +93,8 @@ class AppSelectorWidget(QWidget):
 
         for session in sessions:
             display_name = session.name
+            if session.is_active:
+                display_name += " (playing)"
             if session.is_muted:
                 display_name += " (Muted)"
             self._combo.addItem(display_name, session)
@@ -156,7 +158,8 @@ class AppSelectorWidget(QWidget):
         """Update the info label based on current state."""
         if not self._sessions:
             self._info_label.setText(
-                "No apps currently playing audio. Start playback, then click Refresh."
+                "No apps with audio found. Play something in Chrome/Firefox "
+                "(or another app), then click Refresh."
             )
         elif self._selected_session:
             self._info_label.setText(

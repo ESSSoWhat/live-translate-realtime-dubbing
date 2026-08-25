@@ -129,8 +129,8 @@ class _BubbleButton(QWidget):
         super().__init__(parent)
         self._muted = False
         self.setFixedSize(_COLLAPSED, _COLLAPSED)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Live Translate")
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setToolTip("Drag to move · Click to expand")
 
     def set_muted(self, muted: bool) -> None:
         """Dim the mark when TTS is muted."""
@@ -142,6 +142,9 @@ class _BubbleButton(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        # 1-alpha fill so the full square receives mouse events (layered windows
+        # ignore fully transparent pixels).
+        painter.fillRect(self.rect(), QColor(0, 8, 16, 1))
 
         center = QPointF(self.rect().center())
         glow = QRadialGradient(center, self.width() / 2.0)
@@ -427,6 +430,7 @@ class DubbedWindow(QWidget):
         self._press_global: QPoint | None = None
         self._press_window = QPoint()
         self._dragging = False
+        self._press_on_bubble = False
         self._updating_voice = False
 
         self._setup_window()
@@ -470,7 +474,6 @@ class DubbedWindow(QWidget):
         root.setSpacing(0)
 
         self._bubble = _BubbleButton(self)
-        self._bubble.installEventFilter(self)
         root.addWidget(self._bubble, alignment=Qt.AlignmentFlag.AlignTop)
 
         self._panel = QWidget(self)
@@ -562,7 +565,6 @@ class DubbedWindow(QWidget):
         header.setSpacing(4)
         self._status_label = QLabel("Listening…")
         self._status_label.setStyleSheet(f"font-weight: 600; color: {_ON_SURFACE};")
-        self._status_label.installEventFilter(self)
         header.addWidget(self._status_label, 1)
 
         self._collapse_btn = QPushButton("–")
@@ -654,6 +656,27 @@ class DubbedWindow(QWidget):
         panel_layout.addLayout(actions)
 
         root.addWidget(self._panel)
+        self._install_drag_filters()
+
+    def _install_drag_filters(self) -> None:
+        """Let chrome (not sliders/buttons/captions) drag the overlay."""
+        self._panel.setCursor(Qt.CursorShape.OpenHandCursor)
+        self._bubble.installEventFilter(self)
+        self._panel.installEventFilter(self)
+        self._source_pane.installEventFilter(self)
+        self._translated_pane.installEventFilter(self)
+        for label in self.findChildren(QLabel):
+            if not self._widget_is_interactive(label):
+                label.installEventFilter(self)
+
+    def _widget_is_interactive(self, widget: QWidget | None) -> bool:
+        """True for controls that must keep their own mouse handling."""
+        current = widget
+        while current is not None and current is not self:
+            if isinstance(current, (QPushButton, QSlider, QComboBox, QTextEdit)):
+                return True
+            current = current.parentWidget()
+        return False
 
     def _apply_settings(self) -> None:
         """Apply saved font size and opacities from config."""
@@ -866,10 +889,13 @@ class DubbedWindow(QWidget):
             self._ui_config.dubbed_window_width = self.width()
             self._ui_config.dubbed_window_height = self.height()
 
-    def _begin_drag(self, global_pos: QPoint) -> None:
+    def _begin_drag(self, global_pos: QPoint, *, from_bubble: bool = False) -> None:
         self._press_global = global_pos
         self._press_window = self.pos()
         self._dragging = False
+        self._press_on_bubble = from_bubble
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        self.grabMouse()
 
     def _update_drag(self, global_pos: QPoint) -> None:
         if self._press_global is None:
@@ -885,33 +911,75 @@ class DubbedWindow(QWidget):
 
     def _end_drag(self) -> bool:
         """Finish a drag. Returns True if this was a click (not a drag)."""
+        if self._press_global is None:
+            return False
         was_click = not self._dragging
         if self._dragging:
             self._save_geometry()
         self._press_global = None
         self._dragging = False
+        self._press_on_bubble = False
+        self.unsetCursor()
+        if self.mouseGrabber() is self:
+            self.releaseMouse()
+        if self._expanded:
+            self._panel.setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self._bubble.setCursor(Qt.CursorShape.OpenHandCursor)
         return was_click
 
     def eventFilter(self, obj: QObject | None, event: QEvent | None) -> bool:
-        """Drag the overlay from the bubble or status label."""
-        if event is None or obj not in (self._bubble, self._status_label):
+        """Drag the overlay from chrome; keep clicks on controls working."""
+        if event is None or not isinstance(event, QMouseEvent):
             return super().eventFilter(obj, event)
+        widget = obj if isinstance(obj, QWidget) else None
+        if self._widget_is_interactive(widget) and self._press_global is None:
+            return super().eventFilter(obj, event)
+
         et = event.type()
-        if et == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+        if et == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.LeftButton:
-                self._begin_drag(event.globalPosition().toPoint())
+                self._begin_drag(
+                    event.globalPosition().toPoint(),
+                    from_bubble=obj is self._bubble,
+                )
+                return True
             return False
-        if et == QEvent.Type.MouseMove and isinstance(event, QMouseEvent):
+        if et == QEvent.Type.MouseMove and self._press_global is not None:
             self._update_drag(event.globalPosition().toPoint())
-            return self._dragging
-        if et == QEvent.Type.MouseButtonRelease and isinstance(event, QMouseEvent):
+            return True
+        if et == QEvent.Type.MouseButtonRelease and self._press_global is not None:
             if event.button() == Qt.MouseButton.LeftButton:
+                from_bubble = self._press_on_bubble
                 was_click = self._end_drag()
-                if was_click and obj is self._bubble and not self._expanded:
+                if was_click and from_bubble and not self._expanded:
                     self._set_expanded(True)
-                    return True
+                return True
             return False
         return super().eventFilter(obj, event)
+
+    def mouseMoveEvent(self, event: QMouseEvent | None) -> None:
+        """Follow the cursor while the overlay has a mouse grab."""
+        if event is not None and self._press_global is not None:
+            self._update_drag(event.globalPosition().toPoint())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent | None) -> None:
+        """Finish a drag started from chrome or the collapsed bubble."""
+        if (
+            event is not None
+            and event.button() == Qt.MouseButton.LeftButton
+            and self._press_global is not None
+        ):
+            from_bubble = self._press_on_bubble
+            was_click = self._end_drag()
+            if was_click and from_bubble and not self._expanded:
+                self._set_expanded(True)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def closeEvent(self, event: QCloseEvent | None) -> None:
         """Session overlay collapses; idle overlay re-docks."""

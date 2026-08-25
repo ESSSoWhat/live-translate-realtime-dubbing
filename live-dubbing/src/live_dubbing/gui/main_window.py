@@ -222,7 +222,7 @@ class MainWindow(QMainWindow):
 
         # App selector (left)
         self._app_selector = AppSelectorWidget()
-        self._app_selector.refresh_requested.connect(self._refresh_sessions)
+        self._app_selector.refresh_requested.connect(self._request_session_refresh)
         config_layout.addWidget(self._app_selector, 1)
 
         # Language panel (right)
@@ -1391,11 +1391,28 @@ class MainWindow(QMainWindow):
                 state.pipeline_stats.current_latency_ms
             )
 
+    def _apply_session_list(self) -> None:
+        """Push the orchestrator's current session cache into the dropdown."""
+        self._app_selector.set_sessions(self._orchestrator.get_audio_sessions())
+
     @pyqtSlot()
     def _refresh_sessions(self) -> None:
-        """Refresh audio sessions list."""
-        sessions = self._orchestrator.get_audio_sessions()
-        self._app_selector.set_sessions(sessions)
+        """Update the dropdown from the cached session list."""
+        self._apply_session_list()
+
+    @pyqtSlot()
+    def _request_session_refresh(self) -> None:
+        """Re-scan WASAPI sessions (Refresh button)."""
+        if self._async_worker:
+            self._async_worker.run_coroutine(
+                self._orchestrator.refresh_audio_sessions(),
+                on_success=lambda _sessions: self._apply_session_list(),
+                on_error=lambda msg: logger.warning(
+                    "Failed to refresh audio sessions", error=msg
+                ),
+            )
+        else:
+            self._apply_session_list()
 
     def _populate_output_devices(self) -> None:
         """Fill output device combo from sounddevice and restore selection."""
