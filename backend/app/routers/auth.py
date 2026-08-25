@@ -189,6 +189,15 @@ async def poll_desktop_handoff(session_id: str) -> dict:
     return {"ready": True, "api_key": api_key}
 
 
+def _oauth_redirect_to(redirect_uri: str) -> str:
+    """Return origin + path only. Google error 500/1500 if redirect_to has a query."""
+    parsed = urllib.parse.urlparse(redirect_uri.strip())
+    if parsed.scheme in ("http", "https") and parsed.netloc:
+        path = parsed.path or "/"
+        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+    return redirect_uri.strip()
+
+
 def _is_valid_desktop_redirect(uri: str) -> bool:
     """Allow localhost callbacks and Live Translate https hosts only."""
     try:
@@ -622,9 +631,10 @@ async def google_oauth_url(
     """
     cfg = get_settings()
     supabase_base = cfg.supabase_url.rstrip("/")
+    redirect_to = _oauth_redirect_to(redirect_uri)
     params: dict[str, str] = {
         "provider": "google",
-        "redirect_to": redirect_uri,
+        "redirect_to": redirect_to,
     }
     challenge = (code_challenge or "").strip()
     if challenge:
@@ -635,14 +645,14 @@ async def google_oauth_url(
         # injects code_challenge itself. Do not set flow_type=pkce for the
         # HTTPS bridge — without a challenge the user lands on ?code= and
         # the page cannot finish.
-        parsed = urllib.parse.urlparse(redirect_uri)
+        parsed = urllib.parse.urlparse(redirect_to)
         host = (parsed.hostname or "").lower()
         if host in ("localhost", "127.0.0.1"):
             params["flow_type"] = "pkce"
     url = f"{supabase_base}/auth/v1/authorize?{urllib.parse.urlencode(params)}"
     logger.info(
         "Generated Google OAuth URL",
-        redirect_uri=redirect_uri,
+        redirect_uri=redirect_to,
         pkce=bool(challenge) or "flow_type" in params,
     )
     return JSONResponse({"url": url})

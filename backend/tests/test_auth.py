@@ -90,6 +90,26 @@ def test_google_oauth_url_https_bridge_omits_bare_pkce(client: TestClient) -> No
     assert qs["redirect_to"] == ["https://api.example.com/api/v1/auth/desktop-sso"]
 
 
+def test_google_oauth_url_strips_query_from_https_redirect(client: TestClient) -> None:
+    """Query params in redirect_to make Google return 500 / 1500."""
+    r = client.get(
+        "/api/v1/auth/oauth/google",
+        params={
+            "redirect_uri": (
+                "https://api.example.com/api/v1/auth/desktop-sso"
+                "?session_id=abc1234567890123"
+                "&redirect_uri=http://localhost:64230/"
+            ),
+            "code_challenge": "abcChallenge",
+        },
+    )
+    assert r.status_code == 200
+    qs = _authorize_query(r.json()["url"])
+    assert qs["redirect_to"] == ["https://api.example.com/api/v1/auth/desktop-sso"]
+    assert "session_id" not in qs["redirect_to"][0]
+    assert "localhost" not in qs["redirect_to"][0]
+
+
 def test_google_oauth_url_includes_code_challenge(client: TestClient) -> None:
     """Bridge PKCE challenge is forwarded onto the Supabase authorize URL."""
     r = client.get(
@@ -116,6 +136,7 @@ def test_desktop_sso_page_handles_pkce_code(client: TestClient) -> None:
     assert "lt_pkce" in body
     assert "window.location.replace(appUrl)" in body
     assert "function isSafeDesktopRedirect" in body
+    assert "var bridgeUrl = window.location.origin + window.location.pathname;" in body
 
 
 def test_desktop_sso_complete_oauth_code_stores_handoff(
