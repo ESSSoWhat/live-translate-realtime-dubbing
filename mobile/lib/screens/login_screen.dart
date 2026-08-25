@@ -79,9 +79,16 @@ class _LoginScreenState extends State<LoginScreen> {
             'Check your internet connection, or for local testing start the backend '
             'and use --dart-define=API_BASE_URL=...';
       }
+      if (e.response?.statusCode == 500) {
+        return 'Sign-in failed on the server. Please try again in a moment.';
+      }
       final detail = e.response?.data;
       if (detail is Map && detail['detail'] != null) {
-        return detail['detail'].toString();
+        final raw = detail['detail'].toString();
+        if (raw.toLowerCase().contains('internal')) {
+          return 'Sign-in failed on the server. Please try again in a moment.';
+        }
+        return raw;
       }
       if (e.response?.statusCode == 401) {
         return 'Invalid email or password. Please try again.';

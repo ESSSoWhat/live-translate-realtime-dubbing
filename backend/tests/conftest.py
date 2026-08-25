@@ -89,23 +89,29 @@ def mock_supabase() -> Generator[MagicMock, None, None]:
             session=_make_session("at-refreshed", "rt-refreshed"),
         )
     )
-    sb.auth.admin.delete_user = AsyncMock(return_value=None)
+    sb.auth.sign_in_with_id_token = AsyncMock(
+        return_value=MagicMock(
+            user=_make_user("supa-1", "user@test.com"),
+            session=_make_session("at-google", "rt-google"),
+        )
+    )
 
-    # Table chain: .table("users").select("*").eq(...).maybe_single().execute() -> .data = row dict
+    # Table chain: .table("users").select("*").eq(...).limit(1).execute()
     # and .table("users").insert({...}).execute() -> .data = [row]
     user_row = {"id": 1, "supabase_uid": "supa-1", "email": "user@test.com", "tier": "free"}
 
     def table_chain(*args: object, **kwargs: object) -> MagicMock:
         chain = MagicMock()
-        # select path (login, oauth): returns single row
         chain.select = MagicMock(return_value=chain)
         chain.eq = MagicMock(return_value=chain)
+        chain.limit = MagicMock(return_value=chain)
+        chain.update = MagicMock(return_value=chain)
+        chain.execute = AsyncMock(return_value=MagicMock(data=[user_row]))
         chain.maybe_single = MagicMock(
             return_value=MagicMock(
                 execute=AsyncMock(return_value=MagicMock(data=user_row))
             )
         )
-        # insert path (register): returns [row]
         chain.insert = MagicMock(
             return_value=MagicMock(
                 execute=AsyncMock(return_value=MagicMock(data=[user_row]))

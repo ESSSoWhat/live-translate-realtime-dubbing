@@ -194,3 +194,51 @@ def test_desktop_sso_complete_returns_key_when_handoff_store_fails(
     data = r.json()
     assert data["api_key"] == "lt_api_key"
     assert "api_key=" in data["redirect"]
+
+
+def test_google_id_token_login_returns_tokens(auth_client: TestClient) -> None:
+    """POST /auth/oauth/google/id-token (mobile SDK) returns a session."""
+    r = auth_client.post(
+        "/api/v1/auth/oauth/google/id-token",
+        json={"id_token": "fake-google-id-token"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["access_token"] == "at-google"
+    assert data["refresh_token"] == "rt-google"
+    assert data["email"] == "user@test.com"
+    assert "usage" in data
+
+
+def test_google_id_token_creates_user_when_lookup_empty(
+    auth_client: TestClient, mock_supabase: MagicMock
+) -> None:
+    """Empty users lookup must insert instead of raising Internal server error."""
+    created = {
+        "id": "new-1",
+        "supabase_uid": "supa-1",
+        "email": "user@test.com",
+        "tier": "free",
+    }
+
+    def table_chain(*args: object, **kwargs: object) -> MagicMock:
+        chain = MagicMock()
+        chain.select = MagicMock(return_value=chain)
+        chain.eq = MagicMock(return_value=chain)
+        chain.limit = MagicMock(return_value=chain)
+        chain.update = MagicMock(return_value=chain)
+        chain.execute = AsyncMock(return_value=MagicMock(data=[]))
+        chain.insert = MagicMock(
+            return_value=MagicMock(
+                execute=AsyncMock(return_value=MagicMock(data=[created]))
+            )
+        )
+        return chain
+
+    mock_supabase.table = MagicMock(side_effect=table_chain)
+    r = auth_client.post(
+        "/api/v1/auth/oauth/google/id-token",
+        json={"id_token": "fake-google-id-token"},
+    )
+    assert r.status_code == 200
+    assert r.json()["user_id"] == "new-1"

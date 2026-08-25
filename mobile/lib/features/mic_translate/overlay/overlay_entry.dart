@@ -10,6 +10,7 @@ import 'overlay_bridge.dart';
 /// Default ElevenLabs voice (Rachel) — keep in sync with MicTranslateService.
 /// Do NOT import mic_translate_service here: the overlay isolate must stay light.
 const _kDefaultVoiceId = '21m00Tcm4TlvDq8ikWAM';
+const _kLogoAsset = 'assets/logo.png';
 
 /// Separate Flutter entry point for the Android overlay bubble.
 /// Prefer calling [overlayMain] from `main.dart` so the VM entry-point is linked.
@@ -60,6 +61,38 @@ class OverlayTranslateApp extends StatelessWidget {
         ),
       ),
       home: const OverlayBubble(),
+    );
+  }
+}
+
+/// Live Translate mark from [assets/logo.png]. Overlay isolate cannot import app.dart.
+class _BrandLogo extends StatelessWidget {
+  const _BrandLogo({this.size, this.fit = BoxFit.cover});
+
+  final double? size;
+  final BoxFit fit;
+
+  @override
+  Widget build(BuildContext context) {
+    final image = Image.asset(
+      _kLogoAsset,
+      fit: fit,
+      width: size,
+      height: size,
+      filterQuality: FilterQuality.medium,
+      errorBuilder: (context, error, stackTrace) {
+        return Icon(
+          Icons.translate,
+          size: size != null ? size! * 0.6 : 32,
+          color: const Color(0xFF68F8F8),
+        );
+      },
+    );
+    if (size == null) {
+      return SizedBox.expand(child: image);
+    }
+    return ClipOval(
+      child: SizedBox(width: size, height: size, child: image),
     );
   }
 }
@@ -423,16 +456,30 @@ class _OverlayBubbleState extends State<OverlayBubble> {
             width: _collapsedSize.toDouble(),
             height: _collapsedSize.toDouble(),
             child: Material(
-              color: scheme.primary.withValues(alpha: _opacity),
+              color: const Color(0xFF000810),
               shape: const CircleBorder(),
               elevation: 6,
+              clipBehavior: Clip.antiAlias,
               child: InkWell(
                 customBorder: const CircleBorder(),
                 onTap: _resizing ? null : _toggleExpand,
-                child: Icon(
-                  _muted ? Icons.mic_off : Icons.translate,
-                  color: scheme.onPrimary,
-                  size: 32,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Opacity(
+                      opacity: _opacity,
+                      child: const _BrandLogo(fit: BoxFit.cover),
+                    ),
+                    if (_muted)
+                      ColoredBox(
+                        color: const Color(0x99000810),
+                        child: Icon(
+                          Icons.mic_off,
+                          color: scheme.primary,
+                          size: 28,
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -454,6 +501,8 @@ class _OverlayBubbleState extends State<OverlayBubble> {
                 children: [
                   Row(
                     children: [
+                      const _BrandLogo(size: 28, fit: BoxFit.cover),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _status,

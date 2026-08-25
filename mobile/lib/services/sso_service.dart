@@ -78,19 +78,7 @@ class SsoService {
     } on TimeoutException catch (e) {
       throw SsoException(e.message ?? 'Google sign-in timed out');
     } on PlatformException catch (e) {
-      if (e.code == 'sign_in_failed' &&
-          (e.message?.contains('ApiException: 10') ?? false)) {
-        throw SsoException(
-          'Google Sign-In is misconfigured (error 10). In Google Cloud Console, '
-          'add an Android OAuth client for package '
-          'app.livetranslate.live_translate_mobile with SHA-1 '
-          '9D:CE:CE:66:A3:E1:5D:46:07:08:75:16:51:20:AB:1C:99:4D:5E:B1 '
-          'in Google Cloud project 683320997088 / livetranslate-488616 '
-          '(APIs & Services → Credentials → Android OAuth client). '
-          'See mobile/docs/GOOGLE_SIGNIN_ANDROID.md.',
-        );
-      }
-      throw SsoException(e.message ?? 'Google sign-in failed');
+      throw _googlePlatformException(e);
     } catch (e) {
       throw _wrapSsoError(e, 'Google');
     }
@@ -172,14 +160,57 @@ class SsoService {
     }
   }
 
+  static SsoException _googlePlatformException(PlatformException e) {
+    final msg = e.message ?? '';
+    final lower = msg.toLowerCase();
+    if (e.code == 'sign_in_failed' && msg.contains('ApiException: 10')) {
+      return SsoException(
+        'Google Sign-In is misconfigured (error 10). In Google Cloud Console, '
+        'add an Android OAuth client for package '
+        'app.livetranslate.live_translate_mobile with SHA-1 '
+        '9D:CE:CE:66:A3:E1:5D:46:07:08:75:16:51:20:AB:1C:99:4D:5E:B1 '
+        'in Google Cloud project 683320997088 / livetranslate-488616 '
+        '(APIs & Services → Credentials → Android OAuth client). '
+        'See mobile/docs/GOOGLE_SIGNIN_ANDROID.md.',
+      );
+    }
+    if (e.code == 'sign_in_failed' &&
+        (msg.contains('ApiException: 8') || lower.contains('internal error'))) {
+      return SsoException(
+        'Google Sign-In reported an internal error. Try again, or sign in with '
+        'email. If this keeps happening, add this build SHA-1 in Google Cloud '
+        '(see mobile/docs/GOOGLE_SIGNIN_ANDROID.md) and wait a few minutes.',
+      );
+    }
+    if (e.code == 'sign_in_failed' && msg.contains('ApiException: 7')) {
+      return SsoException(
+        'Network error during Google Sign-In. Check your connection and try again.',
+      );
+    }
+    if (e.code == 'sign_in_canceled' || e.code == 'ERROR_CANCELED') {
+      return SsoException('Google sign-in cancelled', cancelled: true);
+    }
+    return SsoException(msg.isNotEmpty ? msg : 'Google sign-in failed');
+  }
+
   static Exception _wrapSsoError(Object e, String provider) {
     if (e is SsoException) return e;
     if (e is DioException) {
+      if (e.response?.statusCode == 500) {
+        return SsoException(
+          'Sign-in failed on the server. Please try again in a moment.',
+        );
+      }
       final detail = e.response?.data;
       final String? message = detail is Map && detail.containsKey('detail')
           ? detail['detail']?.toString()
           : detail?.toString();
       if (message != null && message.isNotEmpty) {
+        if (message.toLowerCase().contains('internal')) {
+          return SsoException(
+            'Sign-in failed on the server. Please try again in a moment.',
+          );
+        }
         return SsoException(message);
       }
       if (e.type == DioExceptionType.connectionError ||

@@ -219,6 +219,100 @@ async def _ensure_user_api_key(sb, user_row: dict) -> str:
     return api_key
 
 
+def _row_from_result(result: object) -> dict | None:
+    """Normalize PostgREST `.data` (dict, list, or empty) to a single row."""
+    data = getattr(result, "data", None)
+    if not data:
+        return None
+    if isinstance(data, list):
+        first = data[0] if data else None
+        return first if isinstance(first, dict) else None
+    return data if isinstance(data, dict) else None
+
+
+async def _select_user(sb: object, column: str, value: str) -> dict | None:
+    """Fetch one users row. Avoid maybe_single — 0 rows raises PostgREST 204/PGRST116."""
+    try:
+        result = await (
+            sb.table("users").select("*").eq(column, value).limit(1).execute()  # type: ignore[union-attr]
+        )
+    except PostgrestAPIError as exc:
+        logger.debug("users lookup empty or failed", column=column, error=str(exc))
+        return None
+    return _row_from_result(result)
+
+
+async def _get_or_create_internal_user(
+    sb: object,
+    *,
+    supabase_uid: str,
+    email: str,
+) -> dict:
+    """Return the billing `users` row for this Auth user, creating or linking as needed.
+
+    Wix / API-key sign-up often inserts by email with ``supabase_uid`` NULL. Google
+    ID-token login then looks up by uid, misses, and a naive INSERT hits the unique
+    email constraint — or ``maybe_single()`` throws and the client sees
+    ``Internal server error``.
+    """
+    email = (email or "").strip()
+    row = await _select_user(sb, "supabase_uid", supabase_uid)
+    if row:
+        return row
+
+    if email:
+        row = await _select_user(sb, "email", email)
+        if row:
+            if str(row.get("supabase_uid") or "") != str(supabase_uid):
+                try:
+                    updated = await (
+                        sb.table("users")  # type: ignore[union-attr]
+                        .update({"supabase_uid": supabase_uid})
+                        .eq("id", row["id"])
+                        .execute()
+                    )
+                    linked = _row_from_result(updated) or row
+                    linked["supabase_uid"] = supabase_uid
+                    return linked
+                except Exception as exc:
+                    logger.warning("Could not link supabase_uid to existing user", error=str(exc))
+            return row
+
+    payload = {
+        "supabase_uid": supabase_uid,
+        "email": email or f"{supabase_uid[:8]}@users.local",
+        "tier": "free",
+    }
+    try:
+        inserted = await sb.table("users").insert(payload).execute()  # type: ignore[union-attr]
+        row = _row_from_result(inserted)
+        if row:
+            return row
+        raise ValueError("Insert returned no data")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("User insert failed; retrying by email", error=str(exc))
+        if email:
+            row = await _select_user(sb, "email", email)
+            if row:
+                if str(row.get("supabase_uid") or "") != str(supabase_uid):
+                    with contextlib.suppress(Exception):
+                        await (
+                            sb.table("users")  # type: ignore[union-attr]
+                            .update({"supabase_uid": supabase_uid})
+                            .eq("id", row["id"])
+                            .execute()
+                        )
+                    row["supabase_uid"] = supabase_uid
+                return row
+        logger.exception("Failed to create or read internal user row")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Sign-in could not be completed",
+        ) from exc
+
+
 class DesktopSsoCompleteRequest(BaseModel):
     """Complete desktop browser sign-in without relying on Wix page code."""
 
@@ -285,8 +379,8 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
             )
         access_token = exchanged.session.access_token
     if pasted:
-        result = await sb.table("users").select("*").eq("api_key", pasted).maybe_single().execute()
-        if not result or not result.data:
+        user_row = await _select_user(sb, "api_key", pasted)
+        if not user_row:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
         api_key = pasted
     elif access_token:
@@ -299,38 +393,15 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid Google session",
             ) from exc
-        result = (
-            await sb.table("users")
-            .select("*")
-            .eq("supabase_uid", supabase_uid)
-            .maybe_single()
-            .execute()
+        try:
+            auth_sb = await create_auth_client()
+            user_resp = await auth_sb.auth.get_user(access_token)
+            email = (user_resp.user.email if user_resp and user_resp.user else None) or ""
+        except Exception:
+            email = ""
+        user_row = await _get_or_create_internal_user(
+            sb, supabase_uid=supabase_uid, email=email
         )
-        if not result or not result.data:
-            # Resolve email from JWT user if needed — create row like OAuth exchange
-            try:
-                auth_sb = await create_auth_client()
-                user_resp = await auth_sb.auth.get_user(access_token)
-                email = (user_resp.user.email if user_resp and user_resp.user else None) or ""
-            except Exception:
-                email = ""
-            insert = (
-                await sb.table("users")
-                .insert(
-                    {
-                        "supabase_uid": supabase_uid,
-                        "email": email or f"{supabase_uid[:8]}@users.local",
-                        "tier": "free",
-                        "api_key": secrets.token_urlsafe(32),
-                    }
-                )
-                .execute()
-            )
-            if not insert.data:
-                raise HTTPException(status_code=500, detail="Could not create user")
-            user_row = insert.data[0] if isinstance(insert.data, list) else insert.data
-        else:
-            user_row = result.data
         api_key = await _ensure_user_api_key(sb, user_row)
     elif body.email and body.password:
         try:
@@ -345,31 +416,9 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
             ) from exc
         if resp.user is None or resp.session is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login failed")
-        result = (
-            await sb.table("users")
-            .select("*")
-            .eq("supabase_uid", resp.user.id)
-            .maybe_single()
-            .execute()
+        user_row = await _get_or_create_internal_user(
+            sb, supabase_uid=resp.user.id, email=body.email.strip()
         )
-        if not result or not result.data:
-            insert = (
-                await sb.table("users")
-                .insert(
-                    {
-                        "supabase_uid": resp.user.id,
-                        "email": body.email.strip(),
-                        "tier": "free",
-                        "api_key": secrets.token_urlsafe(32),
-                    }
-                )
-                .execute()
-            )
-            if not insert.data:
-                raise HTTPException(status_code=500, detail="Could not create user")
-            user_row = insert.data[0] if isinstance(insert.data, list) else insert.data
-        else:
-            user_row = result.data
         api_key = await _ensure_user_api_key(sb, user_row)
     else:
         raise HTTPException(
@@ -381,12 +430,8 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     try:
         from app.services.wix_plans import refresh_user_tier_from_wix
 
-        if pasted:
-            user_for_refresh = result.data  # type: ignore[name-defined]
-        else:
-            user_for_refresh = user_row  # type: ignore[name-defined]
-        if isinstance(user_for_refresh, dict):
-            await refresh_user_tier_from_wix(user_for_refresh, force=True)
+        if isinstance(user_row, dict):
+            await refresh_user_tier_from_wix(user_row, force=True)
     except Exception as exc:
         logger.warning("Desktop SSO Wix tier refresh skipped", error=str(exc))
 
@@ -489,27 +534,9 @@ async def login(body: LoginRequest) -> AuthResponse:
     if resp.user is None or resp.session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login failed")
 
-    # Fetch internal user row (maybe_single so auto-create path runs when no row)
-    result = await sb.table("users").select("*").eq("supabase_uid", resp.user.id).maybe_single().execute()
-    if not result or not result.data:
-        # Auto-create if missing (e.g. user registered via web)
-        try:
-            result = (
-                await sb.table("users")
-                .insert({"supabase_uid": resp.user.id, "email": body.email, "tier": "free"})
-                .execute()
-            )
-            if not result.data or (isinstance(result.data, list) and len(result.data) == 0):
-                raise ValueError("Insert returned no data")
-            user_row = result.data if isinstance(result.data, dict) else result.data[0]
-        except Exception as exc:
-            logger.exception("Failed to create or read internal user row after login")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Login could not be completed",
-            ) from exc
-    else:
-        user_row = result.data if isinstance(result.data, dict) else result.data[0]
+    user_row = await _get_or_create_internal_user(
+        sb, supabase_uid=resp.user.id, email=body.email
+    )
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))
@@ -657,36 +684,9 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
             detail="OAuth exchange returned no session",
         )
 
-    # Upsert internal user row (maybe_single so creation path runs when missing)
-    result = (
-        await sb.table("users")
-        .select("*")
-        .eq("supabase_uid", resp.user.id)
-        .maybe_single()
-        .execute()
+    user_row = await _get_or_create_internal_user(
+        sb, supabase_uid=resp.user.id, email=resp.user.email or ""
     )
-    if not result or not result.data:
-        try:
-            result = (
-                await sb.table("users")
-                .insert({
-                    "supabase_uid": resp.user.id,
-                    "email": resp.user.email or "",
-                    "tier": "free",
-                })
-                .execute()
-            )
-            if not result.data or (isinstance(result.data, list) and len(result.data) == 0):
-                raise ValueError("Insert returned no data")
-            user_row = result.data if isinstance(result.data, dict) else result.data[0]
-        except Exception as exc:
-            logger.exception("Failed to create or read internal user row after OAuth exchange")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="OAuth sign-in could not be completed",
-            ) from exc
-    else:
-        user_row = result.data if isinstance(result.data, dict) else result.data[0]
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))
@@ -737,36 +737,9 @@ async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> Au
             detail=f"{provider.title()} sign-in returned no session",
         )
 
-    # Upsert internal user row
-    result = (
-        await sb.table("users")
-        .select("*")
-        .eq("supabase_uid", resp.user.id)
-        .maybe_single()
-        .execute()
+    user_row = await _get_or_create_internal_user(
+        sb, supabase_uid=resp.user.id, email=resp.user.email or ""
     )
-    if not result or not result.data:
-        try:
-            result = (
-                await sb.table("users")
-                .insert({
-                    "supabase_uid": resp.user.id,
-                    "email": resp.user.email or "",
-                    "tier": "free",
-                })
-                .execute()
-            )
-            if not result.data or (isinstance(result.data, list) and len(result.data) == 0):
-                raise ValueError("Insert returned no data")
-            user_row = result.data if isinstance(result.data, dict) else result.data[0]
-        except Exception as exc:
-            logger.exception("Failed to create or read internal user row after ID token sign-in")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"{provider.title()} sign-in could not be completed",
-            ) from exc
-    else:
-        user_row = result.data if isinstance(result.data, dict) else result.data[0]
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))
