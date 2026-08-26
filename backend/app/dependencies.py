@@ -13,6 +13,9 @@ from app.services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
 
+# Clock skew: freshly issued tokens can have iat a few seconds in the future.
+_JWT_LEEWAY_SECONDS = 120
+
 # Cached PyJWKClient (fetches + caches Supabase's asymmetric signing keys, handles rotation).
 _jwks_client: PyJWKClient | None = None
 
@@ -55,7 +58,12 @@ def _verify_supabase_jwt(token: str) -> str:
         if alg in ("RS256", "ES256"):
             signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
             payload = jwt.decode(
-                token, signing_key.key, algorithms=[alg], audience=audience, issuer=issuer
+                token,
+                signing_key.key,
+                algorithms=[alg],
+                audience=audience,
+                issuer=issuer,
+                leeway=_JWT_LEEWAY_SECONDS,
             )
         elif alg == "HS256":
             secret = (cfg.supabase_jwt_secret or "").strip()
@@ -65,7 +73,12 @@ def _verify_supabase_jwt(token: str) -> str:
                     detail="HS256 token but SUPABASE_JWT_SECRET is not configured",
                 )
             payload = jwt.decode(
-                token, secret, algorithms=["HS256"], audience=audience, issuer=issuer
+                token,
+                secret,
+                algorithms=["HS256"],
+                audience=audience,
+                issuer=issuer,
+                leeway=_JWT_LEEWAY_SECONDS,
             )
         else:
             raise HTTPException(

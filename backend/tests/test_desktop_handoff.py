@@ -7,7 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.services import desktop_handoff as handoff
 from app.services.desktop_handoff import put_handoff, take_handoff
+
+
+@pytest.fixture(autouse=True)
+def _reset_handoff_state() -> None:
+    handoff._memory.clear()
+    handoff._skip_db_until = 0.0
 
 
 def _pool_with_conn(conn: MagicMock) -> MagicMock:
@@ -48,3 +55,15 @@ async def test_take_handoff_deletes_via_postgres() -> None:
     assert result == "lt_key"
     conn.fetchrow.assert_awaited_once()
     assert "DELETE FROM desktop_handoffs" in conn.fetchrow.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_handoff_falls_back_to_memory_when_postgres_dns_fails() -> None:
+    """Local SSO must still complete if SUPABASE_DB_URL cannot be resolved."""
+    with patch(
+        "app.services.desktop_handoff.get_db_pool",
+        AsyncMock(side_effect=OSError("getaddrinfo failed")),
+    ):
+        await put_handoff("session-id", "lt_key")
+        assert await take_handoff("session-id") == "lt_key"
+        assert await take_handoff("session-id") is None

@@ -452,6 +452,12 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
         logger.error("Desktop SSO handoff store failed", error=str(exc))
     logger.info("Desktop SSO complete", session_prefix=session_id[:8])
 
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Sign-in succeeded but no API key could be issued",
+        )
+
     out: dict = {"ok": True, "api_key": api_key}
     if redirect_uri:
         sep = "&" if "?" in redirect_uri else "?"

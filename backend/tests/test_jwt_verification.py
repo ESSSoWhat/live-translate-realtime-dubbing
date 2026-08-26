@@ -80,6 +80,21 @@ def test_rs256_expired_rejected() -> None:
     assert e.value.status_code == 401
 
 
+def test_rs256_future_iat_within_leeway_accepted() -> None:
+    """Fresh Google tokens can have iat a few seconds ahead of this machine's clock."""
+    future = dt.datetime.now(tz=dt.timezone.utc) + dt.timedelta(seconds=30)
+    with _mock_jwks():
+        assert deps._verify_supabase_jwt(_rs256(_claims("uid-1", iat=future))) == "uid-1"
+
+
+def test_rs256_future_iat_beyond_leeway_rejected() -> None:
+    future = dt.datetime.now(tz=dt.timezone.utc) + dt.timedelta(minutes=10)
+    with _mock_jwks(), pytest.raises(HTTPException) as e:
+        deps._verify_supabase_jwt(_rs256(_claims("uid-1", iat=future)))
+    assert e.value.status_code == 401
+    assert e.value.detail == "Invalid or expired token"
+
+
 def test_hs256_fallback_valid_returns_sub() -> None:
     assert deps._verify_supabase_jwt(_hs256(_claims("uid-hs"))) == "uid-hs"
 
