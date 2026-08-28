@@ -35,6 +35,11 @@ class VoiceProfile:
     id: str
     name: str
     assigned_voice_id: str | None = None
+    # True when assigned_voice_id is a clone of this speaker (or a manual pick).
+    # False when TTS is borrowing the closest other clone until we clone them.
+    source_cloned: bool = False
+    # Pitch-based speaker sex used to keep male/female TTS distinct.
+    gender: str | None = None
     embedding: list[float] | None = None
     created_at: datetime = field(default_factory=datetime.now)
 
@@ -133,6 +138,8 @@ class VoiceProfileStore:
             "id": profile.id,
             "name": profile.name,
             "assigned_voice_id": profile.assigned_voice_id,
+            "source_cloned": profile.source_cloned,
+            "gender": profile.gender,
             "embedding": profile.embedding,
             "created_at": profile.created_at.isoformat(),
         }
@@ -152,10 +159,19 @@ class VoiceProfileStore:
         if embedding is not None and not isinstance(embedding, list):
             embedding = None
 
+        assigned = d.get("assigned_voice_id")
+        if "source_cloned" in d:
+            source_cloned = bool(d.get("source_cloned"))
+        else:
+            # Legacy profiles with an assignment were the speaker's own clone.
+            source_cloned = bool(assigned)
+
         return VoiceProfile(
             id=d["id"],
             name=d.get("name", "Speaker"),
-            assigned_voice_id=d.get("assigned_voice_id"),
+            assigned_voice_id=assigned,
+            source_cloned=source_cloned,
+            gender=d.get("gender") if d.get("gender") in ("male", "female") else None,
             embedding=embedding,
             created_at=created,
         )

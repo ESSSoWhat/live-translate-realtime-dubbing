@@ -2029,8 +2029,16 @@ class MainWindow(QMainWindow):
         """Update active profile label when TTS voice switches."""
         name = event.data.get("profile_name") or ""
         voice = event.data.get("name") or ""
+        voice_id = event.data.get("voice_id")
         if name:
-            self._active_profile_label.setText(f"Active: {name}" + (f" → {voice}" if voice else ""))
+            self._active_profile_label.setText(
+                f"Active: {name}" + (f" → {voice}" if voice else "")
+            )
+        if self._dubbed_window is not None and voice_id:
+            self._dubbed_window.set_voices(
+                self._overlay_voice_items(),
+                str(voice_id),
+            )
         QTimer.singleShot(0, self._refresh_profile_list)
 
     def _on_profile_selection_changed(

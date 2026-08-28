@@ -14,6 +14,59 @@ from scipy.fft import dct  # type: ignore[import-untyped]
 
 logger = structlog.get_logger(__name__)
 
+# Cosine similarity to treat two clips as the same speaker.
+DEFAULT_SIMILARITY_THRESHOLD = 0.78
+# Returning speaker below the hard threshold: reuse that profile, don't spawn another.
+SOFT_MATCH_THRESHOLD = 0.65
+
+# Typical adult F0 split (Hz). Below → male, above → female.
+_GENDER_F0_SPLIT_HZ = 165.0
+_F0_MIN_HZ = 75.0
+_F0_MAX_HZ = 320.0
+
+
+def estimate_f0_hz(audio: np.ndarray, sample_rate: int = 16000) -> float | None:
+    """Median fundamental frequency from voiced frames, or None if unvoiced."""
+    x = np.asarray(audio, dtype=np.float64)
+    if x.size < int(sample_rate * 0.2):
+        return None
+    x = x - np.mean(x)
+    peak = float(np.max(np.abs(x)))
+    if peak < 1e-4:
+        return None
+
+    frame_len = int(sample_rate * 0.04)
+    hop = int(sample_rate * 0.01)
+    min_lag = max(1, int(sample_rate / _F0_MAX_HZ))
+    max_lag = int(sample_rate / _F0_MIN_HZ)
+    f0s: list[float] = []
+    for start in range(0, len(x) - frame_len, hop):
+        frame = x[start : start + frame_len]
+        rms = float(np.sqrt(np.mean(frame ** 2)))
+        if rms < 0.02 * peak:
+            continue
+        corr = np.correlate(frame, frame, mode="full")
+        ac = corr[len(corr) // 2 :]
+        if max_lag >= len(ac):
+            continue
+        lag = int(np.argmax(ac[min_lag : max_lag + 1])) + min_lag
+        if ac[0] <= 0 or ac[lag] < 0.35 * ac[0]:
+            continue
+        f0s.append(sample_rate / float(lag))
+    if len(f0s) < 3:
+        return None
+    return float(np.median(f0s))
+
+
+def classify_gender(
+    audio: np.ndarray, sample_rate: int = 16000
+) -> str | None:
+    """Return ``male`` / ``female`` from pitch, or None if pitch is unclear."""
+    f0 = estimate_f0_hz(audio, sample_rate)
+    if f0 is None:
+        return None
+    return "male" if f0 < _GENDER_F0_SPLIT_HZ else "female"
+
 
 class SpeakerIdentifier:
     """Identify registered speakers from short audio clips.
@@ -30,7 +83,7 @@ class SpeakerIdentifier:
         sample_rate: int = 16000,
         n_mfcc: int = 20,
         n_mels: int = 40,
-        similarity_threshold: float = 0.78,
+        similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     ) -> None:
         self._sample_rate = sample_rate
         self._n_mfcc = n_mfcc
@@ -89,6 +142,11 @@ class SpeakerIdentifier:
     def threshold(self) -> float:
         """Minimum cosine similarity to treat two clips as the same speaker."""
         return self._threshold
+
+    @property
+    def soft_threshold(self) -> float:
+        """Reuse a returning speaker instead of creating another profile."""
+        return SOFT_MATCH_THRESHOLD
 
     def ranked_matches(self, audio: np.ndarray) -> list[tuple[str, float]]:
         """All registered speakers sorted by cosine similarity (highest first)."""

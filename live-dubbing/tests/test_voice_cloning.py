@@ -7,8 +7,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from live_dubbing.processing.speaker_id import SpeakerIdentifier
-from live_dubbing.services.voice_cloning import ClonedVoice, VoiceCloneManager
+from live_dubbing.processing.speaker_id import (
+    SpeakerIdentifier,
+    classify_gender,
+    estimate_f0_hz,
+)
+from live_dubbing.services.voice_cloning import (
+    _MALE_FALLBACK_VOICE_ID,
+    ClonedVoice,
+    VoiceCloneManager,
+)
 from live_dubbing.services.voice_profiles import VoiceProfileStore
 
 
@@ -125,24 +133,38 @@ def test_matched_speaker_uses_assigned_clone(tmp_path: Path) -> None:
     assert resolved.voice_id == "voice-low"
 
 
-def test_unmatched_speaker_keeps_clone_unassigned(tmp_path: Path) -> None:
-    """No speaker match: use closest clone for TTS, then clone this speaker."""
+def test_pitch_classifies_male_and_female() -> None:
+    male = _tone(110.0, seconds=0.6)
+    female = _tone(220.0, seconds=0.6)
+    male_f0 = estimate_f0_hz(male)
+    female_f0 = estimate_f0_hz(female)
+    assert male_f0 is not None and male_f0 < 165.0
+    assert female_f0 is not None and female_f0 > 165.0
+    assert classify_gender(male) == "male"
+    assert classify_gender(female) == "female"
+
+
+def test_unmatched_speaker_borrows_closest_then_clones(tmp_path: Path) -> None:
+    """Same-gender unmatched speaker borrows closest clone, then still clones."""
     mgr = _manager(min_sec=0.2, tmp_path=tmp_path)
-    low, _ = mgr.resolve_profile_for_audio(_tone(180.0))
+    low, _ = mgr.resolve_profile_for_audio(_tone(110.0, seconds=0.6))
     assert low is not None
     clone = ClonedVoice(voice_id="voice-low", name="Low", is_dynamic=True)
     mgr._voice_cache[clone.voice_id] = clone
     assert mgr.set_profile_voice(low.id, clone.voice_id)
+    assert low.source_cloned is True
 
-    high, _ = mgr.resolve_profile_for_audio(_tone(1400.0))
+    mgr._speaker_id.identify = lambda _audio: (None, 0.0)  # type: ignore[method-assign]
+    high, _ = mgr.resolve_profile_for_audio(_tone(130.0, seconds=0.6))
     assert high is not None
     assert high.id != low.id
     assert high.assigned_voice_id is None
 
-    interim = mgr.resolve_tts_voice(high, _tone(1400.0))
+    interim = mgr.resolve_tts_voice(high, _tone(130.0, seconds=0.6))
     assert interim is not None
     assert interim.voice_id == "voice-low"
-    assert high.assigned_voice_id is None
+    assert high.assigned_voice_id == "voice-low"
+    assert high.source_cloned is False
 
     chunk = np.full(1600, 0.1, dtype=np.float32)
     assert mgr.feed_profile_clone_audio(high.id, chunk) is False
@@ -150,22 +172,96 @@ def test_unmatched_speaker_keeps_clone_unassigned(tmp_path: Path) -> None:
 
 
 def test_close_match_assigns_existing_clone(tmp_path: Path) -> None:
-    """Above-threshold closest clone is persisted onto the unmatched profile."""
+    """Closest same-gender clone is persisted as a borrowed voice."""
     mgr = _manager(tmp_path=tmp_path)
-    source, _ = mgr.resolve_profile_for_audio(_tone(180.0))
+    source, _ = mgr.resolve_profile_for_audio(_tone(110.0, seconds=0.6))
     assert source is not None
     clone = ClonedVoice(voice_id="voice-a", name="A", is_dynamic=True)
     mgr._voice_cache[clone.voice_id] = clone
     assert mgr.set_profile_voice(source.id, clone.voice_id)
 
     mgr._speaker_id.identify = lambda _audio: (None, 0.0)  # type: ignore[method-assign]
-    target, _ = mgr.resolve_profile_for_audio(_tone(200.0))
+    target, _ = mgr.resolve_profile_for_audio(_tone(130.0, seconds=0.6))
     assert target is not None
     mgr._speaker_id.ranked_matches = lambda _audio: [  # type: ignore[method-assign]
         (source.id, 0.90)
     ]
 
-    resolved = mgr.resolve_tts_voice(target, _tone(200.0))
+    resolved = mgr.resolve_tts_voice(target, _tone(130.0, seconds=0.6))
     assert resolved is not None
     assert resolved.voice_id == "voice-a"
     assert target.assigned_voice_id == "voice-a"
+    assert target.source_cloned is False
+
+
+def test_opposite_gender_uses_premade_not_other_clone(tmp_path: Path) -> None:
+    """Male and female speakers must not share the other sex's clone."""
+    mgr = _manager(tmp_path=tmp_path)
+    male, _ = mgr.resolve_profile_for_audio(_tone(110.0, seconds=0.6))
+    assert male is not None
+    male_clone = ClonedVoice(voice_id="voice-male", name="Male", is_dynamic=True)
+    mgr._voice_cache[male_clone.voice_id] = male_clone
+    assert mgr.set_profile_voice(male.id, male_clone.voice_id)
+
+    female, _ = mgr.resolve_profile_for_audio(_tone(220.0, seconds=0.6))
+    assert female is not None
+    assert female.id != male.id
+    resolved = mgr.resolve_tts_voice(female, _tone(220.0, seconds=0.6))
+    assert resolved is not None
+    assert resolved.voice_id != male_clone.voice_id
+    assert resolved.voice_id == "21m00Tcm4TlvDq8ikWAM"  # Rachel
+
+
+def test_male_without_clone_uses_adam(tmp_path: Path) -> None:
+    """Uncloned male speech uses Adam, not Rachel."""
+    mgr = _manager(tmp_path=tmp_path)
+    male, _ = mgr.resolve_profile_for_audio(_tone(110.0, seconds=0.6))
+    assert male is not None
+    resolved = mgr.resolve_tts_voice(male, _tone(110.0, seconds=0.6))
+    assert resolved is not None
+    assert resolved.voice_id == _MALE_FALLBACK_VOICE_ID
+
+
+def test_weak_closest_match_same_gender_assigns(tmp_path: Path) -> None:
+    """A weak same-gender clone is still preferred over the opposite premade."""
+    mgr = _manager(tmp_path=tmp_path)
+    source, _ = mgr.resolve_profile_for_audio(_tone(110.0, seconds=0.6))
+    assert source is not None
+    clone = ClonedVoice(voice_id="voice-a", name="A", is_dynamic=True)
+    mgr._voice_cache[clone.voice_id] = clone
+    assert mgr.set_profile_voice(source.id, clone.voice_id)
+
+    mgr._speaker_id.identify = lambda _audio: (None, 0.0)  # type: ignore[method-assign]
+    target, _ = mgr.resolve_profile_for_audio(_tone(130.0, seconds=0.6))
+    assert target is not None
+    mgr._speaker_id.ranked_matches = lambda _audio: [  # type: ignore[method-assign]
+        (source.id, 0.40)
+    ]
+
+    resolved = mgr.resolve_tts_voice(target, _tone(130.0, seconds=0.6))
+    assert resolved is not None
+    assert resolved.voice_id == "voice-a"
+    assert target.assigned_voice_id == "voice-a"
+    assert target.source_cloned is False
+
+
+def test_unusable_voice_is_cleared_and_next_clone_used(tmp_path: Path) -> None:
+    """Stale ElevenLabs IDs must not keep winning resolve_tts_voice."""
+    mgr = _manager(tmp_path=tmp_path)
+    first, _ = mgr.resolve_profile_for_audio(_tone(110.0, seconds=0.6))
+    mgr._speaker_id.identify = lambda _audio: (None, 0.0)  # type: ignore[method-assign]
+    second, _ = mgr.resolve_profile_for_audio(_tone(130.0, seconds=0.6))
+    assert first is not None and second is not None
+    assert first.id != second.id
+    dead = ClonedVoice(voice_id="dead-voice", name="Dead", is_dynamic=True)
+    other = ClonedVoice(voice_id="live-voice", name="Live", is_dynamic=True)
+    mgr._voice_cache[dead.voice_id] = dead
+    mgr._voice_cache[other.voice_id] = other
+    assert mgr.set_profile_voice(first.id, dead.voice_id)
+    assert mgr.set_profile_voice(second.id, other.voice_id)
+
+    mgr.mark_voice_unusable("dead-voice")
+    assert first.assigned_voice_id is None
+    resolved = mgr.resolve_tts_voice(first, _tone(110.0, seconds=0.6))
+    assert resolved is not None
+    assert resolved.voice_id == "live-voice"

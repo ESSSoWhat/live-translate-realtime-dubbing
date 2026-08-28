@@ -28,8 +28,14 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# Premade Rachel voice used when no profile has an assigned clone.
+# Premade Rachel (female) and Adam (male) when no same-gender clone exists.
 _FALLBACK_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
+_MALE_FALLBACK_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
+_PREMADE_VOICES: dict[str, tuple[str, str]] = {
+    "female": (_FALLBACK_VOICE_ID, "Rachel"),
+    "male": (_MALE_FALLBACK_VOICE_ID, "Adam"),
+}
+_PREMADE_VOICE_IDS = frozenset(v[0] for v in _PREMADE_VOICES.values())
 
 
 def _is_cloneable_speech(audio: np.ndarray) -> bool:
@@ -119,6 +125,7 @@ class VoiceCloneManager:
         self._profile_clone_buffers: dict[str, list[np.ndarray]] = {}
         self._profile_clone_dur: dict[str, float] = {}
         self._profile_clone_inflight: set[str] = set()
+        self._unusable_voice_ids: set[str] = set()
 
         # Load previously saved voices from persistent store
         if self._voice_store:
@@ -223,7 +230,7 @@ class VoiceCloneManager:
         if self._is_capturing or profile_id in self._profile_clone_inflight:
             return False
         profile = self._profiles.get(profile_id)
-        if not profile or profile.assigned_voice_id:
+        if not profile or profile.source_cloned:
             return False
         if not _is_cloneable_speech(audio):
             return False
@@ -657,6 +664,7 @@ class VoiceCloneManager:
         if voice_id is not None and voice_id not in self._voice_cache:
             return False
         profile.assigned_voice_id = voice_id
+        profile.source_cloned = voice_id is not None
         try:
             self._profile_store.save(profile)
         except Exception as e:
@@ -697,17 +705,93 @@ class VoiceCloneManager:
             return False
         return True
 
+    def _usable_voice(self, voice_id: str | None) -> ClonedVoice | None:
+        """Return a cached clone or known premade that ElevenLabs still accepts."""
+        if not voice_id or voice_id in self._unusable_voice_ids:
+            return None
+        for vid, name in _PREMADE_VOICES.values():
+            if voice_id == vid:
+                return ClonedVoice(voice_id=vid, name=name, is_dynamic=False)
+        return self._voice_cache.get(voice_id)
+
+    def _premade_for_gender(self, gender: str | None) -> ClonedVoice:
+        """Rachel for female/unknown, Adam for male."""
+        key = gender if gender in _PREMADE_VOICES else "female"
+        vid, name = _PREMADE_VOICES[key]
+        return ClonedVoice(voice_id=vid, name=name, is_dynamic=False)
+
+    def _classify_gender(self, audio: np.ndarray | None) -> str | None:
+        if audio is None:
+            return None
+        from live_dubbing.processing.speaker_id import classify_gender  # noqa: PLC0415
+
+        return classify_gender(audio, self._sample_rate)
+
+    def _apply_gender(self, profile: VoiceProfile, gender: str | None) -> None:
+        if not gender or profile.gender == gender:
+            return
+        if profile.gender is not None:
+            return
+        profile.gender = gender
+        try:
+            self._profile_store.save(profile)
+        except Exception as e:
+            logger.warning("Could not persist profile gender", error=str(e))
+
+    def _genders_compatible(self, profile: VoiceProfile, gender: str | None) -> bool:
+        if not gender or not profile.gender:
+            return True
+        return profile.gender == gender
+
+    def mark_voice_unusable(self, voice_id: str) -> None:
+        """Drop a stale ElevenLabs voice so profiles re-resolve to another clone."""
+        if not voice_id or voice_id in _PREMADE_VOICE_IDS:
+            return
+        self._unusable_voice_ids.add(voice_id)
+        for profile in self._profiles.values():
+            if profile.assigned_voice_id == voice_id:
+                profile.assigned_voice_id = None
+                profile.source_cloned = False
+                try:
+                    self._profile_store.save(profile)
+                except Exception as e:
+                    logger.warning(
+                        "Could not clear unusable voice from profile",
+                        profile_id=profile.id,
+                        error=str(e),
+                    )
+        logger.warning("Marked cloned voice unusable", voice_id=voice_id)
+
+    def _assign_borrowed_voice(self, profile: VoiceProfile, voice_id: str) -> None:
+        """Point a profile at the closest existing clone until we clone this speaker."""
+        profile.assigned_voice_id = voice_id
+        profile.source_cloned = False
+        try:
+            self._profile_store.save(profile)
+        except Exception as e:
+            logger.warning("Could not persist closest-voice assignment", error=str(e))
+
     def closest_cloned_match(
         self,
-        audio: np.ndarray,
+        audio: np.ndarray | None,
+        gender: str | None = None,
     ) -> tuple[ClonedVoice | None, VoiceProfile | None, float]:
-        """Closest profile that already has a clone, with similarity score."""
-        for profile_id, score in self._speaker_id.ranked_matches(audio):
+        """Closest same-gender profile that already has a real clone."""
+        ranked: list[tuple[str, float]]
+        if audio is not None and len(audio) >= int(self._sample_rate * 0.3):
+            ranked = self._speaker_id.ranked_matches(audio)
+        else:
+            ranked = [(p.id, 0.0) for p in self._profiles.values()]
+        for profile_id, score in ranked:
             profile = self._profiles.get(profile_id)
-            if not profile or not profile.assigned_voice_id:
+            if not profile or not self._genders_compatible(profile, gender):
                 continue
-            voice = self._voice_cache.get(profile.assigned_voice_id)
-            if voice:
+            voice = self._usable_voice(profile.assigned_voice_id)
+            if (
+                voice
+                and voice.voice_id not in _PREMADE_VOICE_IDS
+                and voice.voice_id not in self._unusable_voice_ids
+            ):
                 return voice, profile, score
         return None, None, 0.0
 
@@ -716,45 +800,44 @@ class VoiceCloneManager:
         profile: VoiceProfile | None,
         audio: np.ndarray | None = None,
     ) -> ClonedVoice | None:
-        """Resolve TTS: assigned clone, else closest cloned match, else Rachel.
+        """Resolve TTS: this speaker's clone, else same-gender clone, else premade.
 
-        A closest match at or above the speaker threshold is persisted onto
-        *profile*. Weaker matches are used only as interim TTS while we clone.
+        Opposite-gender clones are never borrowed, so male and female speakers
+        stay on different voices. Own-source cloning still runs until
+        ``source_cloned`` is True.
         """
-        if profile and profile.assigned_voice_id:
-            voice = self._voice_cache.get(profile.assigned_voice_id)
+        gender = (profile.gender if profile else None) or self._classify_gender(audio)
+        if profile is not None:
+            self._apply_gender(profile, gender)
+
+        if profile:
+            voice = self._usable_voice(profile.assigned_voice_id)
             if voice:
                 return voice
 
-        if audio is not None:
-            voice, source, score = self.closest_cloned_match(audio)
-            if voice and source:
-                if (
-                    profile is not None
-                    and not profile.assigned_voice_id
-                    and score >= self._speaker_id.threshold
-                ):
-                    self.set_profile_voice(profile.id, voice.voice_id)
-                    logger.info(
-                        "Assigned closest cloned voice to profile",
-                        profile_id=profile.id,
-                        source_profile_id=source.id,
-                        voice_id=voice.voice_id,
-                        confidence=f"{score:.2f}",
-                    )
-                return voice
+        voice, source, score = self.closest_cloned_match(audio, gender=gender)
+        if voice:
+            if (
+                profile is not None
+                and not profile.assigned_voice_id
+                and (source is None or source.id != profile.id)
+            ):
+                self._assign_borrowed_voice(profile, voice.voice_id)
+                logger.info(
+                    "Assigned closest same-gender clone to profile",
+                    profile_id=profile.id,
+                    source_profile_id=source.id if source else None,
+                    voice_id=voice.voice_id,
+                    gender=gender,
+                    confidence=f"{score:.2f}",
+                    borrowed=True,
+                )
+            return voice
 
-        default = self.get_default_profile()
-        if default and default.assigned_voice_id:
-            voice = self._voice_cache.get(default.assigned_voice_id)
-            if voice:
-                return voice
-
-        return ClonedVoice(
-            voice_id=_FALLBACK_VOICE_ID,
-            name="Rachel",
-            is_dynamic=False,
-        )
+        premade = self._premade_for_gender(gender)
+        if profile is not None and not profile.assigned_voice_id:
+            self._assign_borrowed_voice(profile, premade.voice_id)
+        return premade
 
     def resolve_profile_for_audio(
         self,
@@ -764,16 +847,34 @@ class VoiceCloneManager:
     ) -> tuple[VoiceProfile | None, float]:
         """Match audio to a profile; optionally auto-create when unmatched.
 
-        Returns ``(profile, confidence)``. On no match, returns the default
-        profile (if any) with the raw match score. Auto-created profiles are
-        returned as the matched profile with confidence 0.
+        Returns ``(profile, confidence)``. Soft-matches returning speakers
+        below the hard threshold so TTS can alternate without spawning
+        extra profiles. Auto-created profiles are returned with confidence 0.
         """
         profile_id, confidence = self._speaker_id.identify(audio)
+        gender = self._classify_gender(audio)
 
         if profile_id and profile_id in self._profiles:
             profile = self._profiles[profile_id]
-            self._active_profile_id = profile.id
-            return profile, confidence
+            if self._genders_compatible(profile, gender):
+                self._apply_gender(profile, gender)
+                self._active_profile_id = profile.id
+                return profile, confidence
+            profile_id = None
+
+        if (
+            not profile_id
+            and confidence >= self._speaker_id.soft_threshold
+        ):
+            for best_id, best_score in self._speaker_id.ranked_matches(audio):
+                if best_score < self._speaker_id.soft_threshold:
+                    break
+                cand = self._profiles.get(best_id)
+                if cand is None or not self._genders_compatible(cand, gender):
+                    continue
+                self._apply_gender(cand, gender)
+                self._active_profile_id = cand.id
+                return cand, best_score
 
         if auto_create and len(audio) >= self._sample_rate * 0.5:
             created = self._maybe_auto_create_profile(audio)
@@ -782,17 +883,22 @@ class VoiceCloneManager:
                 return created, 0.0
 
         default = self.get_default_profile()
-        self._active_profile_id = default.id if default else None
-        return default, confidence
+        if default and self._genders_compatible(default, gender):
+            self._apply_gender(default, gender)
+            self._active_profile_id = default.id
+            return default, confidence
+        self._active_profile_id = None
+        return None, confidence
 
     def _auto_profile_count(self) -> int:
-        """Count auto-created 'Speaker N' profiles (safety cap, not a product limit)."""
+        """Count auto-created speaker profiles (safety cap, not a product limit)."""
         n = 0
+        prefixes = ("Speaker ", "Male ", "Female ")
         for p in self._profiles.values():
-            if p.name.startswith("Speaker "):
-                suffix = p.name[len("Speaker ") :].strip()
-                if suffix.isdigit():
+            for prefix in prefixes:
+                if p.name.startswith(prefix) and p.name[len(prefix) :].strip().isdigit():
                     n += 1
+                    break
         return n
 
     def _maybe_auto_create_profile(self, audio: np.ndarray) -> VoiceProfile | None:
@@ -805,11 +911,16 @@ class VoiceCloneManager:
             )
             return None
 
-        next_num = self._next_speaker_number()
+        gender = self._classify_gender(audio)
+        prefix = (
+            "Male" if gender == "male" else "Female" if gender == "female" else "Speaker"
+        )
+        next_num = self._next_speaker_number(prefix)
         profile = VoiceProfile(
             id=VoiceProfileStore.new_id(),
-            name=f"Speaker {next_num}",
+            name=f"{prefix} {next_num}",
             assigned_voice_id=None,
+            gender=gender,
         )
         emb = self._speaker_id.register_speaker(profile.id, audio)
         if emb is None:
@@ -829,12 +940,13 @@ class VoiceCloneManager:
         logger.info("Auto-created voice profile", profile_id=profile.id, name=profile.name)
         return profile
 
-    def _next_speaker_number(self) -> int:
-        """Pick the next 'Speaker N' index from existing names."""
+    def _next_speaker_number(self, prefix: str = "Speaker") -> int:
+        """Pick the next '{prefix} N' index from existing names."""
         used: set[int] = set()
+        token = f"{prefix} "
         for p in self._profiles.values():
-            if p.name.startswith("Speaker "):
-                suffix = p.name[len("Speaker ") :].strip()
+            if p.name.startswith(token):
+                suffix = p.name[len(token) :].strip()
                 if suffix.isdigit():
                     used.add(int(suffix))
         n = 1
@@ -861,15 +973,24 @@ class VoiceCloneManager:
                     break
 
         if profile is None:
+            gender = self._classify_gender(audio)
+            prefix = (
+                "Male" if gender == "male"
+                else "Female" if gender == "female"
+                else "Speaker"
+            )
             profile = VoiceProfile(
                 id=VoiceProfileStore.new_id(),
-                name=label or f"Speaker {self._next_speaker_number()}",
+                name=label or f"{prefix} {self._next_speaker_number(prefix)}",
+                gender=gender,
             )
 
         emb = self._speaker_id.register_speaker(profile.id, audio)
         if emb is not None:
             profile.embedding = emb.tolist()
+        self._apply_gender(profile, self._classify_gender(audio))
         profile.assigned_voice_id = voice_id
+        profile.source_cloned = True
         self._profiles[profile.id] = profile
         if self._default_profile_id is None:
             self._default_profile_id = profile.id

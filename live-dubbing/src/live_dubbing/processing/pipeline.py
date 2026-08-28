@@ -592,6 +592,8 @@ class ProcessingPipeline:
         """Identify the current speaker profile and resolve TTS voice."""
         if not self._voice_manager:
             return
+        if (self._config.use_premade_voice_id or "").strip():
+            return
 
         profile, confidence = self._voice_manager.resolve_profile_for_audio(audio)
         resolved = self._voice_manager.resolve_tts_voice(profile, audio)
@@ -650,7 +652,7 @@ class ProcessingPipeline:
         """Buffer speech until an uncloned unique speaker can be cloned."""
         if not self._voice_manager or not self._config.auto_clone_voice:
             return
-        if profile is None or profile.assigned_voice_id:
+        if profile is None or profile.source_cloned:
             return
         if self._voice_manager.feed_profile_clone_audio(profile.id, audio):
             self._tasks.append(
@@ -1246,23 +1248,40 @@ class ProcessingPipeline:
                         if not can_fallback:
                             raise
                         logger.warning(
-                            "TTS failed for active voice; falling back to default",
+                            "TTS failed for active voice; picking closest usable clone",
                             failed_voice=active_id,
                             error=str(synth_err)[:120],
                         )
-                        self._cloned_voice = ClonedVoice(
-                            voice_id=fallback_id,
-                            name="Default (fallback)",
-                            is_dynamic=False,
-                        )
+                        retry_voice: ClonedVoice | None = None
+                        if self._voice_manager:
+                            self._voice_manager.mark_voice_unusable(active_id)
+                            current = None
+                            if self._last_resolved_profile_id:
+                                current = self._voice_manager.get_profile(
+                                    self._last_resolved_profile_id
+                                )
+                            retry_voice = self._voice_manager.resolve_tts_voice(
+                                current, None
+                            )
+                        if retry_voice is None or retry_voice.voice_id == active_id:
+                            retry_voice = ClonedVoice(
+                                voice_id=fallback_id,
+                                name="Default (fallback)",
+                                is_dynamic=False,
+                            )
+                        self._cloned_voice = retry_voice
                         self._event_bus.emit_warning(
-                            "Selected voice is unavailable on the server ElevenLabs account. "
-                            "Switched to the default voice — re-clone or pick a listed voice.",
-                            {"failed_voice": active_id},
+                            "Selected voice is unavailable. "
+                            "Switched to the closest matching voice — "
+                            "the source speaker will be cloned when enough speech is captured.",
+                            {
+                                "failed_voice": active_id,
+                                "retry_voice": retry_voice.voice_id,
+                            },
                         )
                         audio_bytes = await self._service.synthesize(
                             text=text,
-                            voice_id=fallback_id,
+                            voice_id=retry_voice.voice_id,
                             stability=self._config.voice_stability,
                             similarity_boost=self._config.voice_similarity,
                         )
