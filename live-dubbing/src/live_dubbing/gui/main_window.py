@@ -2441,8 +2441,17 @@ class MainWindow(QMainWindow):
         """Handle warning event."""
         message = event.data.get("message", "Unknown warning")
         logger.warning("Warning", message=message)
-        # Clone fallback is expected during game audio; overlay status is enough.
-        if "voice clone failed" in message.lower():
+        # Clone / process-loopback fallbacks are expected; overlay status is enough.
+        lower = message.lower()
+        if "voice clone failed" in lower:
+            return
+        if "process loopback unavailable" in lower:
+            if self._dubbed_window is not None:
+                self._dubbed_window.set_status("Using all system audio")
+            return
+        if "unavailable on the server" in lower or "switched to the default voice" in lower:
+            if self._dubbed_window is not None:
+                self._dubbed_window.set_status("Using default voice")
             return
         QMessageBox.warning(self, "Warning", message)
 

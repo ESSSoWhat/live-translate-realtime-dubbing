@@ -170,12 +170,17 @@ class AudioProcessor:
                 logger.warning("OpenAI translate failed", error=str(e))
 
         try:
+            from app.services.text_filter import is_scraped_translate_error
             from deep_translator import GoogleTranslator
 
-            return await asyncio.to_thread(
+            google_text = await asyncio.to_thread(
                 GoogleTranslator(source="auto", target=self.target_lang).translate,
                 text,
             )
+            if is_scraped_translate_error(google_text or ""):
+                logger.warning("Google Translate returned an error page")
+                return text
+            return google_text
         except Exception as e:
             logger.warning("Google translate failed", error=str(e))
             return text

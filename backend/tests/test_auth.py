@@ -137,6 +137,7 @@ def test_desktop_sso_page_handles_pkce_code(client: TestClient) -> None:
     assert "window.location.replace(appUrl)" in body
     assert "function isSafeDesktopRedirect" in body
     assert "var bridgeUrl = window.location.origin + window.location.pathname;" in body
+    assert "var data = await res.json().catch(function () { return {}; });" in body
 
 
 def test_desktop_sso_complete_oauth_code_stores_handoff(

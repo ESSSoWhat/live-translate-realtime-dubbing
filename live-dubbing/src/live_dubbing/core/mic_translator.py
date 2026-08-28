@@ -172,6 +172,7 @@ class MicTranslator:
             min_voice_capture_sec=0,    # Not used
             voice_stability=self._settings.voice_clone.voice_stability,
             voice_similarity=self._settings.voice_clone.voice_similarity,
+            preserve_context=self._settings.translation.preserve_context,
         )
         self._pipeline = ProcessingPipeline(
             elevenlabs_service=elevenlabs_service,

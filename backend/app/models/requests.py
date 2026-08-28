@@ -4,7 +4,7 @@ import re
 from typing import Literal, cast
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator
 
 # Canonical subscription tiers (must match tier_limits table)
 Tier = Literal["free", "starter", "pro", "early_adopters"]
@@ -89,7 +89,12 @@ class TranslateRequest(BaseModel):
     target_language: str
     source_language: str = "auto"
     # Recent prior source text so live chunks translate coherently.
-    prior_context: str = Field(default="", max_length=2000)
+    # Accept "context" from older desktop clients that used the wrong field name.
+    prior_context: str = Field(
+        default="",
+        max_length=2000,
+        validation_alias=AliasChoices("prior_context", "context"),
+    )
 
 
 class CloneVoiceRequest(BaseModel):

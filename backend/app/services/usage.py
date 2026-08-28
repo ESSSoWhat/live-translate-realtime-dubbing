@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import date, timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -10,6 +11,8 @@ import asyncpg
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+_DB_RETRY_SECONDS = 30.0
 
 # Maps event_type to (usage_column, limit_column)
 _COLUMN_MAP: dict[str, str] = {
@@ -22,6 +25,11 @@ _COLUMN_MAP: dict[str, str] = {
 
 _db_pool: asyncpg.Pool | None = None
 _db_pool_lock = asyncio.Lock()
+_db_unavailable_until = 0.0
+
+
+class DatabaseUnavailableError(RuntimeError):
+    """Postgres pool could not be created (DNS, credentials, or network)."""
 
 
 def _clean_dsn(dsn: str) -> str:
@@ -35,26 +43,46 @@ def _clean_dsn(dsn: str) -> str:
 
 async def get_db_pool() -> asyncpg.Pool:
     """Return the shared asyncpg connection pool, creating it if needed."""
-    global _db_pool
-    if _db_pool is None:
-        async with _db_pool_lock:
-            if _db_pool is None:
-                from app.config import get_settings
-                cfg = get_settings()
-                dsn = cfg.supabase_db_url
-                if not dsn:
-                    raise RuntimeError(
-                        "SUPABASE_DB_URL environment variable not set. "
-                        "Set it to your Supabase PostgreSQL connection string "
-                        "(e.g., postgresql://postgres:password@db.xxx.supabase.co:5432/postgres)"
-                    )
-                # statement_cache_size=0 is required for Supabase's transaction pooler
-                # (pgbouncer transaction mode doesn't support prepared statements).
-                _db_pool = await asyncpg.create_pool(
-                    _clean_dsn(dsn), min_size=2, max_size=10, statement_cache_size=0
-                )
-                logger.info("Database pool created")
-    return _db_pool
+    global _db_pool, _db_unavailable_until
+    if _db_pool is not None:
+        return _db_pool
+    if time.monotonic() < _db_unavailable_until:
+        raise DatabaseUnavailableError("Database unavailable")
+    async with _db_pool_lock:
+        if _db_pool is not None:
+            return _db_pool
+        from app.config import get_settings
+
+        cfg = get_settings()
+        dsn = cfg.supabase_db_url
+        if not dsn:
+            _db_unavailable_until = time.monotonic() + _DB_RETRY_SECONDS
+            raise DatabaseUnavailableError("SUPABASE_DB_URL is not set")
+        try:
+            # statement_cache_size=0 is required for Supabase's transaction pooler
+            # (pgbouncer transaction mode doesn't support prepared statements).
+            _db_pool = await asyncpg.create_pool(
+                _clean_dsn(dsn), min_size=2, max_size=10, statement_cache_size=0
+            )
+        except Exception as exc:
+            _db_unavailable_until = time.monotonic() + _DB_RETRY_SECONDS
+            logger.warning("Database pool unavailable", error=type(exc).__name__)
+            raise DatabaseUnavailableError("Database unavailable") from None
+        logger.info("Database pool created")
+        return _db_pool
+
+
+async def _pool_for_metering() -> asyncpg.Pool | None:
+    """Return the usage DB pool, or None in development when Postgres is down."""
+    try:
+        return await get_db_pool()
+    except DatabaseUnavailableError:
+        from app.config import get_settings
+
+        if get_settings().is_production:
+            raise
+        logger.warning("Skipping usage metering; database unavailable")
+        return None
 
 
 def _period_start() -> date:
@@ -82,7 +110,9 @@ async def check_quota(user_id: str, event_type: str, quantity: int) -> None:
     if col is None:
         return  # unknown type — allow
 
-    pool = await get_db_pool()
+    pool = await _pool_for_metering()
+    if pool is None:
+        return
     period = _period_start()
 
     async with pool.acquire() as conn:
@@ -124,7 +154,9 @@ async def check_and_record_quota(user_id: str, event_type: str, quantity: int) -
     if col is None or quantity <= 0:
         return
 
-    pool = await get_db_pool()
+    pool = await _pool_for_metering()
+    if pool is None:
+        return
     period = _period_start()
     period_end = _period_end()
 
@@ -181,7 +213,9 @@ async def record_usage(user_id: str, event_type: str, quantity: int) -> None:
     col = _COLUMN_MAP.get(event_type)
     if col is None or quantity <= 0:
         return
-    pool = await get_db_pool()
+    pool = await _pool_for_metering()
+    if pool is None:
+        return
     period = _period_start()
     period_end = _period_end()
     async with pool.acquire() as conn:

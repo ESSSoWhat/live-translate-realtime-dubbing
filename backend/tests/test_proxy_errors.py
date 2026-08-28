@@ -35,3 +35,26 @@ def test_error_message_helper_reads_nested_detail() -> None:
     """Helper returns the nested ElevenLabs message."""
     text = 'body: {"detail":{"status":"detected_no_speech","message":"No speech detected"}}'
     assert _elevenlabs_error_message(text) == "No speech detected"
+
+
+def test_scraped_google_500_page_is_detected() -> None:
+    from app.services.text_filter import is_scraped_translate_error
+
+    bad = (
+        "Error 500 (Server Error)!!1500.That's an error.There was an error. "
+        "Please try again later.That's all we know."
+    )
+    assert is_scraped_translate_error(bad) is True
+    assert is_scraped_translate_error("Are you sane?") is False
+
+
+def test_strip_google_500_keeps_real_translation() -> None:
+    from app.services.text_filter import strip_scraped_translate_error
+
+    mixed = (
+        "He encouraged me, but the wound never healed. "
+        "Error 500 (Server Error)!!1500.That's an"
+    )
+    assert strip_scraped_translate_error(mixed) == (
+        "He encouraged me, but the wound never healed."
+    )

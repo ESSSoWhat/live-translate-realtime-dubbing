@@ -21,7 +21,11 @@ import structlog
 
 from live_dubbing.config.settings import redact_secrets
 from live_dubbing.core.events import EventBus, EventType
-from live_dubbing.processing.text_filter import strip_non_verbal
+from live_dubbing.processing.text_filter import (
+    is_scraped_translate_error,
+    strip_non_verbal,
+    strip_scraped_translate_error,
+)
 from live_dubbing.processing.vad import SileroVAD
 from live_dubbing.services.elevenlabs_service import ElevenLabsService
 from live_dubbing.services.voice_cloning import ClonedVoice, VoiceCloneManager
@@ -176,6 +180,28 @@ class PipelineState(Enum):
     ERROR = auto()
 
 
+_PRIOR_CONTEXT_MAX_CHARS = 1500
+
+
+def append_prior_context(
+    existing: str,
+    new_text: str,
+    max_chars: int = _PRIOR_CONTEXT_MAX_CHARS,
+) -> str:
+    """Append a source utterance onto a rolling window of prior speech."""
+    piece = (new_text or "").strip()
+    if not piece:
+        return existing
+    combined = f"{existing} {piece}".strip() if existing.strip() else piece
+    if len(combined) <= max_chars:
+        return combined
+    truncated = combined[-max_chars:]
+    space = truncated.find(" ")
+    if 0 <= space < 80:
+        truncated = truncated[space + 1 :]
+    return truncated.strip()
+
+
 @dataclass
 class PipelineConfig:
     """Configuration for processing pipeline."""
@@ -188,6 +214,7 @@ class PipelineConfig:
     use_premade_voice_id: str | None = None  # Skip cloning; use this voice
     use_dubbing_api: bool = False  # Dubbing API is batch (~30s latency); use STT+translate+TTS for real-time
     auto_clone_voice: bool = True  # Auto-clone speaker voice on start
+    preserve_context: bool = True  # Pass recent source lines into translation
     usage_reporter: "UsageReporter | None" = None  # Report usage when using direct ElevenLabs
 
 
@@ -298,15 +325,17 @@ class ProcessingPipeline:
         # Speech buffer for STT
         self._speech_buffer: list[np.ndarray] = []
         self._speech_buffer_duration_sec = 0.0
-        # Min ~1s avoids fragmented transcriptions; STT quality drops on very short clips (<0.8s)
-        self._min_stt_duration_sec = 1.0
-        self._max_speech_buffer_sec = 8.0  # Flush to STT after this even without silence
+        # Hold longer so STT sees full clauses (Scribe quality drops on clips < ~1s)
+        self._min_stt_duration_sec = 1.4
+        self._max_speech_buffer_sec = 12.0  # Prefer flush at a pause after this
+        self._hard_max_speech_buffer_sec = 16.0  # Force flush even mid-utterance
         self._processing_start_time: float = 0.0
         self._last_stt_flush_time: float = 0.0
+        self._source_context = ""
 
         # Silence tracking — bridge short pauses so we capture full sentences
-        self._silence_count = 0  # consecutive silence chunks
-        self._silence_flush_threshold = 11  # ~1.1s silence; avoid mid-clause splits
+        self._silence_count = 0  # consecutive silence chunks (~100ms each)
+        self._silence_flush_threshold = 18  # ~1.8s silence; Japanese mid-clause pauses
 
         # Output suppression — prevent feedback loop when dubbed audio plays back
         # through the same device being captured (system loopback mode)
@@ -338,6 +367,7 @@ class ProcessingPipeline:
 
         self._on_output = on_output
         self._on_transcription = on_transcription
+        self._source_context = ""
 
         # Reset one-time skip flag so we can warn again this run if TTS is skipped
         if hasattr(self, "_tts_skip_logged"):
@@ -430,6 +460,7 @@ class ProcessingPipeline:
         # Reset state
         self._speech_buffer = []
         self._speech_buffer_duration_sec = 0.0
+        self._source_context = ""
         self._output_suppress_until = 0.0
         self._output_playing = False
         self._is_cloning_in_background = False
@@ -469,6 +500,29 @@ class ProcessingPipeline:
             "output": self._output_queue.qsize(),
         }
 
+    def _remember_source(self, text: str) -> None:
+        """Keep a rolling window of source speech for the next translation."""
+        if not self._config.preserve_context:
+            return
+        self._source_context = append_prior_context(self._source_context, text)
+
+    async def _call_translate(
+        self, text: str, target: str, source_language: str
+    ) -> str:
+        """Call service.translate_text, including prior context when supported."""
+        assert self._service is not None
+        prior = self._source_context if self._config.preserve_context else ""
+        fn = self._service.translate_text
+        try:
+            return await fn(
+                text,
+                target,
+                source_language=source_language,
+                context=prior,
+            )
+        except TypeError:
+            return await fn(text, target)
+
     async def _translate_for_tts(self, text: str, source_language: str) -> str:
         """Translate text to target language for TTS. Passthrough if same or no translator."""
         if not text.strip():
@@ -487,8 +541,15 @@ class ProcessingPipeline:
                     source=source_language,
                     target=target,
                     len=len(text),
+                    context_len=len(self._source_context),
                 )
-                return await self._service.translate_text(text, target)
+                out = strip_scraped_translate_error(
+                    await self._call_translate(text, target, source_language)
+                )
+                if not out or is_scraped_translate_error(out):
+                    logger.warning("Dropping Google Translate error page; using source text")
+                    return text
+                return out
             except Exception as e:
                 logger.warning("Translation failed, using original", error=str(e))
                 return text
@@ -725,9 +786,13 @@ class ProcessingPipeline:
                         self._speech_buffer_duration_sec += len(chunk.data) / 16000
                         self._silence_count = 0
 
-                        # Safety: flush very long continuous speech so we don't hold forever
-                        if self._speech_buffer and self._speech_buffer_duration_sec >= self._max_speech_buffer_sec:
-                            self._flush_speech_buffer(chunk.timestamp_ms, "max buffer")
+                        # Last resort: never hold more than hard max even mid-utterance
+                        if (
+                            self._speech_buffer
+                            and self._speech_buffer_duration_sec
+                            >= self._hard_max_speech_buffer_sec
+                        ):
+                            self._flush_speech_buffer(chunk.timestamp_ms, "hard max buffer")
 
                     else:
                         # Silence detected
@@ -743,6 +808,14 @@ class ProcessingPipeline:
                                 and self._speech_buffer_duration_sec >= self._min_stt_duration_sec
                             ):
                                 self._flush_speech_buffer(chunk.timestamp_ms, "silence")
+                            elif (
+                                self._speech_buffer_duration_sec >= self._max_speech_buffer_sec
+                                and self._silence_count >= 3
+                            ):
+                                # Long take: flush at a brief pause instead of mid-word
+                                self._flush_speech_buffer(
+                                    chunk.timestamp_ms, "max buffer pause"
+                                )
                         else:
                             # No buffered speech — nothing to do
                             self._silence_count = 0
@@ -969,6 +1042,7 @@ class ProcessingPipeline:
                                 )
                                 if source_text:
                                     self._stats.last_transcription = source_text
+                                    self._remember_source(source_text)
                                     self._event_bus.emit(
                                         EventType.TRANSCRIPTION_UPDATE,
                                         {"text": source_text, "language": source_lang},
@@ -1034,7 +1108,7 @@ class ProcessingPipeline:
                         stt_sec = max(1, len(audio_wav) // 32000)  # 16-bit mono 16kHz
                         self._config.usage_reporter.report("stt", stt_sec)
 
-                    transcription = (result.text or "").strip()
+                    transcription = strip_scraped_translate_error((result.text or "").strip())
                     self._stats.last_transcription = transcription
 
                     # Emit transcription (always non-empty so UI updates)
@@ -1047,10 +1121,11 @@ class ProcessingPipeline:
                     if self._on_transcription:
                         await self._on_transcription(transcription)
 
-                    # Translate to target language (passthrough if same or no translator)
+                    # Translate current utterance using prior source lines for continuity
                     text_for_tts = await self._translate_for_tts(
                         transcription, result.language_code
                     )
+                    self._remember_source(transcription)
                     # Report translation usage when using direct API (if we translated)
                     if self._config.usage_reporter and text_for_tts and text_for_tts != transcription:
                         self._config.usage_reporter.report("translate", max(1, len(text_for_tts)))
@@ -1256,8 +1331,8 @@ class ProcessingPipeline:
                 # to prevent feedback loop (app must never capture its own audio)
                 # float32 at 24kHz = 4 bytes per sample
                 playback_duration_sec = len(audio_bytes) / (4 * 24000)
-                # Buffer for playback queue + device latency + loopback delay (~0.5s)
-                self._output_suppress_until = time.time() + playback_duration_sec + 0.5
+                # Buffer for playback queue + device latency + loopback delay
+                self._output_suppress_until = time.time() + playback_duration_sec + 0.25
 
                 # Deliver to callback
                 if self._on_output:

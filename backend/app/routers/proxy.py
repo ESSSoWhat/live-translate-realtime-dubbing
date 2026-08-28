@@ -27,7 +27,11 @@ from app.models.responses import (
     VoiceItem,
 )
 from app.services.supabase_client import get_supabase
-from app.services.text_filter import strip_non_verbal
+from app.services.text_filter import (
+    is_scraped_translate_error,
+    strip_non_verbal,
+    strip_scraped_translate_error,
+)
 from app.services.usage import QuotaExceededError, check_and_record_quota, check_quota
 
 logger = structlog.get_logger(__name__)
@@ -212,7 +216,7 @@ async def transcribe(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("STT quota check failed", user_id=user["id"])
+        logger.warning("STT quota check failed", user_id=user["id"], error=str(exc))
         raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     client = _elevenlabs()
@@ -230,8 +234,9 @@ async def transcribe(
         raise _elevenlabs_upstream_error("Transcription", exc) from exc
 
     lang = getattr(result, "language_code", None) or language or "auto"
+    text = strip_scraped_translate_error((getattr(result, "text", None) or "").strip())
     return TranscriptionResponse(
-        text=(getattr(result, "text", None) or "").strip(),
+        text=text,
         language_code=str(lang),
     )
 
@@ -245,7 +250,7 @@ async def synthesize(
     user: dict = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     """Synthesize text to MP3 via ElevenLabs TTS; record usage by character count."""
-    text = strip_non_verbal(body.text or "")
+    text = strip_scraped_translate_error(strip_non_verbal(body.text or ""))
     if not text:
         raise HTTPException(status_code=400, detail="Text must not be empty")
     char_count = len(text)
@@ -259,7 +264,7 @@ async def synthesize(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("TTS quota check failed", user_id=user["id"])
+        logger.warning("TTS quota check failed", user_id=user["id"], error=str(exc))
         raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     try:
@@ -269,7 +274,7 @@ async def synthesize(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Dubbing quota check failed", user_id=user["id"])
+        logger.warning("Dubbing quota check failed", user_id=user["id"], error=str(exc))
         raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     client = _elevenlabs()
@@ -345,7 +350,7 @@ async def synthesize_stream(
     user: dict = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     """Stream TTS audio chunks from ElevenLabs."""
-    text = strip_non_verbal(body.text or "")
+    text = strip_scraped_translate_error(strip_non_verbal(body.text or ""))
     if not text:
         raise HTTPException(status_code=400, detail="Text must not be empty")
     estimated_dub_sec = max(1, int(round(len(text) / 14.0)))
@@ -356,7 +361,7 @@ async def synthesize_stream(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("TTS stream quota check failed", user_id=user["id"])
+        logger.warning("TTS stream quota check failed", user_id=user["id"], error=str(exc))
         raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
     try:
         await check_and_record_quota(user["id"], "dub", estimated_dub_sec)
@@ -365,7 +370,7 @@ async def synthesize_stream(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Dubbing stream quota check failed", user_id=user["id"])
+        logger.warning("Dubbing stream quota check failed", user_id=user["id"], error=str(exc))
         raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
     return StreamingResponse(
         _stream_tts_chunks(
@@ -397,12 +402,15 @@ async def translate(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Translate quota check failed", user_id=user["id"])
+        logger.warning("Translate quota check failed", user_id=user["id"], error=str(exc))
         raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     cfg = get_settings()
-    translated = body.text
     source_lang = body.source_language
+    source = strip_scraped_translate_error(body.text)
+    if not source:
+        return TranslationResponse(translated_text="", source_language=source_lang or "auto")
+    translated = source
 
     # Try OpenAI first, fall back to Google Translate
     if cfg.openai_api_key:
@@ -419,14 +427,14 @@ async def translate(
                 )
                 user_content = (
                     f"Prior context (already spoken, do not translate again):\n{prior}\n\n"
-                    f"New utterance to translate:\n{body.text}"
+                    f"New utterance to translate:\n{source}"
                 )
             else:
                 system = (
                     f"Translate the following text to {body.target_language}. "
                     "Return only the translated text, no explanations."
                 )
-                user_content = body.text
+                user_content = source
             response = await asyncio.wait_for(
                 client.chat.completions.create(
                     model="gpt-4o-mini",
@@ -438,11 +446,11 @@ async def translate(
                 ),
                 timeout=10.0,
             )
-            translated = response.choices[0].message.content or body.text
+            translated = response.choices[0].message.content or source
         except Exception as exc:
             logger.warning("OpenAI translation failed, falling back", error=str(exc))
 
-    if translated == body.text:
+    if translated == source:
         # Google Translate fallback (e.g. when OpenAI not configured or failed)
         try:
             from deep_translator import GoogleTranslator
@@ -452,13 +460,16 @@ async def translate(
             target = {"zh": "zh-CN", "fil": "tl", "iw": "he"}.get(target, target)
             translated = await asyncio.to_thread(
                 GoogleTranslator(source="auto", target=target).translate,
-                body.text,
+                source,
             )
         except Exception as exc:
             logger.error("Google Translate fallback failed", error=str(exc))
 
+    cleaned = strip_scraped_translate_error((translated or "").strip())
+    if is_scraped_translate_error(cleaned):
+        cleaned = ""
     return TranslationResponse(
-        translated_text=(translated or "").strip() or body.text,
+        translated_text=cleaned,
         source_language=source_lang or "auto",
     )
 
@@ -592,7 +603,7 @@ async def clone_voice(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Clone quota check failed", user_id=user["id"])
+        logger.warning("Clone quota check failed", user_id=user["id"], error=str(exc))
         raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     audio_bytes = await audio.read()

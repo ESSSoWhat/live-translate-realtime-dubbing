@@ -15,10 +15,26 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 # Apps where process loopback often fails (0x8000000E). Use system loopback instead.
+# Browsers use multi-process audio; ActivateAudioInterfaceAsync on the listed PID fails.
 PROCESS_LOOPBACK_UNRELIABLE: frozenset[str] = frozenset({
     "chrome.exe",
     "msedge.exe",
+    "firefox.exe",
+    "brave.exe",
+    "opera.exe",
+    "vivaldi.exe",
+    "chromium.exe",
 })
+
+
+def is_process_loopback_unreliable(process_name: str | None) -> bool:
+    """True if this executable's process loopback typically fails with 0x8000000E."""
+    if not process_name:
+        return False
+    key = process_name.lower().replace("/", "\\").rsplit("\\", 1)[-1].strip()
+    if not key.endswith(".exe"):
+        key = f"{key}.exe"
+    return key in PROCESS_LOOPBACK_UNRELIABLE
 
 
 @dataclass
@@ -108,8 +124,8 @@ def get_capture_config(
     Args:
         use_system_only: If True, always use system loopback (all system audio).
         target_pid: Process ID for per-app capture when use_system_only is False.
-        target_process_name: Process name (e.g. chrome.exe) — used to skip process
-            loopback for apps known to fail (Chrome, Edge).
+        target_process_name: Process name (e.g. firefox.exe) — used to skip process
+            loopback for browsers known to fail (Chrome, Edge, Firefox).
         output_device_id: Sounddevice output index; loopback follows this device.
 
     Returns:
@@ -128,10 +144,7 @@ def get_capture_config(
         raise RuntimeError("No output device found for loopback capture.")
 
     # Skip process loopback for apps that often fail (0x8000000E)
-    skip_process_loopback = (
-        target_process_name
-        and target_process_name.lower() in PROCESS_LOOPBACK_UNRELIABLE
-    )
+    skip_process_loopback = is_process_loopback_unreliable(target_process_name)
     if skip_process_loopback:
         logger.info(
             "Using system loopback (process loopback unreliable for this app)",

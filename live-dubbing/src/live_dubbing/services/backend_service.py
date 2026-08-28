@@ -244,7 +244,7 @@ class BackendProxyService:
                 "text": text,
                 "target_language": target_language,
                 "source_language": source_language,
-                "context": context,
+                "prior_context": context,
             },
             headers={},
         )

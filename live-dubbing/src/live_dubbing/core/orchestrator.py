@@ -236,6 +236,7 @@ class Orchestrator:
             voice_similarity=self._settings.voice_clone.voice_similarity,
             use_premade_voice_id=self._settings.voice_clone.use_premade_voice_id,
             auto_clone_voice=self._settings.voice_clone.auto_clone_voice,
+            preserve_context=self._settings.translation.preserve_context,
             usage_reporter=getattr(self, "_usage_reporter", None),
         )
         self._processing_pipeline = ProcessingPipeline(
@@ -361,6 +362,10 @@ class Orchestrator:
             if config.mode == "system_loopback":
                 self._audio_routing.set_capture_mode(CaptureMode.SYSTEM_LOOPBACK)
                 logger.info("Using in-app system loopback capture", device_id=device_id)
+                if not use_system_fallback and target_app.pid:
+                    self._event_bus.emit_warning(
+                        f"Process loopback unavailable. Using all system audio for {target_app.name}."
+                    )
             else:
                 self._audio_routing.set_capture_mode(CaptureMode.PROCESS_LOOPBACK)
                 logger.info("Using in-app process loopback capture", pid=capture_pid)
@@ -391,6 +396,8 @@ class Orchestrator:
                     voice_similarity=self._settings.voice_clone.voice_similarity,
                     use_premade_voice_id=self._settings.voice_clone.use_premade_voice_id,
                     auto_clone_voice=self._settings.voice_clone.auto_clone_voice,
+                    preserve_context=self._settings.translation.preserve_context,
+                    usage_reporter=getattr(self, "_usage_reporter", None),
                 ))
 
             # Start the processing pipeline BEFORE audio capture

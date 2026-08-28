@@ -107,3 +107,30 @@ def strip_non_verbal(text: str) -> str:
     result = _WHITESPACE_RE.sub(" ", result).strip()
 
     return result
+
+
+_GOOGLE_TRANSLATE_ERROR_RE = re.compile(
+    r"error\s*500\s*\(\s*server\s*error\s*\)|"
+    r"that's all we know|"
+    r"that\u2019s all we know|"
+    r"!!\s*1500",
+    re.IGNORECASE,
+)
+_GOOGLE_ERROR_BLOB_RE = re.compile(
+    r"error\s*500\s*\(\s*server\s*error\s*\)[\s\S]*?"
+    r"(?:that's all we know\.?|that\u2019s all we know\.?|$)",
+    re.IGNORECASE,
+)
+
+
+def is_scraped_translate_error(text: str) -> bool:
+    """True when Google Translate HTML error was scraped as the translation."""
+    return bool(text and _GOOGLE_TRANSLATE_ERROR_RE.search(text))
+
+
+def strip_scraped_translate_error(text: str) -> str:
+    """Remove Google 500/1500 error-page text, including truncated snippets."""
+    if not text:
+        return ""
+    cleaned = _GOOGLE_ERROR_BLOB_RE.sub(" ", text)
+    return _WHITESPACE_RE.sub(" ", cleaned).strip()

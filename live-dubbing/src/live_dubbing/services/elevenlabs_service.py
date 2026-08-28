@@ -297,7 +297,13 @@ class ElevenLabsService:
         "kk": "kk",
     }
 
-    async def translate_text(self, text: str, target_language: str) -> str:
+    async def translate_text(
+        self,
+        text: str,
+        target_language: str,
+        source_language: str = "auto",
+        context: str = "",
+    ) -> str:
         """
         Translate text to target language.
 
@@ -307,6 +313,8 @@ class ElevenLabsService:
         Args:
             text: Text to translate
             target_language: Target language code (e.g., "en", "ja", "ko")
+            source_language: Source language code (e.g., "ja"); unused by Google fallback
+            context: Recent prior source text for pronoun/topic continuity
 
         Returns:
             Translated text
@@ -315,7 +323,9 @@ class ElevenLabsService:
             return text
 
         # Try OpenAI first if available
-        translated = await self._translate_with_openai(text, target_language)
+        translated = await self._translate_with_openai(
+            text, target_language, context, source_language
+        )
         if translated is not None:
             return translated
 
@@ -327,7 +337,13 @@ class ElevenLabsService:
         logger.warning("All translation methods failed, returning original text")
         return text
 
-    async def _translate_with_openai(self, text: str, target_language: str) -> str | None:
+    async def _translate_with_openai(
+        self,
+        text: str,
+        target_language: str,
+        context: str = "",
+        source_language: str = "auto",
+    ) -> str | None:
         """Translate using OpenAI GPT. Returns None if unavailable."""
         try:
             # Get language name from code
@@ -348,25 +364,49 @@ class ElevenLabsService:
             if client is None:
                 return None  # No OpenAI available, caller should try fallback
 
+            prior = (context or "").strip()
+            source_hint = ""
+            if source_language and source_language != "auto":
+                source_hint = f" The source language is {source_language}."
+            if prior:
+                system = (
+                    f"You are translating live speech to {target_lang_name}.{source_hint} "
+                    "Translate only the NEW utterance. Use prior context for "
+                    "continuity (pronouns, topic). Do not re-translate prior text. "
+                    "Only output the translated text, nothing else. "
+                    "Preserve the tone and style of the original. "
+                    "Remove any non-verbal markers like [MUSIC], (laughter), [PAUSE], ♪, etc. "
+                    "Only output spoken words."
+                )
+                user_content = (
+                    f"Prior context (already spoken, do not translate again):\n{prior}\n\n"
+                    f"New utterance to translate:\n{text}"
+                )
+            else:
+                system = (
+                    f"You are a translator. Translate the following text to {target_lang_name}. "
+                    "Only output the translated text, nothing else. "
+                    "Preserve the tone and style of the original. "
+                    "Remove any non-verbal markers like [MUSIC], (laughter), [PAUSE], ♪, etc. "
+                    "Only output spoken words."
+                )
+                user_content = text
+
             response = await asyncio.wait_for(
                 client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
                         {
                             "role": "system",
-                            "content": f"You are a translator. Translate the following text to {target_lang_name}. "
-                                       f"Only output the translated text, nothing else. "
-                                       f"Preserve the tone and style of the original. "
-                                       f"Remove any non-verbal markers like [MUSIC], (laughter), [PAUSE], ♪, etc. "
-                                       f"Only output spoken words."
+                            "content": system,
                         },
                         {
                             "role": "user",
-                            "content": text
+                            "content": user_content,
                         }
                     ],
                     temperature=0.3,
-                    max_tokens=500,
+                    max_tokens=2000,
                 ),
                 timeout=10.0,
             )
@@ -417,6 +457,11 @@ class ElevenLabsService:
                     translated_len=len(translated) if translated else 0,
                     target_lang=target_language,
                 )
+            from live_dubbing.processing.text_filter import is_scraped_translate_error
+
+            if translated and is_scraped_translate_error(str(translated)):
+                logger.warning("Google Translate returned an error page")
+                return None
             return str(translated) if translated else text
 
         except asyncio.TimeoutError:
