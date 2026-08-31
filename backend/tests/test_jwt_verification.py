@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
@@ -116,3 +116,24 @@ def test_unsupported_alg_rejected() -> None:
 def test_looks_like_jwt() -> None:
     assert deps._looks_like_jwt(_hs256(_claims())) is True
     assert deps._looks_like_jwt("plain-api-key-token-no-dots") is False
+
+
+def test_get_current_user_api_key_lookup_error_is_401() -> None:
+    """Lookup failures must 401, not crash logging (stdlib logging rejects error=)."""
+    import asyncio
+
+    chain = MagicMock()
+    chain.select.return_value.eq.return_value.limit.return_value.execute = AsyncMock(
+        side_effect=RuntimeError("dns")
+    )
+    sb = MagicMock()
+    sb.table.return_value = chain
+
+    async def _run() -> None:
+        with patch.object(deps, "get_supabase", AsyncMock(return_value=sb)):
+            with pytest.raises(HTTPException) as err:
+                await deps.get_current_user("Bearer not-a-jwt-token-value-here")
+        assert err.value.status_code == 401
+        assert err.value.detail == "Invalid API key"
+
+    asyncio.run(_run())

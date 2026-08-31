@@ -224,7 +224,14 @@ async def _ensure_user_api_key(sb, user_row: dict) -> str:
     if existing:
         return existing
     api_key = secrets.token_urlsafe(32)
-    await sb.table("users").update({"api_key": api_key}).eq("id", user_row["id"]).execute()
+    try:
+        await sb.table("users").update({"api_key": api_key}).eq("id", user_row["id"]).execute()
+    except Exception as exc:
+        logger.warning("Could not persist API key", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Sign-in could not be completed",
+        ) from exc
     return api_key
 
 
@@ -245,7 +252,7 @@ async def _select_user(sb: object, column: str, value: str) -> dict | None:
         result = await (
             sb.table("users").select("*").eq(column, value).limit(1).execute()  # type: ignore[union-attr]
         )
-    except PostgrestAPIError as exc:
+    except Exception as exc:
         logger.debug("users lookup empty or failed", column=column, error=str(exc))
         return None
     return _row_from_result(result)

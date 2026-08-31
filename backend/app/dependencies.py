@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import logging
-
 import jwt  # PyJWT
+import structlog
 from fastapi import Header, HTTPException, status
 from jwt import PyJWKClient
 
 from app.config import get_settings
 from app.services.supabase_client import get_supabase
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Clock skew: freshly issued tokens can have iat a few seconds in the future.
 _JWT_LEEWAY_SECONDS = 120
@@ -87,20 +86,43 @@ def _verify_supabase_jwt(token: str) -> str:
     except HTTPException:
         raise
     except jwt.PyJWKClientError as exc:
-        logger.warning("JWKS fetch failed", exc_info=exc)
+        logger.warning("JWKS fetch failed", error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Unable to fetch signing key"
         ) from exc
     except jwt.ExpiredSignatureError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired") from exc
     except jwt.InvalidTokenError as exc:
-        logger.warning("JWT validation failed", exc_info=exc)
+        logger.warning("JWT validation failed", error=str(exc))
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token") from exc
 
     sub = payload.get("sub")
     if not sub:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing sub claim")
     return sub
+
+
+def _row_from_lookup(result: object) -> dict | None:
+    """Normalize PostgREST ``.data`` (dict, list, or empty) to a single row."""
+    data = getattr(result, "data", None)
+    if not data:
+        return None
+    if isinstance(data, list):
+        first = data[0] if data else None
+        return first if isinstance(first, dict) else None
+    return data if isinstance(data, dict) else None
+
+
+async def _lookup_user_row(sb: object, column: str, value: str) -> dict | None:
+    """Fetch one users row. Avoid maybe_single — 0 rows raises PostgREST 204/PGRST116."""
+    try:
+        result = await (
+            sb.table("users").select("*").eq(column, value).limit(1).execute()  # type: ignore[union-attr]
+        )
+    except Exception as exc:
+        logger.warning("User lookup failed", column=column, error=str(exc))
+        return None
+    return _row_from_lookup(result)
 
 
 async def get_current_user(authorization: str | None = Header(default=None)) -> dict:  # noqa: B008
@@ -120,28 +142,17 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
 
     # API key path (Wix flow): token is the raw api_key from users.api_key
     if not _looks_like_jwt(token):
-        try:
-            result = await sb.table("users").select("*").eq("api_key", token).maybe_single().execute()
-        except Exception as exc:
-            # PostgREST maybe_single raises when 0 rows; treat as invalid key.
-            logger.warning("API key lookup failed", error=str(exc))
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key") from exc
-        if result and result.data:
-            return result.data
+        row = await _lookup_user_row(sb, "api_key", token)
+        if row:
+            return row
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
     # JWT path (Supabase): verify signature via JWKS (RS256/ES256) or legacy HS256 secret
     supabase_uid = _verify_supabase_jwt(token)
-
-    try:
-        result = await sb.table("users").select("*").eq("supabase_uid", supabase_uid).maybe_single().execute()
-    except Exception as exc:
-        logger.warning("JWT user lookup failed", error=str(exc))
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found") from exc
-    if not result or not result.data:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-
-    return result.data
+    row = await _lookup_user_row(sb, "supabase_uid", supabase_uid)
+    if row:
+        return row
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
 
 # Convenience type alias for router function signatures
