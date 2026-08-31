@@ -2457,9 +2457,14 @@ class MainWindow(QMainWindow):
             if self._dubbed_window is not None:
                 self._dubbed_window.set_status("Using all system audio")
             return
-        if "unavailable on the server" in lower or "switched to the default voice" in lower:
+        if (
+            "unavailable on the server" in lower
+            or "switched to the default voice" in lower
+            or "selected voice is unavailable" in lower
+            or "closest matching voice" in lower
+        ):
             if self._dubbed_window is not None:
-                self._dubbed_window.set_status("Using default voice")
+                self._dubbed_window.set_status("Using closest matching voice")
             return
         QMessageBox.warning(self, "Warning", message)
 
