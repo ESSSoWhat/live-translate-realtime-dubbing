@@ -257,7 +257,9 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     if redirect_uri and not _is_valid_desktop_redirect(redirect_uri):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid redirect_uri")
 
-    sb = await get_supabase()
+    # A long-lived client keeps the last user's access token. PostgREST then
+    # rejects that expired token (PGRST303) and the page shows a 500.
+    sb = await create_auth_client()
     api_key: str | None = None
 
     pasted = (body.api_key or "").strip()
