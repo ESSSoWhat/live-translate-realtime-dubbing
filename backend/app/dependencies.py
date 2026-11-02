@@ -9,7 +9,7 @@ from fastapi import Header, HTTPException, status
 from jwt import PyJWKClient
 
 from app.config import get_settings
-from app.services.supabase_client import get_supabase
+from app.services.supabase_client import create_auth_client
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,24 @@ def _get_jwks_client() -> PyJWKClient:
 def _looks_like_jwt(token: str) -> bool:
     """True if token has three dot-separated parts (JWT shape)."""
     return token.count(".") == 2 and len(token) > 20
+
+
+def _rows(result: object) -> list[dict]:
+    data = getattr(result, "data", None)
+    if isinstance(data, dict):
+        return [data]
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    return []
+
+
+def _jwt_email(token: str) -> str:
+    """Read the email claim from an already-verified access token."""
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False})
+    except jwt.InvalidTokenError:
+        return ""
+    return str(claims.get("email") or "")
 
 
 def _verify_supabase_jwt(token: str) -> str:
@@ -103,32 +121,50 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
 
-    sb = await get_supabase()
+    # A fresh service-role client. Sign-in calls replace the shared client's
+    # session with the user JWT, and a lookup on that client fails closed.
+    sb = await create_auth_client()
 
     # API key path (Wix flow): token is the raw api_key from users.api_key
     if not _looks_like_jwt(token):
         try:
-            result = await sb.table("users").select("*").eq("api_key", token).maybe_single().execute()
+            result = await sb.table("users").select("*").eq("api_key", token).limit(1).execute()
         except Exception as exc:
-            # PostgREST maybe_single raises when 0 rows; treat as invalid key.
-            logger.warning("API key lookup failed", error=str(exc))
+            logger.warning("API key lookup failed: %s", exc)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key") from exc
-        if result and result.data:
-            return result.data
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        rows = _rows(result)
+        if not rows:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        return rows[0]
 
     # JWT path (Supabase): verify signature via JWKS (RS256/ES256) or legacy HS256 secret
     supabase_uid = _verify_supabase_jwt(token)
 
     try:
-        result = await sb.table("users").select("*").eq("supabase_uid", supabase_uid).maybe_single().execute()
+        result = await sb.table("users").select("*").eq("supabase_uid", supabase_uid).limit(1).execute()
     except Exception as exc:
-        logger.warning("JWT user lookup failed", error=str(exc))
+        logger.warning("JWT user lookup failed: %s", exc)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found") from exc
-    if not result or not result.data:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    rows = _rows(result)
+    if rows:
+        return rows[0]
 
-    return result.data
+    # Google sign-in on the phone returns a Supabase token without calling /login,
+    # so the users row may not exist yet.
+    email = _jwt_email(token) or f"{supabase_uid[:8]}@users.local"
+    try:
+        inserted = (
+            await sb.table("users")
+            .insert({"supabase_uid": supabase_uid, "email": email, "tier": "free"})
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("JWT user create failed: %s", exc)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found") from exc
+    created = _rows(inserted)
+    if not created:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    return created[0]
 
 
 # Convenience type alias for router function signatures
