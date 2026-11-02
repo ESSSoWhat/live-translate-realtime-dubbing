@@ -100,6 +100,11 @@ def mock_supabase() -> Generator[MagicMock, None, None]:
         # select path (login, oauth): returns single row
         chain.select = MagicMock(return_value=chain)
         chain.eq = MagicMock(return_value=chain)
+        chain.limit = MagicMock(
+            return_value=MagicMock(
+                execute=AsyncMock(return_value=MagicMock(data=[user_row]))
+            )
+        )
         chain.maybe_single = MagicMock(
             return_value=MagicMock(
                 execute=AsyncMock(return_value=MagicMock(data=user_row))
@@ -125,8 +130,11 @@ def auth_client(
     async def fake_usage_snapshot(user_id: str) -> dict:
         return _usage_snapshot()
 
-    with patch("app.routers.auth.get_supabase", AsyncMock(return_value=mock_supabase)):
-        with patch("app.routers.auth.get_usage_snapshot", side_effect=fake_usage_snapshot):
-            app = create_app()
-            with TestClient(app) as c:
-                yield c
+    with (
+        patch("app.routers.auth.get_supabase", AsyncMock(return_value=mock_supabase)),
+        patch("app.routers.auth.create_auth_client", AsyncMock(return_value=mock_supabase)),
+        patch("app.routers.auth.get_usage_snapshot", side_effect=fake_usage_snapshot),
+    ):
+        app = create_app()
+        with TestClient(app) as c:
+            yield c

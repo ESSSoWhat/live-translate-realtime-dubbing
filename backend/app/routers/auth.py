@@ -411,10 +411,10 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest) -> AuthResponse:
     """Create a new account."""
-    sb = await get_supabase()
+    auth_sb = await create_auth_client()
 
     try:
-        resp = await sb.auth.sign_up({"email": body.email, "password": body.password})
+        resp = await auth_sb.auth.sign_up({"email": body.email, "password": body.password})
     except Exception as exc:
         logger.exception("Registration failed")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Authentication failed") from exc
@@ -430,7 +430,8 @@ async def register(body: RegisterRequest) -> AuthResponse:
             detail="Please check your email to confirm your account, then sign in.",
         )
 
-    # Create internal user row (rollback Supabase user on insert failure)
+    # Create internal user row on a client that is still the service role.
+    sb = await create_auth_client()
     try:
         insert_result = (
             await sb.table("users")
@@ -477,10 +478,10 @@ async def register(body: RegisterRequest) -> AuthResponse:
 @router.post("/login", response_model=AuthResponse)
 async def login(body: LoginRequest) -> AuthResponse:
     """Login with email and password."""
-    sb = await get_supabase()
+    auth_sb = await create_auth_client()
 
     try:
-        resp = await sb.auth.sign_in_with_password({"email": body.email, "password": body.password})
+        resp = await auth_sb.auth.sign_in_with_password({"email": body.email, "password": body.password})
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -490,9 +491,15 @@ async def login(body: LoginRequest) -> AuthResponse:
     if resp.user is None or resp.session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login failed")
 
-    # Fetch internal user row (maybe_single so auto-create path runs when no row)
-    result = await sb.table("users").select("*").eq("supabase_uid", resp.user.id).maybe_single().execute()
-    if not result or not result.data:
+    # Fetch internal user row on a client that is still the service role.
+    sb = await create_auth_client()
+    try:
+        result = await sb.table("users").select("*").eq("supabase_uid", resp.user.id).limit(1).execute()
+    except Exception as exc:
+        logger.warning("User lookup after login failed", error=str(exc))
+        result = None
+    rows = result.data if result is not None and isinstance(result.data, list) else []
+    if not rows:
         # Auto-create if missing (e.g. user registered via web)
         try:
             result = (
@@ -510,7 +517,7 @@ async def login(body: LoginRequest) -> AuthResponse:
                 detail="Login could not be completed",
             ) from exc
     else:
-        user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        user_row = rows[0]
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))
@@ -532,7 +539,7 @@ async def login(body: LoginRequest) -> AuthResponse:
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(body: RefreshRequest) -> TokenResponse:
     """Exchange a refresh token for a new access token."""
-    sb = await get_supabase()
+    sb = await create_auth_client()
 
     try:
         resp = await sb.auth.refresh_session(body.refresh_token)
@@ -555,7 +562,7 @@ async def refresh(body: RefreshRequest) -> TokenResponse:
 @router.post("/forgot-password")
 async def forgot_password(body: ForgotPasswordRequest) -> Response:
     """Trigger a password reset email via Supabase."""
-    sb = await get_supabase()
+    sb = await create_auth_client()
     with contextlib.suppress(Exception):
         await sb.auth.reset_password_email(body.email)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -638,13 +645,13 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
     URL.  Returns the same ``AuthResponse`` as the password-login endpoint
     so the caller can store and use the tokens identically.
     """
-    sb = await get_supabase()
+    auth_sb = await create_auth_client()
 
     try:
         exchange_params: dict = {"auth_code": body.code}
         if body.code_verifier:
             exchange_params["code_verifier"] = body.code_verifier
-        resp = await sb.auth.exchange_code_for_session(exchange_params)
+        resp = await auth_sb.auth.exchange_code_for_session(exchange_params)
     except Exception as exc:
         logger.error("OAuth code exchange failed", error=str(exc), code_len=len(body.code))
         raise HTTPException(
@@ -658,15 +665,21 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
             detail="OAuth exchange returned no session",
         )
 
-    # Upsert internal user row (maybe_single so creation path runs when missing)
-    result = (
-        await sb.table("users")
-        .select("*")
-        .eq("supabase_uid", resp.user.id)
-        .maybe_single()
-        .execute()
-    )
-    if not result or not result.data:
+    # Upsert internal user row on a client that is still the service role.
+    sb = await create_auth_client()
+    try:
+        result = (
+            await sb.table("users")
+            .select("*")
+            .eq("supabase_uid", resp.user.id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("User lookup after OAuth exchange failed", error=str(exc))
+        result = None
+    oauth_rows = result.data if result is not None and isinstance(result.data, list) else []
+    if not oauth_rows:
         try:
             result = (
                 await sb.table("users")
@@ -687,7 +700,7 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
                 detail="OAuth sign-in could not be completed",
             ) from exc
     else:
-        user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        user_row = oauth_rows[0]
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))
@@ -717,13 +730,13 @@ class _IdTokenRequest(BaseModel):
 
 async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> AuthResponse:
     """Common logic for ID token sign-in (Google/Apple native SDKs)."""
-    sb = await get_supabase()
+    auth_sb = await create_auth_client()
 
     try:
         sign_in_params: dict = {"provider": provider, "token": id_token}
         if nonce:
             sign_in_params["nonce"] = nonce
-        resp = await sb.auth.sign_in_with_id_token(sign_in_params)
+        resp = await auth_sb.auth.sign_in_with_id_token(sign_in_params)
     except Exception as exc:
         logger.error(f"{provider} ID token sign-in failed", error=str(exc))
         raise HTTPException(
@@ -737,15 +750,21 @@ async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> Au
             detail=f"{provider.title()} sign-in returned no session",
         )
 
-    # Upsert internal user row
-    result = (
-        await sb.table("users")
-        .select("*")
-        .eq("supabase_uid", resp.user.id)
-        .maybe_single()
-        .execute()
-    )
-    if not result or not result.data:
+    # Upsert internal user row on a client that is still the service role.
+    sb = await create_auth_client()
+    try:
+        result = (
+            await sb.table("users")
+            .select("*")
+            .eq("supabase_uid", resp.user.id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("User lookup after ID token sign-in failed", error=str(exc))
+        result = None
+    id_rows = result.data if result is not None and isinstance(result.data, list) else []
+    if not id_rows:
         try:
             result = (
                 await sb.table("users")
@@ -766,7 +785,7 @@ async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> Au
                 detail=f"{provider.title()} sign-in could not be completed",
             ) from exc
     else:
-        user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        user_row = id_rows[0]
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))
