@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module  # pyright: i
 )
 
 from live_dubbing.core.state import AppState, TranslationState
+from live_dubbing.gui.theme import ACCENT, DANGER, MUTED, OK, WARN
 
 
 class StatusIndicator(QFrame):
@@ -41,11 +42,11 @@ class StatusIndicator(QFrame):
             state: One of "idle", "active", "warning", "error"
         """
         colors = {
-            "idle": "#666",
-            "active": "#4CAF50",
-            "warning": "#FFC107",
-            "error": "#F44336",
-            "processing": "#2196F3",
+            "idle": MUTED,
+            "active": OK,
+            "warning": WARN,
+            "error": DANGER,
+            "processing": ACCENT,
         }
         self._set_color(colors.get(state, "#666"))
 
@@ -79,7 +80,7 @@ class StatusBar(QWidget):
 
         # Capture status (virtual cable for play-as-mic; updated from orchestrator)
         self._vb_label = QLabel("Capture: --")
-        self._vb_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        self._vb_label.setObjectName("muted")
         self._vb_label.setToolTip(
             "Virtual audio cable (e.g. VB-Cable) for play-as-mic routing. "
             "In-app loopback capture does not require this."
@@ -88,21 +89,19 @@ class StatusBar(QWidget):
 
         # API status
         self._api_label = QLabel("API: --")
-        self._api_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        self._api_label.setObjectName("muted")
         self._api_label.setToolTip("API key from sign-in or ELEVENLABS_API_KEY")
         layout.addWidget(self._api_label)
 
         # Latency
         self._latency_label = QLabel("Latency: --")
-        self._latency_label.setStyleSheet("font-size: 12px; color: #aaa;")
+        self._latency_label.setObjectName("muted")
         self._latency_label.setToolTip("Round-trip processing latency")
         layout.addWidget(self._latency_label)
 
         # ElevenLabs credit
         self._credit_label = QLabel("Powered by ElevenLabs")
-        self._credit_label.setStyleSheet(
-            "font-size: 10px; color: #999; font-style: italic;"
-        )
+        self._credit_label.setObjectName("muted")
         layout.addWidget(self._credit_label)
 
     def set_app_state(self, state: AppState) -> None:
@@ -150,31 +149,31 @@ class StatusBar(QWidget):
         """
         if installed:
             self._vb_label.setText("Capture: Available")
-            self._vb_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
+            self._vb_label.setStyleSheet(f"font-size: 12px; color: {OK};")
         else:
             self._vb_label.setText("Capture: Unavailable")
-            self._vb_label.setStyleSheet("font-size: 12px; color: #F44336;")
+            self._vb_label.setStyleSheet(f"font-size: 12px; color: {DANGER};")
 
     def set_api_status(self, configured: bool) -> None:
         """Update API key status."""
         if configured:
             self._api_label.setText("API: OK")
-            self._api_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
+            self._api_label.setStyleSheet(f"font-size: 12px; color: {OK};")
         else:
             self._api_label.setText("API: Missing")
-            self._api_label.setStyleSheet("font-size: 12px; color: #F44336;")
+            self._api_label.setStyleSheet(f"font-size: 12px; color: {DANGER};")
 
     def set_latency(self, latency_ms: float) -> None:
         """Update latency display."""
         if latency_ms < 0:
             self._latency_label.setText("Latency: --")
-            self._latency_label.setStyleSheet("font-size: 12px; color: #aaa;")
+            self._latency_label.setStyleSheet(f"font-size: 12px; color: {MUTED};")
         elif latency_ms < 1000:
             self._latency_label.setText(f"Latency: {latency_ms:.0f}ms")
-            self._latency_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
+            self._latency_label.setStyleSheet(f"font-size: 12px; color: {OK};")
         elif latency_ms < 2000:
             self._latency_label.setText(f"Latency: {latency_ms:.0f}ms")
-            self._latency_label.setStyleSheet("font-size: 12px; color: #FFC107;")
+            self._latency_label.setStyleSheet(f"font-size: 12px; color: {WARN};")
         else:
             self._latency_label.setText(f"Latency: {latency_ms:.0f}ms")
-            self._latency_label.setStyleSheet("font-size: 12px; color: #F44336;")
+            self._latency_label.setStyleSheet(f"font-size: 12px; color: {DANGER};")

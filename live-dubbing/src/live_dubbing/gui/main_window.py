@@ -61,6 +61,7 @@ from live_dubbing.core.events import Event, EventBus, EventType
 from live_dubbing.core.mic_translator import MicTranslator
 from live_dubbing.core.orchestrator import Orchestrator
 from live_dubbing.core.state import AppState, TranslationState
+from live_dubbing.gui.theme import WARN, brand_mark
 from live_dubbing.gui.widgets.app_selector import AppSelectorWidget
 from live_dubbing.gui.widgets.audio_meter import AudioMeter
 from live_dubbing.gui.widgets.debug_window import DebugWindow
@@ -150,7 +151,7 @@ class MainWindow(QMainWindow):
 
     def _setup_window(self) -> None:
         """Configure window properties."""
-        self.setWindowTitle("Live Translate - Real-time Translation")
+        self.setWindowTitle("Live Translate")
         self.setMinimumSize(800, 600)
 
         # Set window icon
@@ -196,13 +197,66 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.warning("Could not restore window position", error=str(e))
 
+    def _account_summary(self) -> str:
+        """Email and plan line, in the same form as the DubTool header."""
+        email = str(self._auth_response.get("email") or "").strip()
+        tier = str(self._auth_response.get("tier") or "free").strip().lower()
+        plan = "free trial" if tier in ("", "free") else "paid plan · full access"
+        return f"{email} · {plan}" if email else plan
+
+    def _build_brand_header(self) -> QWidget:
+        """Logo, wordmark, account line, and sign out."""
+        header = QWidget()
+        header.setObjectName("brandHeader")
+        row = QHBoxLayout(header)
+        row.setContentsMargins(20, 18, 20, 6)
+        row.setSpacing(14)
+
+        logo = QLabel()
+        logo.setFixedSize(64, 64)
+        mark = brand_mark(64)
+        if not mark.isNull():
+            logo.setPixmap(mark)
+        row.addWidget(logo)
+
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
+        wordmark = QLabel("Live Translate")
+        wordmark.setObjectName("wordmark")
+        tagline = QLabel("Real-time AI dubbing")
+        tagline.setObjectName("tagline")
+        titles.addWidget(wordmark)
+        titles.addWidget(tagline)
+        titles.addStretch()
+        row.addLayout(titles)
+        row.addStretch(1)
+
+        side = QVBoxLayout()
+        side.setSpacing(8)
+        account = QLabel(self._account_summary())
+        account.setObjectName("accountLine")
+        account.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        side.addWidget(account)
+        sign_out = QPushButton("Sign out")
+        sign_out.setObjectName("secondary")
+        sign_out.clicked.connect(self._on_sign_out)
+        sign_out_row = QHBoxLayout()
+        sign_out_row.addStretch(1)
+        sign_out_row.addWidget(sign_out)
+        side.addLayout(sign_out_row)
+        row.addLayout(side)
+        return header
+
     def _setup_ui(self) -> None:
         """Set up the user interface."""
         central_widget = QWidget()
+        central_widget.setObjectName("AppRoot")
+        central_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setCentralWidget(central_widget)
         root_layout = QVBoxLayout(central_widget)
         root_layout.setSpacing(0)
         root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.addWidget(self._build_brand_header())
 
         # Scrollable content
         scroll_area = QScrollArea()
@@ -213,9 +267,11 @@ class MainWindow(QMainWindow):
         scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
         scroll_content = QWidget()
+        scroll_content.setObjectName("ScrollContent")
+        scroll_content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         main_layout = QVBoxLayout(scroll_content)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(20, 4, 20, 16)
 
         # Top section: Configuration
         config_layout = QHBoxLayout()
@@ -234,13 +290,13 @@ class MainWindow(QMainWindow):
         # API key missing banner (hidden by default)
         self._api_banner = QFrame()
         self._api_banner.setStyleSheet(
-            """
-            QFrame {
-                background-color: #3d3500;
-                border: 1px solid #665a00;
-                border-radius: 4px;
+            f"""
+            QFrame {{
+                background-color: #241c08;
+                border: 1px solid {WARN};
+                border-radius: 10px;
                 padding: 4px;
-            }
+            }}
             """
         )
         banner_layout = QHBoxLayout(self._api_banner)
@@ -248,7 +304,8 @@ class MainWindow(QMainWindow):
         banner_label = QLabel(
             "API key not configured — sign in or set ELEVENLABS_API_KEY in your environment."
         )
-        banner_label.setStyleSheet("color: #ffcc00; font-size: 12px;")
+        banner_label.setObjectName("muted")
+        banner_label.setStyleSheet(f"color: {WARN}; font-size: 12px;")
         banner_layout.addWidget(banner_label)
         banner_layout.addStretch()
         self._api_banner.setVisible(False)  # Hidden until we know key is missing
@@ -303,7 +360,7 @@ class MainWindow(QMainWindow):
         device_row.addWidget(self._output_device_combo)
 
         self._refresh_devices_btn = QPushButton("Refresh")
-        self._refresh_devices_btn.setFixedWidth(60)
+        self._refresh_devices_btn.setObjectName("secondary")
         self._refresh_devices_btn.setToolTip("Refresh audio device lists")
         self._refresh_devices_btn.clicked.connect(self._refresh_audio_device_lists)
         device_row.addWidget(self._refresh_devices_btn)
@@ -322,12 +379,12 @@ class MainWindow(QMainWindow):
         device_row.addWidget(self._volume_slider)
         self._volume_label = QLabel(f"{int(self._settings.audio.output_volume * 100)}%")
         self._volume_label.setMinimumWidth(32)
-        self._volume_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._volume_label.setObjectName("muted")
         device_row.addWidget(self._volume_label)
 
         self._mute_cb = QCheckBox("Mute")
         self._mute_cb.setToolTip("Mute TTS output temporarily")
-        self._mute_cb.setStyleSheet("QCheckBox { color: #888; font-size: 11px; }")
+        self._mute_cb.setObjectName("muted")
         self._mute_cb.toggled.connect(self._on_mute_toggled)
         device_row.addWidget(self._mute_cb)
 
@@ -335,7 +392,7 @@ class MainWindow(QMainWindow):
         self._play_as_mic_cb.setToolTip(
             "Route TTS to CABLE Input so Zoom/Discord can use it as mic input"
         )
-        self._play_as_mic_cb.setStyleSheet("QCheckBox { color: #888; font-size: 11px; }")
+        self._play_as_mic_cb.setObjectName("muted")
         self._play_as_mic_cb.setChecked(self._settings.audio.output_play_as_mic)
         self._play_as_mic_cb.toggled.connect(self._on_play_as_mic_toggled)
         device_row.addWidget(self._play_as_mic_cb)
@@ -343,7 +400,7 @@ class MainWindow(QMainWindow):
         self._play_as_mic_hint = QLabel(
             "Set your mic in Zoom/Discord to 'CABLE Output (VB-Audio Virtual Cable)'"
         )
-        self._play_as_mic_hint.setStyleSheet("color: #888; font-size: 10px;")
+        self._play_as_mic_hint.setObjectName("muted")
         self._play_as_mic_hint.setVisible(False)
         device_row.addWidget(self._play_as_mic_hint)
 
@@ -358,46 +415,13 @@ class MainWindow(QMainWindow):
 
         self._start_btn = QPushButton("Start Translation")
         self._start_btn.setMinimumHeight(40)
-        self._start_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-size: 14px;
-                font-weight: bold;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:disabled {
-                background-color: #666;
-            }
-            """
-        )
         self._start_btn.clicked.connect(self._on_start_clicked)
         button_layout.addWidget(self._start_btn)
 
         self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setObjectName("secondary")
         self._stop_btn.setMinimumHeight(40)
         self._stop_btn.setEnabled(False)
-        self._stop_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #f44336;
-                color: white;
-                font-size: 14px;
-                font-weight: bold;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #da190b;
-            }
-            QPushButton:disabled {
-                background-color: #666;
-            }
-            """
-        )
         self._stop_btn.clicked.connect(self._on_stop_clicked)
         button_layout.addWidget(self._stop_btn)
 
@@ -405,22 +429,6 @@ class MainWindow(QMainWindow):
 
         # ── Voice Panel ──────────────────────────────────────────────────
         voice_group = QGroupBox("Voices")
-        voice_group.setStyleSheet(
-            """
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #444;
-                border-radius: 5px;
-                margin-top: 8px;
-                padding-top: 14px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 4px;
-            }
-            """
-        )
         voice_layout = QVBoxLayout(voice_group)
         voice_layout.setSpacing(6)
 
@@ -429,9 +437,6 @@ class MainWindow(QMainWindow):
         self._auto_clone_cb.setChecked(self._settings.voice_clone.auto_clone_voice)
         self._auto_clone_cb.setToolTip(
             "Automatically capture and clone the speaker's voice when translation starts"
-        )
-        self._auto_clone_cb.setStyleSheet(
-            "QCheckBox { color: #ccc; font-size: 12px; }"
         )
         self._auto_clone_cb.toggled.connect(self._on_auto_clone_toggled)
         voice_layout.addWidget(self._auto_clone_cb)
@@ -445,19 +450,6 @@ class MainWindow(QMainWindow):
         self._capture_voice_btn.setToolTip(
             "Record a speaker's voice for cloning (requires active translation)"
         )
-        self._capture_voice_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 4px 12px;
-            }
-            QPushButton:hover { background-color: #1976D2; }
-            QPushButton:disabled { background-color: #555; }
-            """
-        )
         self._capture_voice_btn.clicked.connect(self._on_capture_voice_clicked)
         capture_row.addWidget(self._capture_voice_btn)
 
@@ -466,19 +458,7 @@ class MainWindow(QMainWindow):
         self._import_voice_btn.setToolTip(
             "Clone a voice from an audio file (WAV, MP3, etc.)"
         )
-        self._import_voice_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #7B1FA2;
-                color: white;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 4px 12px;
-            }
-            QPushButton:hover { background-color: #6A1B9A; }
-            QPushButton:disabled { background-color: #555; }
-            """
-        )
+        self._import_voice_btn.setObjectName("secondary")
         self._import_voice_btn.clicked.connect(self._on_import_voice_clicked)
         capture_row.addWidget(self._import_voice_btn)
 
@@ -488,39 +468,24 @@ class MainWindow(QMainWindow):
         self._clone_progress.setValue(0)
         self._clone_progress.setFormat("No capture")
         self._clone_progress.setMinimumHeight(28)
-        self._clone_progress.setStyleSheet(
-            """
-            QProgressBar {
-                border: 1px solid #555;
-                border-radius: 4px;
-                text-align: center;
-                background: #2a2a2a;
-                color: #ccc;
-            }
-            QProgressBar::chunk {
-                background-color: #2196F3;
-                border-radius: 3px;
-            }
-            """
-        )
         capture_row.addWidget(self._clone_progress, 1)
         voice_layout.addLayout(capture_row)
 
         # Separator between capture controls and voice library
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("color: #444;")
+        separator.setStyleSheet("background: #1c5878; max-height: 1px; border: none;")
         voice_layout.addWidget(separator)
 
         # Voice list header
         list_header = QHBoxLayout()
         header_label = QLabel("Voice Library")
-        header_label.setStyleSheet("font-size: 12px; color: #bbb;")
+        header_label.setObjectName("muted")
         list_header.addWidget(header_label)
         list_header.addStretch()
 
         self._voice_count_label = QLabel("0 voices")
-        self._voice_count_label.setStyleSheet("font-size: 11px; color: #888;")
+        self._voice_count_label.setObjectName("muted")
         list_header.addWidget(self._voice_count_label)
         voice_layout.addLayout(list_header)
 
@@ -531,31 +496,6 @@ class MainWindow(QMainWindow):
         self._voice_list.setAlternatingRowColors(True)
         self._voice_list.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection
-        )
-        self._voice_list.setStyleSheet(
-            """
-            QListWidget {
-                background-color: #1e1e2e;
-                border: 1px solid #444;
-                border-radius: 4px;
-                outline: none;
-                font-size: 12px;
-            }
-            QListWidget::item {
-                padding: 6px 8px;
-                border-bottom: 1px solid #333;
-            }
-            QListWidget::item:alternate {
-                background-color: #252535;
-            }
-            QListWidget::item:selected {
-                background-color: #1a3a5c;
-                color: #e0e0e0;
-            }
-            QListWidget::item:hover {
-                background-color: #2a2a4a;
-            }
-            """
         )
         self._voice_list.setToolTip(
             "Double-click to activate a voice for TTS"
@@ -572,55 +512,20 @@ class MainWindow(QMainWindow):
         self._select_voice_btn = QPushButton("Use Voice")
         self._select_voice_btn.setMinimumHeight(28)
         self._select_voice_btn.setToolTip("Set selected voice as active TTS voice")
-        self._select_voice_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-weight: bold;
-                border-radius: 4px;
-                padding: 4px 10px;
-            }
-            QPushButton:hover { background-color: #45a049; }
-            QPushButton:disabled { background-color: #555; }
-            """
-        )
         self._select_voice_btn.clicked.connect(self._on_select_voice_clicked)
         voice_btn_layout.addWidget(self._select_voice_btn)
 
         self._delete_voice_btn = QPushButton("Delete")
         self._delete_voice_btn.setMinimumHeight(28)
         self._delete_voice_btn.setToolTip("Delete selected voice from cache and ElevenLabs")
-        self._delete_voice_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #c62828;
-                color: white;
-                border-radius: 4px;
-                padding: 4px 10px;
-            }
-            QPushButton:hover { background-color: #b71c1c; }
-            QPushButton:disabled { background-color: #555; }
-            """
-        )
+        self._delete_voice_btn.setObjectName("secondary")
         self._delete_voice_btn.clicked.connect(self._on_delete_voice_clicked)
         voice_btn_layout.addWidget(self._delete_voice_btn)
 
         self._rename_voice_btn = QPushButton("Rename")
         self._rename_voice_btn.setMinimumHeight(28)
         self._rename_voice_btn.setToolTip("Rename selected voice in library")
-        self._rename_voice_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #555;
-                color: white;
-                border-radius: 4px;
-                padding: 4px 10px;
-            }
-            QPushButton:hover { background-color: #666; }
-            QPushButton:disabled { background-color: #555; }
-            """
-        )
+        self._rename_voice_btn.setObjectName("secondary")
         self._rename_voice_btn.clicked.connect(self._on_rename_voice_clicked)
         voice_btn_layout.addWidget(self._rename_voice_btn)
 
@@ -630,10 +535,10 @@ class MainWindow(QMainWindow):
         # ── Voice profiles (speaker → TTS clone) ─────────────────────────
         profiles_label_row = QHBoxLayout()
         profiles_title = QLabel("Voice Profiles")
-        profiles_title.setStyleSheet("font-weight: bold; color: #bbb;")
+        profiles_title.setObjectName("muted")
         profiles_label_row.addWidget(profiles_title)
         self._profile_count_label = QLabel("0 profiles")
-        self._profile_count_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._profile_count_label.setObjectName("muted")
         profiles_label_row.addStretch()
         profiles_label_row.addWidget(self._profile_count_label)
         voice_layout.addLayout(profiles_label_row)
@@ -643,7 +548,6 @@ class MainWindow(QMainWindow):
         self._profile_list.setMaximumHeight(240)
         self._profile_list.setAlternatingRowColors(True)
         self._profile_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._profile_list.setStyleSheet(self._voice_list.styleSheet())
         self._profile_list.setToolTip(
             "One profile per unique voice in the source audio. "
             "Assign a clone for TTS; unmatched speech uses the default profile."
@@ -678,6 +582,7 @@ class MainWindow(QMainWindow):
         profile_btn_row = QHBoxLayout()
         profile_btn_row.setSpacing(6)
         self._rename_profile_btn = QPushButton("Rename")
+        self._rename_profile_btn.setObjectName("secondary")
         self._rename_profile_btn.setMinimumHeight(28)
         self._rename_profile_btn.setToolTip("Rename selected profile")
         self._rename_profile_btn.clicked.connect(self._on_rename_profile_clicked)
@@ -686,23 +591,12 @@ class MainWindow(QMainWindow):
         self._delete_profile_btn = QPushButton("Delete")
         self._delete_profile_btn.setMinimumHeight(28)
         self._delete_profile_btn.setToolTip("Delete selected profile")
-        self._delete_profile_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #c62828;
-                color: white;
-                border-radius: 4px;
-                padding: 4px 10px;
-            }
-            QPushButton:hover { background-color: #b71c1c; }
-            QPushButton:disabled { background-color: #555; }
-            """
-        )
+        self._delete_profile_btn.setObjectName("secondary")
         self._delete_profile_btn.clicked.connect(self._on_delete_profile_clicked)
         profile_btn_row.addWidget(self._delete_profile_btn)
         profile_btn_row.addStretch()
         self._active_profile_label = QLabel("")
-        self._active_profile_label.setStyleSheet("color: #81C784; font-size: 11px;")
+        self._active_profile_label.setStyleSheet("color: #7ddec8; font-size: 11px;")
         profile_btn_row.addWidget(self._active_profile_label)
         voice_layout.addLayout(profile_btn_row)
 
@@ -728,7 +622,7 @@ class MainWindow(QMainWindow):
         source_row.addStretch()
         self._mic_detach_btn = QPushButton("Detach Mic")
         self._mic_detach_btn.setToolTip("Open Mic Translate in a separate dock window")
-        self._mic_detach_btn.setFixedWidth(80)
+        self._mic_detach_btn.setObjectName("secondary")
         self._mic_detach_btn.clicked.connect(self._on_mic_detach_clicked)
         self._mic_detach_btn.setVisible(False)  # shown when Mic source selected
         source_row.addWidget(self._mic_detach_btn)
@@ -767,7 +661,7 @@ class MainWindow(QMainWindow):
         transcription_header = QHBoxLayout()
         transcription_header.addStretch()
         self._clear_transcription_btn = QPushButton("Clear")
-        self._clear_transcription_btn.setFixedWidth(50)
+        self._clear_transcription_btn.setObjectName("secondary")
         self._clear_transcription_btn.setToolTip("Clear transcription text")
         self._clear_transcription_btn.clicked.connect(
             lambda: self._transcription_text.clear()
@@ -822,13 +716,13 @@ class MainWindow(QMainWindow):
         dubbed_toolbar.addStretch()
 
         self._popout_btn = QPushButton("Pop Out")
+        self._popout_btn.setObjectName("secondary")
         self._popout_btn.setToolTip("Detach dubbed text into a floating window (Ctrl+P)")
-        self._popout_btn.setFixedWidth(70)
         self._popout_btn.clicked.connect(self._on_popout_clicked)
         dubbed_toolbar.addWidget(self._popout_btn)
 
         self._clear_translation_btn = QPushButton("Clear")
-        self._clear_translation_btn.setFixedWidth(50)
+        self._clear_translation_btn.setObjectName("secondary")
         self._clear_translation_btn.setToolTip("Clear translation text")
         self._clear_translation_btn.clicked.connect(self._on_clear_translation)
         dubbed_toolbar.addWidget(self._clear_translation_btn)
@@ -1832,15 +1726,15 @@ class MainWindow(QMainWindow):
         self._clone_progress.setStyleSheet(
             """
             QProgressBar {
-                border: 1px solid #555;
-                border-radius: 4px;
+                border: 1px solid #1c5878;
+                border-radius: 6px;
                 text-align: center;
-                background: #2a2a2a;
-                color: #ccc;
+                background: #071421;
+                color: #e7f6ff;
             }
             QProgressBar::chunk {
-                background-color: #4CAF50;
-                border-radius: 3px;
+                background-color: #7ddec8;
+                border-radius: 5px;
             }
             """
         )
@@ -2336,7 +2230,7 @@ class MainWindow(QMainWindow):
         # Apply to inline text display
         alpha = int(value * 2.55)
         self._translation_text.setStyleSheet(
-            f"color: rgba(234, 234, 234, {alpha});"
+            f"color: rgba(231, 246, 255, {alpha});"
         )
         if self._dubbed_window is not None:
             self._dubbed_window.set_text_opacity(value / 100.0)

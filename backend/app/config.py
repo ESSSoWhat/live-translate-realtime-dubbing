@@ -57,6 +57,15 @@ class Settings(BaseSettings):  # pylint: disable=too-few-public-methods
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
 
+    # Desktop patch offered when the app signs in.
+    # Publish a zip whose paths are relative to the install folder
+    # (LiveTranslate.exe and _internal\... at the zip root).
+    desktop_latest_version: str = ""
+    desktop_patch_url: str = ""
+    desktop_patch_sha256: str = ""
+    desktop_patch_notes: str = ""
+    desktop_patch_file: str = ""
+
     # App
     backend_env: str = "development"
     backend_cors_origins: str = "*"

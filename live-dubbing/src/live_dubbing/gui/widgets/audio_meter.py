@@ -6,6 +6,8 @@ Audio level meter widget.
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QLabel, QProgressBar, QVBoxLayout, QWidget
 
+from live_dubbing.gui.theme import ACCENT, FIELD, LINE, OK
+
 
 class AudioMeter(QWidget):
     """
@@ -35,7 +37,7 @@ class AudioMeter(QWidget):
 
         # Label
         self._label = QLabel(self._label_text)
-        self._label.setStyleSheet("font-size: 11px;")
+        self._label.setObjectName("muted")
         layout.addWidget(self._label)
 
         # Progress bar as meter
@@ -45,19 +47,7 @@ class AudioMeter(QWidget):
         self._meter.setValue(0)
         self._meter.setTextVisible(False)
         self._meter.setMaximumHeight(12)
-        self._meter.setStyleSheet(
-            """
-            QProgressBar {
-                border: 1px solid #333;
-                border-radius: 3px;
-                background-color: #1a1a1a;
-            }
-            QProgressBar::chunk {
-                background-color: #4CAF50;
-                border-radius: 2px;
-            }
-            """
-        )
+        self._meter.setStyleSheet(self._meter_style(OK))
         layout.addWidget(self._meter)
 
     def _setup_timer(self) -> None:
@@ -86,34 +76,17 @@ class AudioMeter(QWidget):
         self._meter.setValue(display_level)
 
         # Update color based on speech detection
-        if is_speech:
-            self._meter.setStyleSheet(
-                """
-                QProgressBar {
-                    border: 1px solid #333;
-                    border-radius: 3px;
-                    background-color: #1a1a1a;
-                }
-                QProgressBar::chunk {
-                    background-color: #2196F3;
-                    border-radius: 2px;
-                }
-                """
-            )
-        else:
-            self._meter.setStyleSheet(
-                """
-                QProgressBar {
-                    border: 1px solid #333;
-                    border-radius: 3px;
-                    background-color: #1a1a1a;
-                }
-                QProgressBar::chunk {
-                    background-color: #4CAF50;
-                    border-radius: 2px;
-                }
-                """
-            )
+        self._meter.setStyleSheet(self._meter_style(ACCENT if is_speech else OK))
+
+    def _meter_style(self, chunk: str) -> str:
+        return (
+            "QProgressBar {"
+            f"border: 1px solid {LINE}; border-radius: 6px; background: {FIELD};"
+            "}"
+            "QProgressBar::chunk {"
+            f"background: {chunk}; border-radius: 5px;"
+            "}"
+        )
 
     def _decay_peak(self) -> None:
         """Decay the peak hold value."""

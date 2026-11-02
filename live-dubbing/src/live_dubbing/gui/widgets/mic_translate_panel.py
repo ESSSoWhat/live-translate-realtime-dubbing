@@ -202,6 +202,7 @@ class MicTranslateWidget(QWidget):
         capture_row.addWidget(self._capture_btn)
 
         self._import_btn = QPushButton("Import...")
+        self._import_btn.setObjectName("secondary")
         self._import_btn.setToolTip("Import voice from audio file")
         self._import_btn.clicked.connect(self._on_import_clicked)
         capture_row.addWidget(self._import_btn)
@@ -218,7 +219,7 @@ class MicTranslateWidget(QWidget):
 
         # Voice status label
         self._voice_status = QLabel("")
-        self._voice_status.setStyleSheet("color: gray; font-size: 11px;")
+        self._voice_status.setObjectName("muted")
         self._voice_status.setVisible(False)
         voice_layout.addWidget(self._voice_status)
 
@@ -227,36 +228,13 @@ class MicTranslateWidget(QWidget):
         # -- Start / Stop buttons --
         btn_row = QHBoxLayout()
         self._start_btn = QPushButton("Start Mic Translate")
-        self._start_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #1a7a1a;
-                color: white;
-                font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #228a22; }
-            QPushButton:disabled { background-color: #2a2a2a; color: #666; }
-            """
-        )
+        self._start_btn.setMinimumHeight(40)
         self._start_btn.clicked.connect(self._on_start_clicked)
         btn_row.addWidget(self._start_btn, 1)
 
         self._stop_btn = QPushButton("Stop")
-        self._stop_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #7a1a1a;
-                color: white;
-                font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #8a2222; }
-            QPushButton:disabled { background-color: #2a2a2a; color: #666; }
-            """
-        )
+        self._stop_btn.setObjectName("secondary")
+        self._stop_btn.setMinimumHeight(40)
         self._stop_btn.setEnabled(False)
         self._stop_btn.clicked.connect(self._on_stop_clicked)
         btn_row.addWidget(self._stop_btn, 1)
@@ -265,7 +243,7 @@ class MicTranslateWidget(QWidget):
         # -- Status label --
         self._status_label = QLabel("Idle")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status_label.setStyleSheet("color: gray; font-size: 12px;")
+        self._status_label.setObjectName("muted")
         root.addWidget(self._status_label)
 
         # -- Audio meter --
@@ -283,16 +261,6 @@ class MicTranslateWidget(QWidget):
         self._transcript_text = QTextEdit()
         self._transcript_text.setReadOnly(True)
         self._transcript_text.setMaximumHeight(80)
-        self._transcript_text.setStyleSheet(
-            """
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #ddd;
-                font-size: 12px;
-                border: none;
-            }
-            """
-        )
         you_layout.addWidget(self._transcript_text)
         root.addWidget(you_group)
 
@@ -303,16 +271,6 @@ class MicTranslateWidget(QWidget):
         self._translation_text = QTextEdit()
         self._translation_text.setReadOnly(True)
         self._translation_text.setMaximumHeight(80)
-        self._translation_text.setStyleSheet(
-            """
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #4CAF50;
-                font-size: 12px;
-                border: none;
-            }
-            """
-        )
         trans_layout.addWidget(self._translation_text)
         root.addWidget(trans_group)
 

@@ -49,8 +49,9 @@ Name: "installvbcable"; Description: "Install VB-Audio Virtual Cable (recommende
 [Files]
 ; Main application files from PyInstaller output
 Source: "dist\LiveTranslate\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-; API key config (bundled next to exe so the app finds it on any machine)
-Source: ".env"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+; Optional local API-key file. Omitted when absent so a public installer
+; does not require or embed a developer .env.
+Source: ".env"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

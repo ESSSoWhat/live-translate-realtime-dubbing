@@ -142,6 +142,9 @@ class Application:
         self._qt_app = QApplication(sys.argv)
         self._qt_app.setApplicationName("Live Translate")
         self._qt_app.setApplicationVersion(__version__)
+        from live_dubbing.gui.theme import apply_theme
+
+        apply_theme(self._qt_app)
         # Overlay (Tool) + hiding the main window must not quit the process.
         self._qt_app.setQuitOnLastWindowClosed(False)
 
@@ -159,10 +162,15 @@ class Application:
         from live_dubbing.gui.widgets.login_dialog import LoginDialog  # noqa: PLC0415
 
         _auth_response: dict = {}
+        showed_login = False
         if not self._settings.is_token_valid():
+            showed_login = True
             _login = LoginDialog(self._settings, parent=None)
             if _login.exec() != QDialog.DialogCode.Accepted:
-                logger.info("Login cancelled; exiting")
+                if getattr(_login, "restarting_for_update", False):
+                    logger.info("Closing to apply update patch")
+                else:
+                    logger.info("Login cancelled; exiting")
                 return 0
             _auth_response = getattr(_login, "auth_response", {})
             self._settings.set_cached_user_info(
@@ -183,9 +191,13 @@ class Application:
                 if probe.status_code != 200:
                     logger.info("Stored credentials rejected by backend; showing login")
                     self._settings.clear_auth_tokens()
+                    showed_login = True
                     _login = LoginDialog(self._settings, parent=None)
                     if _login.exec() != QDialog.DialogCode.Accepted:
-                        logger.info("Login cancelled; exiting")
+                        if getattr(_login, "restarting_for_update", False):
+                            logger.info("Closing to apply update patch")
+                        else:
+                            logger.info("Login cancelled; exiting")
                         return 0
                     _auth_response = getattr(_login, "auth_response", {})
                     self._settings.set_cached_user_info(
@@ -210,6 +222,13 @@ class Application:
             except Exception as exc:
                 logger.warning("Auth probe failed; continuing with stored token", error=str(exc))
                 _auth_response = self._settings.get_cached_auth_response()
+
+        if not showed_login:
+            from live_dubbing.updates import offer_installed_patch
+
+            if offer_installed_patch(None, self._settings.get_backend_url()):
+                logger.info("Closing to apply update patch")
+                return 0
 
         def _log_user_id(val: str) -> str:
             if not val:

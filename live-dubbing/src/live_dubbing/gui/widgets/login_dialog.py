@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import json as _json
 import webbrowser
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
@@ -24,16 +25,28 @@ import structlog
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
+    QApplication,
     QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
+)
+
+from live_dubbing.gui.theme import brand_mark
+from live_dubbing.updates import (
+    PatchDownloadThread,
+    UpdateCheckThread,
+    UpdateOffer,
+    install_dir,
+    launch_patch_helper,
 )
 
 if TYPE_CHECKING:
@@ -337,6 +350,10 @@ class LoginDialog(QDialog):
         self._wix_btn: QPushButton | None = None
         self._wix_btn_reg: QPushButton | None = None
         self._cancel_wait_btn: QPushButton | None = None
+        self._update_offer: UpdateOffer | None = None
+        self._update_check: UpdateCheckThread | None = None
+        self._patch_thread: PatchDownloadThread | None = None
+        self.restarting_for_update = False
 
         self.setWindowTitle("Live Translate — Sign In")
         self.setMinimumWidth(380)
@@ -344,6 +361,7 @@ class LoginDialog(QDialog):
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         self._build_ui()
+        self._start_update_check()
 
     # ── UI construction ───────────────────────────────────────────────────────
 
@@ -352,16 +370,43 @@ class LoginDialog(QDialog):
         root.setSpacing(0)
         root.setContentsMargins(32, 32, 32, 32)
 
-        # Logo / title
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mark = brand_mark(72)
+        if not mark.isNull():
+            logo.setPixmap(mark)
+        root.addWidget(logo, alignment=Qt.AlignmentFlag.AlignCenter)
+
         title = QLabel("Live Translate")
-        title.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
+        title.setObjectName("wordmark")
+        title.setFont(QFont("Segoe UI", 20, QFont.Weight.DemiBold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(title)
 
         subtitle = QLabel("Real-time AI dubbing")
+        subtitle.setObjectName("tagline")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("color: #888; margin-bottom: 24px;")
         root.addWidget(subtitle)
+
+        self._update_box = QWidget()
+        update_layout = QVBoxLayout(self._update_box)
+        update_layout.setContentsMargins(0, 12, 0, 0)
+        update_layout.setSpacing(8)
+        self._update_label = QLabel("")
+        self._update_label.setObjectName("muted")
+        self._update_label.setWordWrap(True)
+        self._update_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._update_btn = QPushButton("Install update")
+        self._update_btn.setObjectName("secondary")
+        self._update_btn.clicked.connect(self._on_install_update)
+        self._update_progress = QProgressBar()
+        self._update_progress.setRange(0, 100)
+        self._update_progress.hide()
+        update_layout.addWidget(self._update_label)
+        update_layout.addWidget(self._update_btn)
+        update_layout.addWidget(self._update_progress)
+        self._update_box.hide()
+        root.addWidget(self._update_box)
 
         root.addSpacing(16)
 
@@ -374,7 +419,7 @@ class LoginDialog(QDialog):
         # Error label (shared between pages)
         self._error_label = QLabel("")
         self._error_label.setWordWrap(True)
-        self._error_label.setStyleSheet("color: #e05555; margin-top: 8px; font-size: 12px;")
+        self._error_label.setStyleSheet("color: #ff8b8b; margin-top: 8px; font-size: 12px;")
         self._error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._error_label.hide()
         root.addWidget(self._error_label)
@@ -393,11 +438,6 @@ class LoginDialog(QDialog):
         btn = QPushButton(text)
         btn.setMinimumHeight(40)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        btn.setStyleSheet(
-            "QPushButton { background: #4f8cff; color: white; border-radius: 6px; font-weight: bold; }"
-            "QPushButton:hover { background: #3a72e0; }"
-            "QPushButton:disabled { background: #555; color: #999; }"
-        )
         return btn
 
     def _wix_button(self) -> QPushButton:
@@ -405,20 +445,6 @@ class LoginDialog(QDialog):
         btn = QPushButton()
         btn.setMinimumHeight(40)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        btn.setStyleSheet(
-            """
-            QPushButton {
-                background: #0c6efc;
-                color: #fff;
-                border: none;
-                border-radius: 6px;
-                font-weight: 500;
-                font-size: 14px;
-            }
-            QPushButton:hover { background: #0b5ed7; }
-            QPushButton:disabled { background: #555; color: #999; }
-            """
-        )
         btn.setText("Sign in with livetranslate.net")
         return btn
 
@@ -430,18 +456,18 @@ class LoginDialog(QDialog):
         for side in (True, False):
             line = QFrame()
             line.setFrameShape(QFrame.Shape.HLine)
-            line.setStyleSheet("color: #444;")
+            line.setStyleSheet("color: #1c5878;")
             row.addWidget(line, 1)
             if side:
                 lbl = QLabel(text)
-                lbl.setStyleSheet("color: #888; padding: 0 8px; font-size: 12px;")
+                lbl.setObjectName("muted")
                 row.addWidget(lbl)
         return w
 
     def _link_button(self, text: str) -> QPushButton:
         btn = QPushButton(text)
         btn.setFlat(True)
-        btn.setStyleSheet("QPushButton { color: #4f8cff; text-decoration: underline; border: none; }")
+        btn.setObjectName("link")
         return btn
 
     # ── Page builders ─────────────────────────────────────────────────────────
@@ -462,7 +488,7 @@ class LoginDialog(QDialog):
             "The app continues automatically when the browser finishes."
         )
         wix_tip.setWordWrap(True)
-        wix_tip.setStyleSheet("color: #888; font-size: 11px;")
+        wix_tip.setObjectName("muted")
         layout.addWidget(wix_tip)
 
         self._cancel_wait_btn = self._link_button("Cancel waiting")
@@ -681,6 +707,67 @@ class LoginDialog(QDialog):
         self._worker = worker
         worker.start()
 
+    def _start_update_check(self) -> None:
+        """Look for a patch while the sign-in form is open."""
+        worker = UpdateCheckThread(self._settings.get_backend_url())
+        worker.found.connect(self._on_update_found)
+        worker.finished.connect(worker.deleteLater)
+        self._update_check = worker
+        worker.start()
+
+    def _on_update_found(self, offer: object) -> None:
+        if not isinstance(offer, UpdateOffer):
+            return
+        self._update_offer = offer
+        note = f" {offer.notes}" if offer.notes else ""
+        self._update_label.setText(f"Version {offer.latest} is available.{note}")
+        self._update_box.show()
+
+    def _on_install_update(self) -> None:
+        """Download the published patch and restart into it."""
+        offer = self._update_offer
+        if offer is None:
+            return
+        if install_dir() is None:
+            self._show_error(
+                "This copy is running from source. Open the installed Live Translate "
+                "app and sign in to apply the patch."
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Install update",
+            f"Install version {offer.latest} now?\n\n"
+            "Live Translate will close and reopen when the patch is applied.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._update_btn.setEnabled(False)
+        self._update_progress.setValue(0)
+        self._update_progress.show()
+        thread = PatchDownloadThread(offer)
+        thread.progress.connect(self._update_progress.setValue)
+        thread.failed.connect(self._on_patch_failed)
+        thread.ready.connect(self._on_patch_ready)
+        thread.finished.connect(thread.deleteLater)
+        self._patch_thread = thread
+        thread.start()
+
+    def _on_patch_failed(self, message: str) -> None:
+        self._update_btn.setEnabled(True)
+        self._update_progress.hide()
+        self._show_error(message)
+
+    def _on_patch_ready(self, path: str) -> None:
+        try:
+            launch_patch_helper(Path(path))
+        except Exception as exc:
+            self._on_patch_failed(str(exc))
+            return
+        self.restarting_for_update = True
+        QApplication.quit()
+
     # ── Close ─────────────────────────────────────────────────────────────────
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
@@ -695,4 +782,9 @@ class LoginDialog(QDialog):
             worker.requestInterruption()
             worker.quit()
             worker.wait(2000)
+        for extra in (self._update_check, self._patch_thread):
+            if extra is not None and extra.isRunning():
+                extra.requestInterruption()
+                extra.quit()
+                extra.wait(1500)
         event.accept()

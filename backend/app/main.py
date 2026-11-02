@@ -23,7 +23,7 @@ from slowapi.util import (
 )
 
 from app.config import get_settings
-from app.routers import analytics, auth, billing, paypal, proxy, user, voice
+from app.routers import analytics, auth, billing, paypal, proxy, updates, user, voice
 from app.services.supabase_client import SupabaseNotConfiguredError
 
 logger = structlog.get_logger(__name__)
@@ -131,6 +131,7 @@ def create_app() -> FastAPI:
     application.include_router(paypal.router, prefix=prefix)
     application.include_router(voice.router, prefix=prefix)
     application.include_router(analytics.router, prefix=prefix)
+    application.include_router(updates.router, prefix=prefix)
 
     @application.get("/")
     async def root() -> dict:

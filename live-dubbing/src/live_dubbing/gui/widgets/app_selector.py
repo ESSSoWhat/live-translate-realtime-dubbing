@@ -69,7 +69,7 @@ class AppSelectorWidget(QWidget):
 
         # Info label
         self._info_label = QLabel()
-        self._info_label.setStyleSheet("color: gray; font-size: 11px;")
+        self._info_label.setObjectName("muted")
         self._info_label.setWordWrap(True)
         layout.addWidget(self._info_label)
 
