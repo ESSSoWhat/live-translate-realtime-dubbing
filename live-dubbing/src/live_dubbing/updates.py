@@ -292,26 +292,12 @@ class PatchDownloadThread(QThread):
 
 
 def offer_installed_patch(parent: QWidget | None, base_url: str) -> bool:
-    """Ask a signed-in user to install a patch. Return True if the app should exit."""
+    """Download and apply a published patch after sign-in. Return True if the app should exit."""
     offer = fetch_update(base_url)
     if offer is None:
         return False
-    notes = f"\n\n{offer.notes}" if offer.notes else ""
-    answer = QMessageBox.question(
-        parent,
-        "Update available",
-        f"Version {offer.latest} is ready.{notes}\n\nInstall the update now?",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-    )
-    if answer != QMessageBox.StandardButton.Yes:
-        return False
     if install_dir() is None:
-        QMessageBox.information(
-            parent,
-            "Update available",
-            "This copy is running from source. Open the installed Live Translate "
-            "app and sign in to apply the patch.",
-        )
+        logger.info("Patch available but this copy is running from source", latest=offer.latest)
         return False
     return _download_and_launch(parent, offer)
 

@@ -31,7 +31,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -353,6 +352,8 @@ class LoginDialog(QDialog):
         self._update_offer: UpdateOffer | None = None
         self._update_check: UpdateCheckThread | None = None
         self._patch_thread: PatchDownloadThread | None = None
+        self._patch_path: str | None = None
+        self._awaiting_update_after_sign_in = False
         self.restarting_for_update = False
 
         self.setWindowTitle("Live Translate — Sign In")
@@ -396,14 +397,10 @@ class LoginDialog(QDialog):
         self._update_label.setObjectName("muted")
         self._update_label.setWordWrap(True)
         self._update_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._update_btn = QPushButton("Install update")
-        self._update_btn.setObjectName("secondary")
-        self._update_btn.clicked.connect(self._on_install_update)
         self._update_progress = QProgressBar()
         self._update_progress.setRange(0, 100)
         self._update_progress.hide()
         update_layout.addWidget(self._update_label)
-        update_layout.addWidget(self._update_btn)
         update_layout.addWidget(self._update_progress)
         self._update_box.hide()
         root.addWidget(self._update_box)
@@ -576,7 +573,7 @@ class LoginDialog(QDialog):
         }
         logger.info("Wix SSO login accepted", user_id=user_id or "(unknown)", tier=tier)
         self._set_busy(False)
-        self.accept()
+        self._finish_after_sign_in()
 
     def _on_wix_sso_error(self, message: str) -> None:
         """Handle Wix SSO error."""
@@ -660,7 +657,7 @@ class LoginDialog(QDialog):
         self.auth_response = data
         self._settings.set_auth_tokens(access, refresh)
         logger.info("Login successful", tier=data.get("tier"), user_id=data.get("user_id"))
-        self.accept()
+        self._finish_after_sign_in()
 
     # ── Email / password login ────────────────────────────────────────────────
 
@@ -707,43 +704,66 @@ class LoginDialog(QDialog):
         self._worker = worker
         worker.start()
 
+    def _finish_after_sign_in(self) -> None:
+        """Tokens are stored. Apply a published patch, or open the app."""
+        self._awaiting_update_after_sign_in = True
+        if self._patch_path:
+            self._on_patch_ready(self._patch_path)
+            return
+        if self._patch_thread is not None and self._patch_thread.isRunning():
+            self._update_label.setText("Updating to the latest version…")
+            self._update_box.show()
+            self._update_progress.show()
+            return
+        if self._update_offer is not None:
+            if install_dir() is None:
+                self.accept()
+                return
+            self._start_patch_download()
+            return
+        if self._update_check is not None and self._update_check.isRunning():
+            self._update_label.setText("Checking for updates…")
+            self._update_box.show()
+            return
+        self.accept()
+
     def _start_update_check(self) -> None:
         """Look for a patch while the sign-in form is open."""
         worker = UpdateCheckThread(self._settings.get_backend_url())
         worker.found.connect(self._on_update_found)
+        worker.finished.connect(self._on_update_check_finished)
         worker.finished.connect(worker.deleteLater)
         self._update_check = worker
         worker.start()
+
+    def _on_update_check_finished(self) -> None:
+        if not self._awaiting_update_after_sign_in:
+            return
+        if self._update_offer is None and self._patch_path is None:
+            self.accept()
 
     def _on_update_found(self, offer: object) -> None:
         if not isinstance(offer, UpdateOffer):
             return
         self._update_offer = offer
         note = f" {offer.notes}" if offer.notes else ""
-        self._update_label.setText(f"Version {offer.latest} is available.{note}")
+        self._update_label.setText(f"Updating to version {offer.latest}.{note}")
         self._update_box.show()
+        if install_dir() is None:
+            if self._awaiting_update_after_sign_in:
+                self.accept()
+            return
+        self._start_patch_download()
 
-    def _on_install_update(self) -> None:
-        """Download the published patch and restart into it."""
+    def _start_patch_download(self) -> None:
+        """Download the published patch; apply it after sign-in."""
         offer = self._update_offer
         if offer is None:
             return
-        if install_dir() is None:
-            self._show_error(
-                "This copy is running from source. Open the installed Live Translate "
-                "app and sign in to apply the patch."
-            )
+        if self._patch_thread is not None and self._patch_thread.isRunning():
             return
-        answer = QMessageBox.question(
-            self,
-            "Install update",
-            f"Install version {offer.latest} now?\n\n"
-            "Live Translate will close and reopen when the patch is applied.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        self._update_btn.setEnabled(False)
+        self._update_label.setText(f"Updating to version {offer.latest}…")
+        self._update_box.show()
         self._update_progress.setValue(0)
         self._update_progress.show()
         thread = PatchDownloadThread(offer)
@@ -755,11 +775,18 @@ class LoginDialog(QDialog):
         thread.start()
 
     def _on_patch_failed(self, message: str) -> None:
-        self._update_btn.setEnabled(True)
         self._update_progress.hide()
+        logger.warning("Sign-in update failed", error=message)
+        if self._awaiting_update_after_sign_in:
+            self.accept()
+            return
         self._show_error(message)
 
     def _on_patch_ready(self, path: str) -> None:
+        self._patch_path = path
+        if not self._awaiting_update_after_sign_in:
+            self._update_label.setText("Update downloaded. It will install when you sign in.")
+            return
         try:
             launch_patch_helper(Path(path))
         except Exception as exc:
