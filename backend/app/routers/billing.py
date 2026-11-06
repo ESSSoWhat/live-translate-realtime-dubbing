@@ -25,7 +25,7 @@ from app.dependencies import get_current_user
 from app.models.requests import CheckoutRequest, WixSyncRequest
 from app.models.responses import CheckoutResponse, PlanInfo, PortalResponse
 from app.services.supabase_client import get_supabase
-from app.services.wix_tier_map import active_wix_tier_mapping, wix_plan_to_tier as _wix_plan_to_tier
+from app.services.wix_tier_map import active_wix_tier_mapping, subscription_for_wix_plan
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -407,17 +407,16 @@ async def wix_sync(body: WixSyncRequest, request: Request) -> dict:
     _verify_wix_sync_secret(request)
     sb = await get_supabase()
 
-    # Resolve tier: explicit canceled/inactive -> free; else use tier from body or map plan_id/plan_name
+    # A stopped plan clears the offer. An active Free Trial stays trialing.
     status_val = (body.status or "").strip().upper()
-    if status_val in ("CANCELED", "CANCELLED", "EXPIRED", "INACTIVE"):
+    if status_val in ("CANCELED", "CANCELLED", "EXPIRED", "INACTIVE", "ENDED", "PAUSED"):
         tier = "free"
         subscription_status = "canceled"
-    elif body.tier:
-        tier = body.tier  # Validated by WixSyncRequest
-        subscription_status = "active" if tier != "free" else "canceled"
+    elif body.tier and body.tier != "free":
+        tier = body.tier
+        subscription_status = "active"
     else:
-        tier = _wix_plan_to_tier(body.plan_id, body.plan_name)
-        subscription_status = "active" if tier != "free" else "canceled"
+        tier, subscription_status = subscription_for_wix_plan(body.plan_id, body.plan_name, body.status or "ACTIVE")
 
     try:
         existing = await sb.table("users").select("id", "tier", "api_key").eq("email", body.email).limit(1).execute()
@@ -524,9 +523,10 @@ async def qonversion_webhook(request: Request) -> dict:
         existing = await sb.table("users").select("tier").eq("id", user_id).maybe_single().execute()
         current_tier = existing.data.get("tier", "free") if existing.data else "free"
         tier = _max_tier(current_tier, tier)
+        offer_status = "trialing" if event_name == "trial_started" and tier == "free" else "active"
         await sb.table("users").update({
             "tier": tier,
-            "subscription_status": "active",
+            "subscription_status": offer_status,
         }).eq("id", user_id).execute()
         logger.info("Qonversion: tier updated", user_id=user_id, tier=tier, event_name=event_name)
     # Events that revoke premium

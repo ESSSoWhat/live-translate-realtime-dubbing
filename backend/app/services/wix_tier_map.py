@@ -31,6 +31,34 @@ WIX_KEYWORD_TO_TIER: tuple[tuple[str, str], ...] = (
 )
 
 
+_FREE_TRIAL_PLAN_IDS = {"5f9d4418-240c-4dcf-8748-c006011eff2f"}
+_STOPPED = {"CANCELED", "CANCELLED", "EXPIRED", "INACTIVE", "ENDED", "PAUSED"}
+
+
+def is_free_trial_plan(plan_id: str | None, plan_name: str | None) -> bool:
+    """The Free Trial pricing plan, not a bare account with no plan."""
+    if (plan_id or "").strip() in _FREE_TRIAL_PLAN_IDS:
+        return True
+    return "free trial" in (plan_name or "").strip().lower()
+
+
+def subscription_for_wix_plan(plan_id: str | None, plan_name: str | None, status: str) -> tuple[str, str]:
+    """Map a Wix order to (tier, subscription_status).
+
+    An active Free Trial is ``trialing``. No plan, or a stopped plan, is ``canceled``.
+    A bare signup is not given an offer here.
+    """
+    state = (status or "").strip().upper()
+    if state in _STOPPED:
+        return "free", "canceled"
+    tier = wix_plan_to_tier(plan_id, plan_name)
+    if tier == "free":
+        if is_free_trial_plan(plan_id, plan_name):
+            return "free", "trialing"
+        return "free", "canceled"
+    return tier, "active"
+
+
 def wix_plan_to_tier(plan_id: str | None, plan_name: str | None) -> str:
     """Map a Wix plan id/name to a backend tier (free/starter/pro/early_adopters)."""
     if plan_id and plan_id.strip() in WIX_PLAN_ID_TO_TIER:

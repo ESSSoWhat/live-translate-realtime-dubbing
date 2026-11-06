@@ -10,7 +10,7 @@ import structlog
 
 from app.config import get_settings
 from app.services.supabase_client import get_supabase
-from app.services.wix_tier_map import wix_plan_to_tier
+from app.services.wix_tier_map import subscription_for_wix_plan
 
 logger = structlog.get_logger(__name__)
 
@@ -143,13 +143,7 @@ async def _active_plan_for_member(
 
 def _tier_from_plan(plan_id: str | None, plan_name: str | None, status: str) -> tuple[str, str]:
     """Map plan + status to (tier, subscription_status)."""
-    if status in ("CANCELED", "CANCELLED", "EXPIRED", "INACTIVE", "ENDED"):
-        return "free", "canceled"
-    if status == "PAUSED":
-        # Treat paused as inactive for caps until resumed.
-        return "free", "canceled"
-    tier = wix_plan_to_tier(plan_id, plan_name)
-    return tier, ("active" if tier != "free" else "canceled")
+    return subscription_for_wix_plan(plan_id, plan_name, status)
 
 
 async def fetch_wix_tier_for_email(email: str) -> tuple[str, str] | None:
@@ -171,7 +165,7 @@ async def fetch_wix_tier_for_email(email: str) -> tuple[str, str] | None:
             return None
         member_id = await _find_member_id(client, site_id, email_n)
         if not member_id:
-            # Member not on Wix site → free trial / no package.
+            # Member not on Wix site → no package applied.
             return "free", "canceled"
         plan_id, plan_name, status = await _active_plan_for_member(client, site_id, member_id)
         return _tier_from_plan(plan_id, plan_name, status)
