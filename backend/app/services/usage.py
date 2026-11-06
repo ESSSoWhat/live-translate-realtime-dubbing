@@ -238,9 +238,75 @@ async def record_usage(user_id: str, event_type: str, quantity: int) -> None:
     )
 
 
+def _row_from_result(result: object) -> dict | None:
+    """Normalize PostgREST ``.data`` (dict, list, or empty) to a single row."""
+    data = getattr(result, "data", None)
+    if not data:
+        return None
+    if isinstance(data, list):
+        first = data[0] if data else None
+        return first if isinstance(first, dict) else None
+    return data if isinstance(data, dict) else None
+
+
+def _snapshot_from_parts(used: dict, limits: dict) -> dict:
+    """Build the GET /user/usage snapshot dict from usage + tier_limits rows."""
+    next_month = _period_end() + timedelta(days=1)
+    return {
+        "dubbing_seconds_used": int(used.get("dubbing_seconds") or 0),
+        "dubbing_seconds_limit": int(limits["dubbing_seconds"]),
+        "tts_chars_used": int(used.get("tts_chars") or 0),
+        "tts_chars_limit": int(limits["tts_chars"]),
+        "stt_seconds_used": int(used.get("stt_seconds") or 0),
+        "stt_seconds_limit": int(limits["stt_seconds"]),
+        "translation_chars_used": int(used.get("translation_chars") or 0),
+        "translation_chars_limit": int(limits["translation_chars"]),
+        "voice_clones_used": int(used.get("voice_clones") or 0),
+        "voice_clones_limit": int(limits["voice_clones"]),
+        "period_reset_date": str(next_month),
+    }
+
+
+async def _snapshot_via_postgrest(user_id: str) -> dict:
+    """Read usage via Supabase REST when the direct Postgres pool is down."""
+    from app.services.supabase_client import get_supabase
+
+    sb = await get_supabase()
+    user_res = await sb.table("users").select("tier").eq("id", user_id).limit(1).execute()
+    user_row = _row_from_result(user_res)
+    if not user_row:
+        raise LookupError(f"User {user_id} not found")
+    tier = user_row.get("tier") or "free"
+    limits_res = await (
+        sb.table("tier_limits")
+        .select("dubbing_seconds, tts_chars, stt_seconds, translation_chars, voice_clones")
+        .eq("tier", tier)
+        .limit(1)
+        .execute()
+    )
+    limits = _row_from_result(limits_res)
+    if not limits:
+        raise LookupError(f"Tier {tier} not found")
+    period = _period_start()
+    usage_res = await (
+        sb.table("usage_records")
+        .select("dubbing_seconds, tts_chars, stt_seconds, translation_chars, voice_clones")
+        .eq("user_id", user_id)
+        .eq("period_start", period.isoformat())
+        .limit(1)
+        .execute()
+    )
+    used = _row_from_result(usage_res) or {}
+    return _snapshot_from_parts(used, limits)
+
+
 async def get_usage_snapshot(user_id: str) -> dict:
     """Return current usage and limits for a user."""
-    pool = await get_db_pool()
+    try:
+        pool = await get_db_pool()
+    except DatabaseUnavailableError:
+        logger.warning("Usage snapshot via PostgREST; Postgres pool unavailable")
+        return await _snapshot_via_postgrest(user_id)
     period = _period_start()
 
     async with pool.acquire() as conn:
@@ -269,21 +335,22 @@ async def get_usage_snapshot(user_id: str) -> dict:
     if row is None:
         raise LookupError(f"User {user_id} not found")
 
-    next_month = _period_end() + timedelta(days=1)
-
-    return {
-        "dubbing_seconds_used": row["dub_used"],
-        "dubbing_seconds_limit": row["dub_limit"],
-        "tts_chars_used": row["tts_used"],
-        "tts_chars_limit": row["tts_limit"],
-        "stt_seconds_used": row["stt_used"],
-        "stt_seconds_limit": row["stt_limit"],
-        "translation_chars_used": row["translation_used"],
-        "translation_chars_limit": row["translation_limit"],
-        "voice_clones_used": row["clones_used"],
-        "voice_clones_limit": row["clones_limit"],
-        "period_reset_date": str(next_month),
-    }
+    return _snapshot_from_parts(
+        {
+            "dubbing_seconds": row["dub_used"],
+            "tts_chars": row["tts_used"],
+            "stt_seconds": row["stt_used"],
+            "translation_chars": row["translation_used"],
+            "voice_clones": row["clones_used"],
+        },
+        {
+            "dubbing_seconds": row["dub_limit"],
+            "tts_chars": row["tts_limit"],
+            "stt_seconds": row["stt_limit"],
+            "translation_chars": row["translation_limit"],
+            "voice_clones": row["clones_limit"],
+        },
+    )
 
 
 class QuotaExceededError(Exception):

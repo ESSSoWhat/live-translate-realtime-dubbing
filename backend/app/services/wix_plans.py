@@ -20,6 +20,10 @@ _refresh_cache: dict[str, float] = {}  # email.lower() -> monotonic deadline
 _cached_site_id: str | None = None
 
 
+class WixLookupError(Exception):
+    """Wix API failed; callers must keep the existing ``users.tier`` row."""
+
+
 def _wix_configured() -> bool:
     cfg = get_settings()
     return bool((cfg.wix_api_key or "").strip() and (cfg.wix_account_id or "").strip())
@@ -38,42 +42,36 @@ def _auth_headers(*, site_id: str | None = None) -> dict[str, str]:
     return headers
 
 
-async def _resolve_site_id(client: httpx.AsyncClient) -> str | None:
-    """Return configured site id, or discover the first site for the account."""
-    global _cached_site_id
+async def _list_account_site_ids(client: httpx.AsyncClient) -> list[str]:
+    """Return Wix site ids on the account (configured id, or every listed site)."""
     cfg = get_settings()
     configured = (cfg.wix_site_id or "").strip()
     if configured:
-        return configured
-    if _cached_site_id:
-        return _cached_site_id
+        return [configured]
 
     try:
         resp = await client.post(
             f"{_WIX_API}/site-list/v2/sites/query",
             headers=_auth_headers(),
-            json={"query": {"paging": {"limit": 10}}},
+            json={"query": {"paging": {"limit": 20}}},
             timeout=20.0,
         )
         if resp.status_code >= 400:
             logger.warning("Wix site query failed", status=resp.status_code, body=resp.text[:300])
-            return None
+            raise WixLookupError(f"site query {resp.status_code}")
         sites = (resp.json() or {}).get("sites") or []
-        if not sites:
-            logger.warning("Wix site query returned no sites")
-            return None
-        site_id = str(sites[0].get("id") or "").strip()
-        if site_id:
-            _cached_site_id = site_id
-            logger.info("Resolved Wix site id from account", site_id=site_id)
-        return site_id or None
+    except WixLookupError:
+        raise
     except Exception as exc:
         logger.warning("Wix site resolve error", error=str(exc))
-        return None
+        raise WixLookupError("site query failed") from exc
+
+    ids = [str(site.get("id") or "").strip() for site in sites]
+    return [site_id for site_id in ids if site_id]
 
 
 async def _find_member_id(client: httpx.AsyncClient, site_id: str, email: str) -> str | None:
-    """Look up Wix member id by login email."""
+    """Look up Wix member id by login email. Raises WixLookupError on API failure."""
     try:
         resp = await client.post(
             f"{_WIX_API}/members/v1/members/query",
@@ -87,23 +85,26 @@ async def _find_member_id(client: httpx.AsyncClient, site_id: str, email: str) -
             },
             timeout=20.0,
         )
-        if resp.status_code >= 400:
-            # Some keys use contact.emails instead; try a broader filter.
-            logger.warning("Wix member query failed", status=resp.status_code, body=resp.text[:300])
-            return None
-        members = (resp.json() or {}).get("members") or []
-        if not members:
-            return None
-        return str(members[0].get("id") or "").strip() or None
     except Exception as exc:
         logger.warning("Wix member lookup error", email=email, error=str(exc))
+        raise WixLookupError("member lookup failed") from exc
+    if resp.status_code >= 400:
+        logger.warning("Wix member query failed", status=resp.status_code, body=resp.text[:300])
+        raise WixLookupError(f"member query {resp.status_code}")
+    members = (resp.json() or {}).get("members") or []
+    if not members:
         return None
+    return str(members[0].get("id") or "").strip() or None
 
 
 async def _active_plan_for_member(
     client: httpx.AsyncClient, site_id: str, member_id: str
 ) -> tuple[str | None, str | None, str]:
-    """Return (plan_id, plan_name, status) for the member's best pricing-plan order."""
+    """Return (plan_id, plan_name, status) for the member's best pricing-plan order.
+
+    Raises WixLookupError when Pricing Plans is missing or the request fails, so
+    callers do not treat an API outage as a canceled subscription.
+    """
     try:
         resp = await client.get(
             f"{_WIX_API}/pricing-plans/v2/orders",
@@ -115,30 +116,30 @@ async def _active_plan_for_member(
             },
             timeout=20.0,
         )
-        if resp.status_code >= 400:
-            logger.warning("Wix orders list failed", status=resp.status_code, body=resp.text[:300])
-            return None, None, "INACTIVE"
-        orders = (resp.json() or {}).get("orders") or []
-        if not orders:
-            return None, None, "INACTIVE"
-
-        def _rank(order: dict[str, Any]) -> int:
-            status = str(order.get("status") or "").upper()
-            return {"ACTIVE": 0, "PENDING": 1, "PAUSED": 2}.get(status, 9)
-
-        orders_sorted = sorted(orders, key=_rank)
-        best = orders_sorted[0]
-        status = str(best.get("status") or "INACTIVE").upper()
-        plan_id = best.get("planId") or best.get("plan_id")
-        plan_name = best.get("planName") or best.get("plan_name")
-        return (
-            str(plan_id).strip() if plan_id else None,
-            str(plan_name).strip() if plan_name else None,
-            status,
-        )
     except Exception as exc:
         logger.warning("Wix orders lookup error", member_id=member_id, error=str(exc))
+        raise WixLookupError("orders lookup failed") from exc
+    if resp.status_code >= 400:
+        logger.warning("Wix orders list failed", status=resp.status_code, body=resp.text[:300])
+        raise WixLookupError(f"orders {resp.status_code}")
+    orders = (resp.json() or {}).get("orders") or []
+    if not orders:
         return None, None, "INACTIVE"
+
+    def _rank(order: dict[str, Any]) -> int:
+        status = str(order.get("status") or "").upper()
+        return {"ACTIVE": 0, "PENDING": 1, "PAUSED": 2}.get(status, 9)
+
+    orders_sorted = sorted(orders, key=_rank)
+    best = orders_sorted[0]
+    status = str(best.get("status") or "INACTIVE").upper()
+    plan_id = best.get("planId") or best.get("plan_id")
+    plan_name = best.get("planName") or best.get("plan_name")
+    return (
+        str(plan_id).strip() if plan_id else None,
+        str(plan_name).strip() if plan_name else None,
+        status,
+    )
 
 
 def _tier_from_plan(plan_id: str | None, plan_name: str | None, status: str) -> tuple[str, str]:
@@ -165,16 +166,41 @@ async def fetch_wix_tier_for_email(email: str) -> tuple[str, str] | None:
     if not email_n or "@" not in email_n:
         return None
 
+    global _cached_site_id
     async with httpx.AsyncClient() as client:
-        site_id = await _resolve_site_id(client)
-        if not site_id:
+        try:
+            site_ids = await _list_account_site_ids(client)
+        except WixLookupError:
             return None
-        member_id = await _find_member_id(client, site_id, email_n)
-        if not member_id:
-            # Member not on Wix site → free trial / no package.
-            return "free", "canceled"
-        plan_id, plan_name, status = await _active_plan_for_member(client, site_id, member_id)
-        return _tier_from_plan(plan_id, plan_name, status)
+        if not site_ids:
+            return None
+        if _cached_site_id and _cached_site_id in site_ids:
+            site_ids = [_cached_site_id] + [s for s in site_ids if s != _cached_site_id]
+
+        lookup_error = False
+        for site_id in site_ids:
+            try:
+                member_id = await _find_member_id(client, site_id, email_n)
+            except WixLookupError:
+                lookup_error = True
+                continue
+            if not member_id:
+                continue
+            try:
+                plan_id, plan_name, status = await _active_plan_for_member(
+                    client, site_id, member_id
+                )
+            except WixLookupError:
+                lookup_error = True
+                continue
+            _cached_site_id = site_id
+            return _tier_from_plan(plan_id, plan_name, status)
+
+        if lookup_error:
+            # At least one site failed; do not wipe a paid DB tier.
+            return None
+        # Every site answered; this email is not a member on any of them.
+        return "free", "canceled"
 
 
 async def apply_wix_tier_to_user(
