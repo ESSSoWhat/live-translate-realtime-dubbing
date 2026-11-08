@@ -132,6 +132,7 @@ def create_app() -> FastAPI:
     application.include_router(voice.router, prefix=prefix)
     application.include_router(analytics.router, prefix=prefix)
     application.include_router(updates.router, prefix=prefix)
+    application.include_router(updates.dubber_router, prefix=prefix)
 
     @application.get("/")
     async def root() -> dict:

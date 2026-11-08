@@ -114,6 +114,16 @@ CREATE TABLE IF NOT EXISTS desktop_handoffs (
 );
 CREATE INDEX IF NOT EXISTS desktop_handoffs_created_at_idx ON desktop_handoffs (created_at);
 
+-- DubTool trial: a free account may translate 3 videos and 1 game. Paid tiers are not capped here.
+CREATE TABLE IF NOT EXISTS dubber_translations (
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL CHECK (kind IN ('video', 'game')),
+    source_key  TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, kind, source_key)
+);
+CREATE INDEX IF NOT EXISTS idx_dubber_translations_user ON dubber_translations(user_id, kind);
+
 DROP TRIGGER IF EXISTS update_usage_records_updated_at ON usage_records;
 CREATE TRIGGER update_usage_records_updated_at
     BEFORE UPDATE ON usage_records

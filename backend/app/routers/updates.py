@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from app.config import get_settings
 
 router = APIRouter(prefix="/app", tags=["app"])
+dubber_router = APIRouter(tags=["dubber"])
 
 
 def _version_key(value: str) -> tuple[int, ...]:
@@ -59,6 +60,40 @@ async def app_update(current: str = Query(default="0.0.0")) -> dict:
         "patch_url": url if ready else "",
         "patch_sha256": digest if ready else "",
     }
+
+
+@dubber_router.get("/dubber/update")
+async def dubber_update() -> dict:
+    """Tell Dubtool whether a newer Windows build is published."""
+    cfg = get_settings()
+    version = (cfg.dubber_latest_version or "").strip()
+    digest = (cfg.dubber_patch_sha256 or "").strip().lower()
+    url = (cfg.dubber_patch_url or "").strip()
+    if not url and (cfg.dubber_patch_file or "").strip():
+        url = "/api/v1/dubber/update/patch"
+    ready = bool(version) and bool(url) and _sha_ok(digest)
+    if not ready:
+        return {"windows": {}}
+    return {
+        "windows": {
+            "version": version,
+            "sha256": digest,
+            "url": url,
+            "name": "dubtool-patch.zip",
+        }
+    }
+
+
+@dubber_router.get("/dubber/update/patch")
+async def dubber_update_patch() -> FileResponse:
+    """Serve the Dubtool zip configured with DUBBER_PATCH_FILE."""
+    raw = (get_settings().dubber_patch_file or "").strip()
+    if not raw:
+        raise HTTPException(status_code=404, detail="No patch published")
+    path = Path(raw)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="No patch published")
+    return FileResponse(path, media_type="application/zip", filename="dubtool-patch.zip")
 
 
 @router.get("/update/patch")

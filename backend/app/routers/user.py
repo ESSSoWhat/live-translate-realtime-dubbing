@@ -1,16 +1,38 @@
 """User profile and usage endpoints."""
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 
 from app.dependencies import get_current_user
 from app.models.requests import UsageReportRequest
 from app.models.responses import UserProfile, UsageSnapshot, UsageWithTier
+from app.services.dubber_allowance import TrialLimit, claim_translation
 from app.services.usage import get_usage_snapshot, record_usage
 from app.services.wix_plans import refresh_user_tier_from_wix
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/user", tags=["user"])
+
+
+class DubberClaim(BaseModel):
+    kind: str
+    source_key: str
+
+
+@router.post("/dubber/claim")
+async def claim_dubber_translation(
+    body: DubberClaim,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Count a DubTool video or game. Free trial: 3 videos and 1 game. Paid plans are open."""
+    user = await refresh_user_tier_from_wix(user)
+    try:
+        return await claim_translation(str(user["id"]), str(user.get("tier") or "free"), body.kind, body.source_key)
+    except TrialLimit as exc:
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/usage/report")

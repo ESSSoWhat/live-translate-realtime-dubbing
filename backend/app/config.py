@@ -66,6 +66,13 @@ class Settings(BaseSettings):  # pylint: disable=too-few-public-methods
     desktop_patch_notes: str = ""
     desktop_patch_file: str = ""
 
+    # Dubtool patch. The app checks this on startup and installs it when newer.
+    # Zip paths are app/, web/, and desktop/ at the archive root.
+    dubber_latest_version: str = ""
+    dubber_patch_url: str = ""
+    dubber_patch_sha256: str = ""
+    dubber_patch_file: str = ""
+
     # App
     backend_env: str = "development"
     backend_cors_origins: str = "*"

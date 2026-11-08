@@ -246,6 +246,38 @@ def _row_from_result(result: object) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+_USER_SQL_COLUMNS = (
+    "id, supabase_uid, email, api_key, tier, subscription_status, "
+    "stripe_customer_id, subscription_id"
+)
+_USER_SQL_KEYS = {"id", "supabase_uid", "email", "api_key"}
+
+
+def _sql_user_row(row: object) -> dict:
+    return {key: (None if row[key] is None else str(row[key])) for key in row.keys()}  # type: ignore[index]
+
+
+async def _select_user_sql(column: str, value: str) -> dict | None:
+    """Read one user through Postgres when the REST key is rejected."""
+    if column not in _USER_SQL_KEYS or not value:
+        return None
+    try:
+        from app.services.usage import get_db_pool
+
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            found = await conn.fetchrow(
+                f"SELECT {_USER_SQL_COLUMNS} FROM users WHERE {column}::text = $1 LIMIT 1",
+                str(value),
+            )
+    except Exception as exc:
+        logger.warning("User SQL lookup failed", column=column, error=str(exc))
+        return None
+    if found is None:
+        return None
+    return _sql_user_row(found)
+
+
 async def _select_user(sb: object, column: str, value: str) -> dict | None:
     """Fetch one users row. Avoid maybe_single — 0 rows raises PostgREST 204/PGRST116."""
     try:
@@ -253,8 +285,8 @@ async def _select_user(sb: object, column: str, value: str) -> dict | None:
             sb.table("users").select("*").eq(column, value).limit(1).execute()  # type: ignore[union-attr]
         )
     except Exception as exc:
-        logger.debug("users lookup empty or failed", column=column, error=str(exc))
-        return None
+        logger.warning("users lookup failed on the REST client", column=column, error=str(exc))
+        return await _select_user_sql(column, value)
     return _row_from_result(result)
 
 
@@ -367,7 +399,9 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     if redirect_uri and not _is_valid_desktop_redirect(redirect_uri):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid redirect_uri")
 
-    sb = await get_supabase()
+    # A long-lived client keeps the last user's access token. PostgREST then
+    # rejects that expired token (PGRST303) and the page shows a 500.
+    sb = await create_auth_client()
     api_key: str | None = None
 
     pasted = (body.api_key or "").strip()
