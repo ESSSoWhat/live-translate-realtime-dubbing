@@ -132,16 +132,29 @@ async def test_direct_api_requires_dev_flag():
     from live_dubbing.core.events import EventBus
     from live_dubbing.config.settings import AppSettings
     
-    settings = AppSettings()
-    settings._elevenlabs_api_key = "test_key"
-    settings._access_token = None  # Not signed in
+    # Ensure dev flag is NOT set
+    old_val = os.environ.get("LT_DEV_DIRECT_API")
+    os.environ.pop("LT_DEV_DIRECT_API", None)
     
-    event_bus = EventBus()
-    orchestrator = Orchestrator(settings, event_bus)
-    
-    # Should raise error when not signed in and dev flag not set
-    with pytest.raises(RuntimeError, match="Authentication required"):
-        await orchestrator._init_elevenlabs()
+    try:
+        settings = AppSettings()
+        # Mock keyring to ensure no stored credentials
+        with patch("keyring.get_password") as mock_keyring:
+            mock_keyring.return_value = None
+            settings._elevenlabs_api_key = None  # No local key
+            settings._access_token = None  # Not signed in
+            settings._refresh_token = None
+            
+            event_bus = EventBus()
+            orchestrator = Orchestrator(settings, event_bus)
+            
+            # Should raise error when not signed in and dev flag not set
+            with pytest.raises(RuntimeError, match="Authentication required"):
+                await orchestrator._init_elevenlabs()
+    finally:
+        # Restore env
+        if old_val is not None:
+            os.environ["LT_DEV_DIRECT_API"] = old_val
 
 
 @pytest.mark.asyncio

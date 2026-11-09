@@ -3,7 +3,9 @@
 
 param(
     [switch]$Build = $false,
-    [switch]$Installer = $false
+    [switch]$Installer = $false,
+    [switch]$CleanVenv = $false,
+    [switch]$NoPrompt = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,8 +28,12 @@ try {
     }
     
     # Step 2: Clean venv (optional but recommended)
-    $cleanVenv = Read-Host "`nClean and recreate venv to ensure no duplicate packages? (y/N)"
-    if ($cleanVenv -eq "y" -or $cleanVenv -eq "Y") {
+    if ($NoPrompt) {
+        $cleanVenvResponse = if ($CleanVenv) { "y" } else { "n" }
+    } else {
+        $cleanVenvResponse = Read-Host "`nClean and recreate venv to ensure no duplicate packages? (y/N)"
+    }
+    if ($cleanVenvResponse -eq "y" -or $cleanVenvResponse -eq "Y") {
         Write-Host "Cleaning venv..." -ForegroundColor Yellow
         if (Test-Path "venv") {
             Remove-Item -Path "venv" -Recurse -Force
@@ -67,10 +73,14 @@ try {
     
     if ($hasDuplicates) {
         Write-Host "`n⚠ Duplicate packages detected. Clean and recreate venv recommended." -ForegroundColor Yellow
-        $continue = Read-Host "Continue anyway? (y/N)"
-        if ($continue -ne "y" -and $continue -ne "Y") {
-            Write-Host "Build cancelled." -ForegroundColor Red
-            exit 1
+        if ($NoPrompt) {
+            Write-Host "  Continuing anyway (NoPrompt mode)..." -ForegroundColor Yellow
+        } else {
+            $continue = Read-Host "Continue anyway? (y/N)"
+            if ($continue -ne "y" -and $continue -ne "Y") {
+                Write-Host "Build cancelled." -ForegroundColor Red
+                exit 1
+            }
         }
     } else {
         Write-Host "  ✓ No duplicate packages found" -ForegroundColor Green
