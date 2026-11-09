@@ -94,11 +94,11 @@ class MockBackendManager:
 
 # ── Pipeline test ───────────────────────────────────────────────────────────
 
-@pytest.fixture
-async def mock_backend():
+@pytest.fixture(scope="function")
+def mock_backend(event_loop):
     """Pytest fixture that provides a running mock backend."""
     manager = MockBackendManager()
-    await manager.start()
+    event_loop.run_until_complete(manager.start())
     yield manager
     manager.stop()
 
