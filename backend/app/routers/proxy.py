@@ -367,6 +367,57 @@ async def synthesize_stream(
 
 # ── Translation ──────────────────────────────────────────────────────────────
 
+_GOOGLE_LANGUAGE_IDS = {"zh": "zh-CN", "fil": "tl", "iw": "he"}
+_LANGUAGE_NAMES = {
+    "en": "English",
+    "es": "Spanish",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh": "Simplified Chinese",
+    "id": "Indonesian",
+    "th": "Thai",
+    "ru": "Russian",
+    "hi": "Hindi",
+    "vi": "Vietnamese",
+    "tl": "Filipino (Tagalog)",
+    "fil": "Filipino (Tagalog)",
+    "kk": "Kazakh",
+}
+
+
+async def _google_translate(text: str, target: str) -> str | None:
+    """Translate with Google's public JSON endpoints; each is rate limited separately, so try both."""
+    errors: list[str] = []
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            response = await client.get(
+                "https://clients5.google.com/translate_a/t",
+                params={"client": "dict-chrome-ex", "sl": "auto", "tl": target, "q": text},
+            )
+            response.raise_for_status()
+            first = (response.json() or [None])[0]
+            translated = first[0] if isinstance(first, list) else first
+            if isinstance(translated, str) and translated.strip():
+                return translated.strip()
+        except (httpx.HTTPError, ValueError, IndexError, TypeError) as exc:
+            errors.append(f"clients5: {exc}")
+        try:
+            response = await client.get(
+                "https://translate.googleapis.com/translate_a/single",
+                params={"client": "gtx", "sl": "auto", "tl": target, "dt": "t", "q": text},
+            )
+            response.raise_for_status()
+            sentences = response.json()[0] or []
+            translated = "".join(part[0] for part in sentences if part and part[0]).strip()
+            if translated:
+                return translated
+        except (httpx.HTTPError, ValueError, IndexError, TypeError) as exc:
+            errors.append(f"gtx: {exc}")
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    return None
+
+
 @router.post("/translate", response_model=TranslationResponse)
 async def translate(
     body: TranslateRequest,
@@ -389,8 +440,9 @@ async def translate(
     cfg = get_settings()
     translated = body.text
     source_lang = body.source_language
+    target = body.target_language.strip().lower()
+    target_name = _LANGUAGE_NAMES.get(target, body.target_language)
 
-    # Try OpenAI first, fall back to Google Translate
     if cfg.openai_api_key:
         try:
             from openai import AsyncOpenAI
@@ -400,7 +452,7 @@ async def translate(
                     model="gpt-4o-mini",
                     messages=[
                         {"role": "system", "content": (
-                            f"Translate the following text to {body.target_language}. "
+                            f"Translate the following text to {target_name}. "
                             "Return only the translated text, no explanations."
                         )},
                         {"role": "user", "content": body.text},
@@ -413,20 +465,26 @@ async def translate(
         except Exception as exc:
             logger.warning("OpenAI translation failed, falling back", error=str(exc))
 
+    google_target = _GOOGLE_LANGUAGE_IDS.get(target, target)
     if translated == body.text:
-        # Google Translate fallback (e.g. when OpenAI not configured or failed)
+        try:
+            translated = await _google_translate(body.text, google_target) or body.text
+        except (httpx.HTTPError, RuntimeError) as exc:
+            logger.warning("Google translate endpoint failed, falling back", error=str(exc))
+
+    if translated == body.text:
         try:
             from deep_translator import GoogleTranslator
 
-            target = body.target_language.strip().lower()
-            # Align app language codes with Google Translate ids.
-            target = {"zh": "zh-CN", "fil": "tl", "iw": "he"}.get(target, target)
             translated = await asyncio.to_thread(
-                GoogleTranslator(source="auto", target=target).translate,
+                GoogleTranslator(source="auto", target=google_target).translate,
                 body.text,
             )
         except Exception as exc:
             logger.error("Google Translate fallback failed", error=str(exc))
+
+    if translated == body.text:
+        logger.error("All translation methods returned the original text", target=target, chars=char_count)
 
     return TranslationResponse(
         translated_text=(translated or "").strip() or body.text,
