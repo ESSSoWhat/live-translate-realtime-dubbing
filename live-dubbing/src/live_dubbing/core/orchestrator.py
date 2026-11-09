@@ -853,7 +853,12 @@ class Orchestrator:
             self._event_bus.emit_error(f"Voice capture failed: {redact_secrets(str(e))}")
             return None
 
-    async def clone_voice_from_file(self, file_path: str, name: str) -> ClonedVoice | None:
+    async def clone_voice_from_file(
+        self,
+        file_path: str,
+        name: str,
+        profile_id: str | None = None,
+    ) -> ClonedVoice | None:
         """Clone a voice from an audio file.
 
         Args:
@@ -875,6 +880,7 @@ class Orchestrator:
                 file_path=file_path,
                 name=name,
                 speaker_label=name,
+                profile_id=profile_id,
             )
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
@@ -960,6 +966,19 @@ class Orchestrator:
         if ok:
             self._settings.voice_clone.default_profile_id = profile_id
         return ok
+
+    def prepare_shared_card(
+        self,
+        card_id: str,
+        name: str,
+        voice_id: str | None = None,
+    ) -> str | None:
+        """Add or update the profile for a character card. Returns the profile id."""
+        if not self._processing_pipeline or not self._processing_pipeline._voice_manager:
+            return None
+        return self._processing_pipeline._voice_manager.prepare_shared_card(
+            card_id, name, voice_id
+        )
 
     def rename_profile(self, profile_id: str, new_name: str) -> bool:
         """Rename a voice profile."""

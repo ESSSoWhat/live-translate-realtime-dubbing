@@ -143,6 +143,14 @@ QListWidget::item:selected {{
 QListWidget::item:hover {{
     background: rgba(63, 212, 255, 0.08);
 }}
+QFrame#profileCard, QFrame#profileCardActive {{
+    border: 1px solid {LINE};
+    border-radius: 10px;
+    background: transparent;
+}}
+QFrame#profileCardActive {{
+    border-color: {ACCENT};
+}}
 QCheckBox {{
     color: {TEXT};
     spacing: 6px;

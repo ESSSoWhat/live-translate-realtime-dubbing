@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -532,9 +533,9 @@ class MainWindow(QMainWindow):
         voice_btn_layout.addStretch()
         voice_layout.addLayout(voice_btn_layout)
 
-        # ── Voice profiles (speaker → TTS clone) ─────────────────────────
+        # ── Voice profiles (one card per speaker, same shape as Dubtool) ─
         profiles_label_row = QHBoxLayout()
-        profiles_title = QLabel("Voice Profiles")
+        profiles_title = QLabel("Voice profiles")
         profiles_title.setObjectName("muted")
         profiles_label_row.addWidget(profiles_title)
         self._profile_count_label = QLabel("0 profiles")
@@ -543,24 +544,61 @@ class MainWindow(QMainWindow):
         profiles_label_row.addWidget(self._profile_count_label)
         voice_layout.addLayout(profiles_label_row)
 
-        self._profile_list = QListWidget()
-        self._profile_list.setMinimumHeight(80)
-        self._profile_list.setMaximumHeight(240)
-        self._profile_list.setAlternatingRowColors(True)
-        self._profile_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._profile_list.setToolTip(
-            "One profile per unique voice in the source audio. "
-            "Assign a clone for TTS; unmatched speech uses the default profile."
+        profile_hint = QLabel(
+            "Each profile is one voice. A saved card can be loaded in Dubtool."
         )
-        self._profile_list.currentItemChanged.connect(self._on_profile_selection_changed)
-        voice_layout.addWidget(self._profile_list)
+        profile_hint.setObjectName("muted")
+        profile_hint.setWordWrap(True)
+        voice_layout.addWidget(profile_hint)
+
+        card_row = QHBoxLayout()
+        card_row.setSpacing(6)
+        self._card_combo = QComboBox()
+        self._card_combo.setMinimumWidth(140)
+        self._card_combo.setToolTip(
+            "Characters saved from this app or from Dubtool"
+        )
+        card_row.addWidget(self._card_combo, 1)
+        self._card_load_btn = QPushButton("Load")
+        self._card_load_btn.setToolTip(
+            "Use this card here. An existing clone is reused."
+        )
+        self._card_load_btn.clicked.connect(self._on_load_card_clicked)
+        card_row.addWidget(self._card_load_btn)
+        self._card_hear_btn = QPushButton("Hear")
+        self._card_hear_btn.setObjectName("secondary")
+        self._card_hear_btn.setToolTip("Play the saved card's voice")
+        self._card_hear_btn.clicked.connect(self._on_hear_card_clicked)
+        card_row.addWidget(self._card_hear_btn)
+        self._card_delete_btn = QPushButton("Delete")
+        self._card_delete_btn.setObjectName("secondary")
+        self._card_delete_btn.setToolTip(
+            "Delete the saved card. Profiles already loaded keep their voice."
+        )
+        self._card_delete_btn.clicked.connect(self._on_delete_card_clicked)
+        card_row.addWidget(self._card_delete_btn)
+        voice_layout.addLayout(card_row)
+
+        self._profile_cards = QWidget()
+        self._profile_cards_layout = QVBoxLayout(self._profile_cards)
+        self._profile_cards_layout.setContentsMargins(0, 0, 0, 0)
+        self._profile_cards_layout.setSpacing(8)
+        profile_scroll = QScrollArea()
+        profile_scroll.setWidgetResizable(True)
+        profile_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        profile_scroll.setMinimumHeight(80)
+        profile_scroll.setMaximumHeight(260)
+        profile_scroll.setWidget(self._profile_cards)
+        voice_layout.addWidget(profile_scroll)
 
         default_row = QHBoxLayout()
-        default_row.addWidget(QLabel("Default:"))
+        default_label = QLabel("Default")
+        default_label.setObjectName("muted")
+        default_row.addWidget(default_label)
         self._default_profile_combo = QComboBox()
         self._default_profile_combo.setMinimumWidth(140)
         self._default_profile_combo.setToolTip(
-            "Used for TTS when the speaker cannot be identified"
+            "Used when the speaker cannot be matched to a profile"
         )
         self._default_profile_combo.currentIndexChanged.connect(
             self._on_default_profile_changed
@@ -568,37 +606,9 @@ class MainWindow(QMainWindow):
         default_row.addWidget(self._default_profile_combo, 1)
         voice_layout.addLayout(default_row)
 
-        assign_row = QHBoxLayout()
-        assign_row.addWidget(QLabel("Clone:"))
-        self._profile_voice_combo = QComboBox()
-        self._profile_voice_combo.setMinimumWidth(140)
-        self._profile_voice_combo.setToolTip("Cloned voice assigned to the selected profile")
-        self._profile_voice_combo.currentIndexChanged.connect(
-            self._on_profile_voice_assigned
-        )
-        assign_row.addWidget(self._profile_voice_combo, 1)
-        voice_layout.addLayout(assign_row)
-
-        profile_btn_row = QHBoxLayout()
-        profile_btn_row.setSpacing(6)
-        self._rename_profile_btn = QPushButton("Rename")
-        self._rename_profile_btn.setObjectName("secondary")
-        self._rename_profile_btn.setMinimumHeight(28)
-        self._rename_profile_btn.setToolTip("Rename selected profile")
-        self._rename_profile_btn.clicked.connect(self._on_rename_profile_clicked)
-        profile_btn_row.addWidget(self._rename_profile_btn)
-
-        self._delete_profile_btn = QPushButton("Delete")
-        self._delete_profile_btn.setMinimumHeight(28)
-        self._delete_profile_btn.setToolTip("Delete selected profile")
-        self._delete_profile_btn.setObjectName("secondary")
-        self._delete_profile_btn.clicked.connect(self._on_delete_profile_clicked)
-        profile_btn_row.addWidget(self._delete_profile_btn)
-        profile_btn_row.addStretch()
         self._active_profile_label = QLabel("")
         self._active_profile_label.setStyleSheet("color: #7ddec8; font-size: 11px;")
-        profile_btn_row.addWidget(self._active_profile_label)
-        voice_layout.addLayout(profile_btn_row)
+        voice_layout.addWidget(self._active_profile_label)
 
         control_layout.addWidget(voice_group)
 
@@ -1745,7 +1755,6 @@ class MainWindow(QMainWindow):
         self._import_voice_btn.setEnabled(True)
         # Refresh the voice list so the new clone appears
         self._refresh_voice_list()
-        self._refresh_profile_list()
         if event.data.get("is_temporary"):
             return
         self._clear_overlay_clone_pending()
@@ -1826,17 +1835,24 @@ class MainWindow(QMainWindow):
         self._voice_count_label.setText(
             f"{count} voice{'s' if count != 1 else ''}"
         )
-        # Keep profile assign combo in sync with clone library
-        self._populate_profile_voice_combo()
+        # Clone names on each profile card follow the voice library
+        self._refresh_profile_list()
         if self._dubbed_window is not None:
             self._dubbed_window.set_voices(
                 self._overlay_voice_items(),
                 self._settings.voice_clone.default_voice_id,
             )
 
-    def _refresh_profile_list(self) -> None:
-        """Reload voice profiles and default-profile combo."""
-        if not hasattr(self, "_profile_list"):
+    def _refresh_profile_list(self, *, force: bool = False) -> None:
+        """Reload voice profile cards and the default-profile combo."""
+        if not hasattr(self, "_profile_cards_layout"):
+            return
+        focused = self.focusWidget()
+        if (
+            not force
+            and focused is not None
+            and self._profile_cards.isAncestorOf(focused)
+        ):
             return
 
         self._updating_profile_ui = True
@@ -1844,40 +1860,31 @@ class MainWindow(QMainWindow):
             profiles = self._orchestrator.get_voice_profiles()
             default_id = self._orchestrator.get_default_profile_id()
             active_id = self._orchestrator.get_active_profile_id()
-            voices_by_id = {v.voice_id: v for v in self._orchestrator.get_saved_voices()}
+            voices = self._orchestrator.get_saved_voices()
+            voices_by_id = {v.voice_id: v for v in voices}
 
-            prev_id = None
-            cur = self._profile_list.currentItem()
-            if cur:
-                prev_id = cur.data(Qt.ItemDataRole.UserRole)
+            self._clear_profile_cards()
+            if not profiles:
+                empty = QLabel("No profiles yet. One is added for each new voice.")
+                empty.setObjectName("muted")
+                empty.setWordWrap(True)
+                self._profile_cards_layout.addWidget(empty)
+            for profile in profiles:
+                self._profile_cards_layout.addWidget(
+                    self._build_profile_card(
+                        profile,
+                        voices,
+                        voices_by_id,
+                        is_default=profile.id == default_id,
+                        is_active=profile.id == active_id,
+                    )
+                )
+            self._profile_cards_layout.addStretch()
 
-            self._profile_list.clear()
             self._default_profile_combo.clear()
             self._default_profile_combo.addItem("(none)", None)
-
-            for p in profiles:
-                assigned = voices_by_id.get(p.assigned_voice_id) if p.assigned_voice_id else None
-                assigned_label = assigned.name if assigned else "Unassigned"
-                markers = []
-                if p.id == default_id:
-                    markers.append("default")
-                if p.id == active_id:
-                    markers.append("active")
-                suffix = f" [{', '.join(markers)}]" if markers else ""
-                display = f"{p.name}  —  {assigned_label}{suffix}"
-                item = QListWidgetItem(display)
-                item.setData(Qt.ItemDataRole.UserRole, p.id)
-                if p.id == active_id:
-                    font = item.font()
-                    font.setBold(True)
-                    item.setFont(font)
-                self._profile_list.addItem(item)
-                if p.id == prev_id:
-                    self._profile_list.setCurrentItem(item)
-
-                self._default_profile_combo.addItem(p.name, p.id)
-
-            # Restore default combo selection
+            for profile in profiles:
+                self._default_profile_combo.addItem(profile.name, profile.id)
             if default_id:
                 idx = self._default_profile_combo.findData(default_id)
                 if idx >= 0:
@@ -1887,36 +1894,112 @@ class MainWindow(QMainWindow):
             self._profile_count_label.setText(
                 f"{count} profile{'s' if count != 1 else ''}"
             )
-            self._populate_profile_voice_combo()
+            self._refresh_card_bar()
         finally:
             self._updating_profile_ui = False
 
-    def _populate_profile_voice_combo(self) -> None:
-        """Fill the assign-clone combo for the selected profile."""
-        if not hasattr(self, "_profile_voice_combo"):
-            return
-        was_updating = getattr(self, "_updating_profile_ui", False)
-        self._updating_profile_ui = True
-        try:
-            self._profile_voice_combo.clear()
-            self._profile_voice_combo.addItem("(unassigned)", None)
-            for v in self._orchestrator.get_saved_voices():
-                self._profile_voice_combo.addItem(v.name, v.voice_id)
+    def _clear_profile_cards(self) -> None:
+        """Drop the current profile cards without firing their edits."""
+        layout = self._profile_cards_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is None:
+                continue
+            widget.blockSignals(True)
+            widget.setParent(None)
+            widget.deleteLater()
 
-            item = self._profile_list.currentItem() if hasattr(self, "_profile_list") else None
-            if not item:
-                return
-            profile_id = item.data(Qt.ItemDataRole.UserRole)
-            profile = next(
-                (p for p in self._orchestrator.get_voice_profiles() if p.id == profile_id),
-                None,
+    def _build_profile_card(
+        self,
+        profile: Any,
+        voices: list[Any],
+        voices_by_id: dict[str, Any],
+        *,
+        is_default: bool,
+        is_active: bool,
+    ) -> QFrame:
+        """One profile card: name, status, voice, and remove."""
+        card = QFrame()
+        card.setObjectName("profileCardActive" if is_active else "profileCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        name = QLineEdit(profile.name)
+        name.setToolTip(
+            "Name this profile. The name is kept, and the same voice is reused."
+        )
+        name.editingFinished.connect(
+            lambda profile_id=profile.id, field=name: self._on_profile_name_edited(
+                profile_id, field
             )
-            if profile and profile.assigned_voice_id:
-                idx = self._profile_voice_combo.findData(profile.assigned_voice_id)
-                if idx >= 0:
-                    self._profile_voice_combo.setCurrentIndex(idx)
-        finally:
-            self._updating_profile_ui = was_updating
+        )
+        layout.addWidget(name)
+
+        assigned = (
+            voices_by_id.get(profile.assigned_voice_id) if profile.assigned_voice_id else None
+        )
+        bits: list[str] = []
+        if is_active:
+            bits.append("Active")
+        if is_default:
+            bits.append("Default")
+        if assigned is not None:
+            bits.append(assigned.name)
+        elif profile.assigned_voice_id:
+            bits.append("Missing voice")
+        else:
+            bits.append("No voice yet")
+        if profile.card_id:
+            bits.append("Saved card")
+        status = QLabel(" · ".join(bits))
+        status.setObjectName("muted")
+        layout.addWidget(status)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+        voice = QComboBox()
+        voice.setToolTip("Cloned voice used when this profile speaks")
+        voice.addItem("No voice", None)
+        for saved in voices:
+            voice.addItem(saved.name, saved.voice_id)
+        if profile.assigned_voice_id:
+            idx = voice.findData(profile.assigned_voice_id)
+            if idx >= 0:
+                voice.setCurrentIndex(idx)
+        voice.currentIndexChanged.connect(
+            lambda _index, profile_id=profile.id, combo=voice: self._on_profile_voice_assigned(
+                profile_id, combo
+            )
+        )
+        actions.addWidget(voice, 1)
+
+        save_card = QPushButton("Update card" if profile.card_id else "Save card")
+        save_card.setObjectName("secondary")
+        save_card.setToolTip(
+            "Keep this name on the card Dubtool loads"
+            if profile.card_id
+            else "A card is saved when this voice is captured or imported"
+        )
+        save_card.clicked.connect(
+            lambda _checked=False, profile_id=profile.id: self._on_profile_save_card(
+                profile_id
+            )
+        )
+        actions.addWidget(save_card)
+
+        remove = QPushButton("Remove")
+        remove.setObjectName("secondary")
+        remove.setToolTip("Remove this profile. Its speaker match is forgotten.")
+        remove.clicked.connect(
+            lambda _checked=False, profile_id=profile.id, button=remove: (
+                self._on_profile_remove_clicked(profile_id, button)
+            )
+        )
+        actions.addWidget(remove)
+        layout.addLayout(actions)
+        return card
 
     @pyqtSlot(object)
     def _on_voice_profile_changed(self, event: Event) -> None:
@@ -1935,14 +2018,168 @@ class MainWindow(QMainWindow):
             )
         QTimer.singleShot(0, self._refresh_profile_list)
 
-    def _on_profile_selection_changed(
-        self,
-        _current: QListWidgetItem | None,
-        _previous: QListWidgetItem | None,
-    ) -> None:
+    def _on_profile_name_edited(self, profile_id: str, field: QLineEdit) -> None:
+        """Save a profile name when its field loses focus."""
         if getattr(self, "_updating_profile_ui", False):
             return
-        self._populate_profile_voice_combo()
+        name = field.text().strip()
+        current = next(
+            (p for p in self._orchestrator.get_voice_profiles() if p.id == profile_id),
+            None,
+        )
+        if current is None:
+            return
+        if not name or name == current.name:
+            field.setText(current.name)
+            return
+        if self._orchestrator.rename_profile(profile_id, name):
+            self._refresh_profile_list(force=True)
+
+    def _on_profile_voice_assigned(self, profile_id: str, combo: QComboBox) -> None:
+        """Point one profile at the cloned voice chosen on its card."""
+        if getattr(self, "_updating_profile_ui", False):
+            return
+        voice_id = combo.currentData()
+        if self._orchestrator.set_profile_voice(profile_id, voice_id):
+            self._refresh_profile_list(force=True)
+
+    def _on_profile_remove_clicked(self, profile_id: str, button: QPushButton) -> None:
+        """Remove a profile. The first click asks for confirmation on the button."""
+        if button.property("armed") != profile_id:
+            button.setProperty("armed", profile_id)
+            button.setText("Confirm")
+            button.setToolTip("Remove this profile for good")
+            return
+        if self._orchestrator.delete_profile(profile_id):
+            self._refresh_profile_list(force=True)
+
+    def _refresh_card_bar(self) -> None:
+        """Reload the shared character cards without moving the selection."""
+        if not hasattr(self, "_card_combo"):
+            return
+        from live_dubbing.services.character_cards import list_cards
+
+        combo = self._card_combo
+        current = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        try:
+            cards = list_cards()
+        except OSError:
+            cards = []
+        if not cards:
+            combo.addItem("No saved cards yet", None)
+        for card in cards:
+            combo.addItem(card["name"], card["id"])
+        if current:
+            index = combo.findData(current)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+        combo.blockSignals(False)
+        has_cards = bool(cards)
+        self._card_load_btn.setEnabled(has_cards)
+        self._card_hear_btn.setEnabled(has_cards)
+        self._card_delete_btn.setEnabled(has_cards)
+
+    def _selected_card(self) -> dict | None:
+        """The card chosen in the bar, if it is still on disk."""
+        from live_dubbing.services.character_cards import list_cards
+
+        card_id = self._card_combo.currentData()
+        if not card_id:
+            return None
+        return next((card for card in list_cards() if card["id"] == card_id), None)
+
+    def _on_load_card_clicked(self) -> None:
+        """Load a shared card into a profile, cloning only when no voice is stored."""
+        card = self._selected_card()
+        if card is None:
+            return
+        voices = {voice.voice_id for voice in self._orchestrator.get_saved_voices()}
+        stored = str(card.get("elevenlabs_voice_id") or "")
+        known = stored if stored in voices else None
+        profile_id = self._orchestrator.prepare_shared_card(
+            card["id"], card["name"], known
+        )
+        if profile_id is None:
+            QMessageBox.information(
+                self,
+                "Not ready",
+                "Start the app services before loading a character card.",
+            )
+            return
+        if known:
+            self._refresh_profile_list(force=True)
+            self._clone_progress.setFormat(f"Loaded {card['name']}")
+            return
+        if not self._async_worker:
+            return
+        self._clone_progress.setFormat(f"Cloning {card['name']}...")
+        self._async_worker.run_coroutine(
+            self._orchestrator.clone_voice_from_file(
+                card["reference"], card["name"], profile_id
+            ),
+            on_error=self._on_import_voice_error,
+        )
+
+    def _on_hear_card_clicked(self) -> None:
+        """Play the card's recording."""
+        card = self._selected_card()
+        if card is None:
+            return
+        try:
+            import winsound
+
+            played = winsound.PlaySound(
+                card["reference"],
+                winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
+            )
+        except (OSError, RuntimeError):
+            played = False
+        if not played:
+            QMessageBox.warning(
+                self, "Cannot play", "That card's recording could not be played."
+            )
+
+    def _on_delete_card_clicked(self) -> None:
+        """Delete the shared card. Loaded profiles keep the voice they already use."""
+        card = self._selected_card()
+        if card is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete card",
+            f'Delete the saved card "{card["name"]}"?\n'
+            "Profiles already loaded keep their voice.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        from live_dubbing.services.character_cards import delete_card
+
+        if delete_card(card["id"]):
+            self._refresh_card_bar()
+            self._refresh_profile_list(force=True)
+
+    def _on_profile_save_card(self, profile_id: str) -> None:
+        """Publish the profile name onto its shared card."""
+        profile = next(
+            (item for item in self._orchestrator.get_voice_profiles() if item.id == profile_id),
+            None,
+        )
+        if profile is None:
+            return
+        if not profile.card_id:
+            QMessageBox.information(
+                self,
+                "No recording yet",
+                "Capture or import this voice first. That recording is what Dubtool plays.",
+            )
+            return
+        from live_dubbing.services.character_cards import rename_card
+
+        rename_card(profile.card_id, profile.name)
+        self._refresh_card_bar()
+        self._clone_progress.setFormat(f"Saved card: {profile.name}")
 
     def _on_default_profile_changed(self, _index: int) -> None:
         if getattr(self, "_updating_profile_ui", False):
@@ -1951,53 +2188,6 @@ class MainWindow(QMainWindow):
         if self._orchestrator.set_default_profile(profile_id):
             self._settings.voice_clone.default_profile_id = profile_id
             ConfigManager().save(self._settings)
-            self._refresh_profile_list()
-
-    def _on_profile_voice_assigned(self, _index: int) -> None:
-        if getattr(self, "_updating_profile_ui", False):
-            return
-        item = self._profile_list.currentItem()
-        if not item:
-            return
-        profile_id = item.data(Qt.ItemDataRole.UserRole)
-        voice_id = self._profile_voice_combo.currentData()
-        if self._orchestrator.set_profile_voice(profile_id, voice_id):
-            self._refresh_profile_list()
-
-    def _on_rename_profile_clicked(self) -> None:
-        item = self._profile_list.currentItem()
-        if not item:
-            QMessageBox.information(self, "No Profile Selected", "Select a profile first.")
-            return
-        profile_id = item.data(Qt.ItemDataRole.UserRole)
-        current_name = ""
-        for p in self._orchestrator.get_voice_profiles():
-            if p.id == profile_id:
-                current_name = p.name
-                break
-        new_name, ok = QInputDialog.getText(
-            self, "Rename Profile", "Profile name:", text=current_name
-        )
-        if ok and new_name.strip():
-            if self._orchestrator.rename_profile(profile_id, new_name.strip()):
-                self._refresh_profile_list()
-
-    def _on_delete_profile_clicked(self) -> None:
-        item = self._profile_list.currentItem()
-        if not item:
-            QMessageBox.information(self, "No Profile Selected", "Select a profile first.")
-            return
-        profile_id = item.data(Qt.ItemDataRole.UserRole)
-        name = item.text().split("  —  ")[0]
-        reply = QMessageBox.question(
-            self,
-            "Delete Profile",
-            f"Delete profile '{name}'?\nIts speaker embedding will be removed.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        if self._orchestrator.delete_profile(profile_id):
             self._refresh_profile_list()
 
     def _on_voice_double_clicked(self, item: QListWidgetItem) -> None:

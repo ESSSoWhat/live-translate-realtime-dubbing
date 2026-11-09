@@ -41,6 +41,8 @@ class VoiceProfile:
     # Pitch-based speaker sex used to keep male/female TTS distinct.
     gender: str | None = None
     embedding: list[float] | None = None
+    # Folder name of the character card shared with Dubtool, when one exists.
+    card_id: str | None = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -141,6 +143,7 @@ class VoiceProfileStore:
             "source_cloned": profile.source_cloned,
             "gender": profile.gender,
             "embedding": profile.embedding,
+            "card_id": profile.card_id,
             "created_at": profile.created_at.isoformat(),
         }
 
@@ -166,6 +169,10 @@ class VoiceProfileStore:
             # Legacy profiles with an assignment were the speaker's own clone.
             source_cloned = bool(assigned)
 
+        card_id = d.get("card_id")
+        if not isinstance(card_id, str) or not card_id:
+            card_id = None
+
         return VoiceProfile(
             id=d["id"],
             name=d.get("name", "Speaker"),
@@ -173,5 +180,6 @@ class VoiceProfileStore:
             source_cloned=source_cloned,
             gender=d.get("gender") if d.get("gender") in ("male", "female") else None,
             embedding=embedding,
+            card_id=card_id,
             created_at=created,
         )

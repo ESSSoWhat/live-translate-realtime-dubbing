@@ -399,6 +399,7 @@ class VoiceCloneManager:
         file_path: str,
         name: str | None = None,
         speaker_label: str | None = None,
+        profile_id: str | None = None,
     ) -> ClonedVoice:
         """
         Create voice clone from an audio file.
@@ -446,7 +447,7 @@ class VoiceCloneManager:
                 audio=file_audio,
                 voice_id=voice_id,
                 label=speaker_label or name,
-                profile_id=None,
+                profile_id=profile_id,
             )
         except Exception as e:
             logger.warning("Could not register speaker embedding from file", error=str(e))
@@ -686,7 +687,48 @@ class VoiceCloneManager:
         except Exception as e:
             logger.warning("Could not persist profile rename", error=str(e))
             return False
+        if profile.card_id:
+            try:
+                from live_dubbing.services.character_cards import rename_card
+
+                rename_card(profile.card_id, name)
+            except Exception as e:
+                logger.warning("Could not rename shared card", error=str(e))
         return True
+
+    def prepare_shared_card(
+        self,
+        card_id: str,
+        name: str,
+        voice_id: str | None = None,
+    ) -> str | None:
+        """Point a profile at a card saved by Dubtool, reusing its clone when we have it."""
+        profile = next((p for p in self._profiles.values() if p.card_id == card_id), None)
+        if profile is None:
+            profile = VoiceProfile(
+                id=VoiceProfileStore.new_id(),
+                name=(name or "").strip() or "Character",
+                card_id=card_id,
+            )
+        else:
+            profile.name = (name or "").strip() or profile.name
+            profile.card_id = card_id
+        if voice_id and voice_id in self._voice_cache:
+            profile.assigned_voice_id = voice_id
+            profile.source_cloned = True
+        self._profiles[profile.id] = profile
+        if self._default_profile_id is None:
+            self._default_profile_id = profile.id
+            try:
+                self._profile_store.set_default_profile_id(profile.id)
+            except Exception as e:
+                logger.warning("Could not set default profile", error=str(e))
+        try:
+            self._profile_store.save(profile)
+        except Exception as e:
+            logger.warning("Could not persist shared card profile", error=str(e))
+            return None
+        return profile.id
 
     def delete_profile(self, profile_id: str) -> bool:
         """Delete a profile and unregister its embedding."""
@@ -1002,5 +1044,20 @@ class VoiceCloneManager:
             self._profile_store.save(profile)
         except Exception as e:
             logger.warning("Could not persist linked profile", error=str(e))
+        try:
+            from live_dubbing.services.character_cards import publish_card
+
+            published = publish_card(
+                profile.card_id or profile.id,
+                profile.name,
+                audio,
+                self._sample_rate,
+                voice_id,
+            )
+            if profile.card_id != published:
+                profile.card_id = published
+                self._profile_store.save(profile)
+        except Exception as e:
+            logger.warning("Could not publish shared character card", error=str(e))
         self._active_profile_id = profile.id
         return profile
