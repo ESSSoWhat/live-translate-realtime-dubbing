@@ -189,7 +189,10 @@ a = Analysis(
 # ── Filter out CUDA DLLs (this app only needs CPU for Silero VAD) ───────────
 # CUDA DLLs require CUDA runtime which may not be installed on target machines.
 # Removing them prevents "The specified procedure could not be found" errors.
-cuda_dll_patterns = ('cuda', 'cudnn', 'cublas', 'cusparse', 'cufft', 'curand', 'nvrtc')
+cuda_dll_patterns = (
+    'cuda', 'cudnn', 'cublas', 'cusparse', 'cufft', 'curand', 'nvrtc',
+    'cusolver', 'cusolverMg', 'nvjit', 'cupti', 'nvtools'
+)
 a.binaries = [
     (name, path, typ)
     for name, path, typ in a.binaries
@@ -205,8 +208,9 @@ a.binaries = [
 ]
 
 # ── Filter out large unused torch subdirectories ─────────────────────────────
-# These torch modules are not needed for basic inference with silero_vad (saves ~17 MB)
-torch_exclude_dirs = ('torch/distributed', 'torch/_inductor', 'torch/testing')
+# CRITICAL: torch.distributed CANNOT be excluded - torch.utils.data.dataloader imports it
+# Only exclude modules that are truly optional (saves ~13 MB)
+torch_exclude_dirs = ('torch/_inductor', 'torch/testing')
 a.datas = [
     (name, path, typ)
     for name, path, typ in a.datas
