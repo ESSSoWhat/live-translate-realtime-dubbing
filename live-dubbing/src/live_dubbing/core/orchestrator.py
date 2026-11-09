@@ -146,18 +146,31 @@ class Orchestrator:
     async def _init_elevenlabs(self) -> None:
         """Initialize ElevenLabs service or BackendProxyService.
 
-        Prefers BackendProxyService when user is signed in (usage tracked),
-        unless prefer_direct_api is set (for offline / flaky network).
+        Always uses BackendProxyService (backend proxy) by default.
+        Direct API calls to OpenAI/ElevenLabs are ONLY allowed when the explicit
+        dev flag LT_DEV_DIRECT_API=1 is set (for local development/testing).
+        This prevents direct provider calls in production.
         """
         from live_dubbing.services.elevenlabs_service import ElevenLabsService
+        import os
 
         self._usage_reporter = None
-        api_key = self._settings.get_elevenlabs_api_key()
-
-        # ── Direct API when preferred (offline mode) or no token ─────────────
-        if api_key and (
-            self._settings.prefer_direct_api or not self._settings.is_token_valid()
-        ):
+        
+        # Check for explicit dev flag allowing direct API calls
+        dev_direct_api = os.environ.get("LT_DEV_DIRECT_API", "0").strip().lower() in ("1", "true", "yes")
+        
+        # ── Direct API ONLY when explicit dev flag is set ────────────────────
+        # This is for local development and testing only. Production builds
+        # should never have LT_DEV_DIRECT_API=1.
+        if dev_direct_api:
+            api_key = self._settings.get_elevenlabs_api_key()
+            if not api_key:
+                logger.error("LT_DEV_DIRECT_API=1 but no ElevenLabs API key found")
+                raise RuntimeError(
+                    "Dev mode (LT_DEV_DIRECT_API=1) requires ELEVENLABS_API_KEY. "
+                    "For production, unset LT_DEV_DIRECT_API to use backend proxy."
+                )
+            
             from live_dubbing.services.usage_reporter import UsageReporter
 
             openai_key = self._settings.get_openai_api_key()
@@ -173,14 +186,13 @@ class Orchestrator:
                         self._settings.get_backend_url(),
                         token,
                     )
-            logger.info(
-                "ElevenLabs service initialised (direct API key)",
-                offline_mode=self._settings.prefer_direct_api,
+            logger.warning(
+                "⚠ Using DIRECT API calls (dev mode) — LT_DEV_DIRECT_API=1",
                 usage_tracked=self._usage_reporter is not None,
             )
             return
 
-        # ── Monetised path: use backend proxy when signed in (usage tracked) ──
+        # ── Production path: ALWAYS use backend proxy ────────────────────────
         if self._settings.is_token_valid():
             from live_dubbing.services.backend_service import BackendProxyService
 
@@ -196,7 +208,16 @@ class Orchestrator:
             logger.info("Backend proxy service initialised (usage tracked)")
             return
 
-        logger.warning("No ElevenLabs API key or auth token configured")
+        # No token and dev flag not set — require sign-in
+        logger.error(
+            "Not signed in — backend proxy requires authentication. "
+            "Sign in via the app to use Live Translate, or set LT_DEV_DIRECT_API=1 "
+            "with a local API key for development."
+        )
+        raise RuntimeError(
+            "Authentication required. Please sign in to use Live Translate. "
+            "Direct API calls are disabled in production builds."
+        )
 
     async def reinit_elevenlabs(self) -> None:
         """Re-read API keys from settings and update or recreate the ElevenLabs service.

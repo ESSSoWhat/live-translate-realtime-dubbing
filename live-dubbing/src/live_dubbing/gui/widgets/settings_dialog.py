@@ -58,13 +58,14 @@ class SettingsDialog(QDialog):
         form.addRow("ElevenLabs API key:", self._elevenlabs_input)
         layout.addLayout(form)
 
-        self._prefer_direct_cb = QCheckBox("Use direct API (offline mode)")
-        self._prefer_direct_cb.setChecked(self._settings.prefer_direct_api)
-        self._prefer_direct_cb.setToolTip(
-            "When enabled, call ElevenLabs with your own key and skip the backend proxy. "
-            "Website subscription package limits will not apply. For offline/dev only."
+        # Note about dev mode (no UI control - must use env var)
+        note = QLabel(
+            "Note: Production builds always use the backend proxy.\n"
+            "For local development, set LT_DEV_DIRECT_API=1 environment variable."
         )
-        layout.addWidget(self._prefer_direct_cb)
+        note.setStyleSheet("color: gray; font-size: 10px; margin-top: 8px;")
+        note.setWordWrap(True)
+        layout.addWidget(note)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         buttons.accepted.connect(self._on_accept)
@@ -79,22 +80,7 @@ class SettingsDialog(QDialog):
         elif not key_text and self._settings.get_elevenlabs_api_key():
             self._settings.set_elevenlabs_api_key("")
             self._saved = True
-
-        prev = self._settings.prefer_direct_api
-        self._settings.prefer_direct_api = self._prefer_direct_cb.isChecked()
-        if prev != self._settings.prefer_direct_api:
-            self._saved = True
-            try:
-                from live_dubbing.config.settings import ConfigManager
-                ConfigManager().save(self._settings)
-            except Exception as e:
-                logger = logging.getLogger(__name__)
-                logger.exception("Failed to save settings (prefer_direct_api)")
-                QMessageBox.warning(
-                    self,
-                    "Settings Not Saved",
-                    "Your settings could not be saved. Changes may not persist.",
-                )
+        
         self.accept()
 
     @property

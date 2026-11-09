@@ -200,9 +200,8 @@ class AppSettings(BaseModel):
     # Advanced settings
     enable_debug_logging: bool = False
     max_latency_warning_ms: int = Field(default=2000, ge=500, le=10000)
-    # When True, use direct ElevenLabs API even when signed in (for offline / flaky network).
-    # Usage is not tracked when this is enabled.
-    prefer_direct_api: bool = False
+    # NOTE: Direct API calls are disabled by default. Use LT_DEV_DIRECT_API=1 env var
+    # for local development only. Production always uses backend proxy.
 
     # Backend URL (can be overridden by LIVE_TRANSLATE_BACKEND_URL env var)
     backend_base_url: str = "https://livetranslatedubtool-production.up.railway.app"

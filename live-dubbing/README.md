@@ -214,6 +214,28 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
+#### Direct API Mode (Development Only)
+
+**Production builds always use the backend proxy.** All OpenAI and ElevenLabs API calls go through `/api/v1/proxy/*` endpoints by default, ensuring usage tracking and authentication.
+
+For local development and testing, you can enable direct API calls to providers:
+
+```powershell
+# Enable direct API mode (dev only)
+$env:LT_DEV_DIRECT_API = "1"
+$env:ELEVENLABS_API_KEY = "your-key-here"
+$env:OPENAI_API_KEY = "your-key-here"  # Optional, for translation
+
+# Run the app
+python -m live_dubbing
+```
+
+**Important:**
+- `LT_DEV_DIRECT_API=1` must **never** be set in production or release builds
+- Direct API mode bypasses usage tracking and authentication
+- Used only for offline development and testing
+- Tests verify this flag is required for direct calls (`tests/test_no_direct_api_calls.py`)
+
 ### Mock Backend for Testing
 
 The mock backend simulates the production Railway API for testing error handling without touching production:
