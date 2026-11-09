@@ -706,11 +706,24 @@ class _WixSsoWorker(QThread):
 
         logger.info("Waiting for Wix SSO (handoff poll + localhost callback)…")
         result = None
-        remaining = 300.0
-        # Prefer short non-blocking polls. wait_for_token must not starve handoff checks —
-        # Wix cannot redirect to localhost, so backend handoff is the real path.
+        
+        # Hard timeout: 2 minutes (120 seconds) — stop polling even if user hasn't finished
+        HARD_TIMEOUT_SEC = 120.0
+        # Exponential backoff: start at 1s, double up to 8s max
+        BASE_INTERVAL_SEC = 1.0
+        MAX_INTERVAL_SEC = 8.0
+        
+        poll_interval = BASE_INTERVAL_SEC
+        elapsed = 0.0
+        poll_count = 0
+        success_received = False
+        
+        # Track active polling to prevent multiple concurrent handoff checks
         with httpx.Client(timeout=5.0) as client:
-            while remaining > 0 and not self.isInterruptionRequested():
+            while elapsed < HARD_TIMEOUT_SEC and not self.isInterruptionRequested() and not success_received:
+                poll_count += 1
+                
+                # Handoff poll with exponential backoff
                 try:
                     r = client.get(
                         f"{self._base_url}/api/v1/auth/desktop-handoff/{desktop_session}"
@@ -719,20 +732,57 @@ class _WixSsoWorker(QThread):
                         payload = r.json()
                         if payload.get("ready") and payload.get("api_key"):
                             result = {"api_key": payload["api_key"]}
+                            success_received = True
                             logger.info(
                                 "Wix SSO handoff received",
                                 session_prefix=desktop_session[:8],
+                                poll_count=poll_count,
+                                elapsed_sec=elapsed,
                             )
                             break
+                    elif r.status_code == 500:
+                        # Backend error — continue but log it
+                        logger.warning(
+                            "Handoff poll returned 500",
+                            poll_count=poll_count,
+                            detail=r.text[:200] if r.text else "",
+                        )
                 except Exception as exc:
-                    logger.debug("Handoff poll error", error=str(exc))
+                    logger.debug("Handoff poll error", error=str(exc), poll_count=poll_count)
 
                 # Fallback: localhost redirect (often blocked by Wix)
-                result = server.wait_for_token(timeout=0.5)
+                # Check briefly without blocking
+                result = server.wait_for_token(timeout=0.1)
                 if result is not None:
+                    success_received = True
+                    logger.info(
+                        "Localhost callback received",
+                        poll_count=poll_count,
+                        elapsed_sec=elapsed,
+                    )
                     break
-                remaining -= 0.5
+                
+                # Sleep for backoff interval (broken into small chunks to respect cancellation)
+                sleep_remaining = poll_interval
+                while sleep_remaining > 0 and not self.isInterruptionRequested() and not success_received:
+                    chunk = min(0.1, sleep_remaining)
+                    import time
+                    time.sleep(chunk)
+                    sleep_remaining -= chunk
+                    elapsed += chunk
+                
+                # Exponential backoff: double interval up to max
+                poll_interval = min(poll_interval * 2, MAX_INTERVAL_SEC)
+        
         server.stop()
+        
+        if not result and not self.isInterruptionRequested():
+            logger.warning(
+                "Handoff poll timed out",
+                poll_count=poll_count,
+                elapsed_sec=elapsed,
+                timeout_sec=HARD_TIMEOUT_SEC,
+            )
 
         if not result:
             self.error.emit(

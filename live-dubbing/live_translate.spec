@@ -75,10 +75,8 @@ a = Analysis(
         ),
         # numpy data files (via collect_all — includes .pyi stubs, testing data)
         *_numpy_datas,
-        # .env file (Supabase config for OAuth login) - optional, may not exist in CI
-        *([
-            (str(PROJECT_ROOT / ".env"), ".")
-        ] if (PROJECT_ROOT / ".env").exists() else []),
+        # NOTE: .env should NEVER be bundled in the installer — it contains secrets and
+        # dev-only config. Users configure via the GUI or their own %APPDATA%/.env.
         # VB-Cable driver pack (optional install for play-as-mic)
         (
             str(PROJECT_ROOT / "third_party" / "VBCABLE_Driver_Pack43"),
@@ -196,6 +194,27 @@ a.binaries = [
     for name, path, typ in a.binaries
     if not any(pattern in name.lower() for pattern in cuda_dll_patterns)
 ]
+
+# ── Deduplicate dist-info metadata (prevents duplicate package versions) ─────
+# PyInstaller can pick up multiple versions of the same package if the venv is dirty.
+# Keep only the first occurrence of each package's dist-info.
+seen_dist_info = set()
+filtered_datas = []
+for name, path, typ in a.datas:
+    # Extract package name from dist-info path (e.g. "numpy-2.4.6.dist-info" -> "numpy")
+    if ".dist-info" in name:
+        pkg_name = name.split("/")[0].split("-")[0].lower() if "/" in name else name.split("\\")[0].split("-")[0].lower()
+        if pkg_name in seen_dist_info:
+            continue  # Skip duplicate
+        seen_dist_info.add(pkg_name)
+    filtered_datas.append((name, path, typ))
+
+a.datas = filtered_datas
+
+# ── Torch size impact ────────────────────────────────────────────────────────
+# torch 2.15.0+cpu bundled: ~700 MB (DLLs + Python modules).
+# silero_vad can run on onnxruntime (~50 MB) instead, but requires model conversion.
+# TODO: Evaluate migrating to onnxruntime + ONNX-exported silero model for smaller builds.
 
 # ── PYZ (bytecode archive) ──────────────────────────────────────────────────
 
