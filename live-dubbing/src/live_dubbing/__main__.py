@@ -71,13 +71,19 @@ def _fix_stdio_for_windowed_app() -> None:
 
 
 def _setup_file_logging() -> None:
-    """Configure Python's logging module to write to a file.
+    """Configure Python's logging module to write to a file with rotation.
 
     This captures output from all libraries that use the standard
     ``logging`` module, as well as structlog (when it falls back to
     stdlib).  The log file lives next to the stdio redirect log so
     all diagnostic information is in one place.
+
+    Uses rotating file handler to prevent unbounded log growth.
+    Defaults to INFO level (WARNING for noisy libraries) unless
+    enable_debug_logging is set in settings.
     """
+    from logging.handlers import RotatingFileHandler
+
     _log_dir = os.path.join(
         os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
         "Live Translate",
@@ -86,20 +92,36 @@ def _setup_file_logging() -> None:
     os.makedirs(_log_dir, exist_ok=True)
     _log_path = os.path.join(_log_dir, "app.log")
 
+    # Check debug setting (loads from config file if exists)
+    _enable_debug = os.environ.get("LIVE_TRANSLATE_DEBUG", "").lower() in ("1", "true", "yes")
+
     # Configure root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
+    root_logger.setLevel(logging.DEBUG if _enable_debug else logging.INFO)
 
-    # File handler — appends to the same log file stdio redirects use
+    # Rotating file handler: 10 MB max per file, keep 3 backups
     try:
-        fh = logging.FileHandler(_log_path, encoding="utf-8")
-        fh.setLevel(logging.DEBUG)
+        fh = RotatingFileHandler(
+            _log_path,
+            maxBytes=10 * 1024 * 1024,  # 10 MB
+            backupCount=3,
+            encoding="utf-8",
+        )
+        fh.setLevel(logging.DEBUG if _enable_debug else logging.INFO)
         fmt = logging.Formatter(
             "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             datefmt="%H:%M:%S",
         )
         fh.setFormatter(fmt)
         root_logger.addHandler(fh)
+
+        # Quiet noisy libraries in production builds
+        if not _enable_debug:
+            logging.getLogger("httpx").setLevel(logging.WARNING)
+            logging.getLogger("httpcore").setLevel(logging.WARNING)
+            logging.getLogger("urllib3").setLevel(logging.WARNING)
+            logging.getLogger("elevenlabs").setLevel(logging.INFO)
+
     except Exception:
         pass  # Don't crash if logging setup fails
 
@@ -116,6 +138,10 @@ def _configure_structlog() -> None:
     """
     import structlog
 
+    # Check debug setting for consistent log level
+    _enable_debug = os.environ.get("LIVE_TRANSLATE_DEBUG", "").lower() in ("1", "true", "yes")
+    _log_level = logging.DEBUG if _enable_debug else logging.INFO
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -126,7 +152,7 @@ def _configure_structlog() -> None:
             structlog.processors.format_exc_info,
             structlog.dev.ConsoleRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
+        wrapper_class=structlog.make_filtering_bound_logger(_log_level),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,

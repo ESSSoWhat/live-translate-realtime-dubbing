@@ -220,6 +220,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(SRC_DIR / "live_dubbing" / "gui" / "assets" / "logo.ico"),
+    version="version_info.txt",  # Windows version resource
 )
 
 # ── COLLECT (one-dir bundle) ────────────────────────────────────────────────

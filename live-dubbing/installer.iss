@@ -5,8 +5,8 @@
 #ifndef MyAppVersion
 #define MyAppVersion "0.2.3"
 #endif
-#define MyAppPublisher "Live Translate Team"
-#define MyAppURL "https://github.com/live-translate"
+#define MyAppPublisher "Live Translate"
+#define MyAppURL "https://www.livetranslate.net"
 #define MyAppExeName "LiveTranslate.exe"
 
 [Setup]

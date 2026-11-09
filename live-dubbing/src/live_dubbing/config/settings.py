@@ -479,6 +479,17 @@ class ConfigManager:
             try:
                 data = json.loads(self.config_file.read_text(encoding="utf-8"))
                 settings = AppSettings.model_validate(data)
+
+                # Migrate localhost backend URLs to production (from dev/test settings)
+                if "127.0.0.1" in settings.backend_base_url or "localhost" in settings.backend_base_url.lower():
+                    logger.info(
+                        "Migrating localhost backend URL to production",
+                        old_url=settings.backend_base_url,
+                    )
+                    settings.backend_base_url = "https://livetranslatedubtool-production.up.railway.app"
+                    # Save the corrected settings immediately
+                    self.save(settings)
+
                 logger.info("Settings loaded", path=str(self.config_file))
                 return settings
             except Exception as e:
@@ -493,8 +504,19 @@ class ConfigManager:
         return AppSettings()
 
     def save(self, settings: AppSettings) -> None:
-        """Save settings to file."""
+        """Save settings to file.
+
+        Ensures localhost backend URLs are never persisted in saved config.
+        """
         try:
+            # Prevent localhost URLs from being saved to config
+            if "127.0.0.1" in settings.backend_base_url or "localhost" in settings.backend_base_url.lower():
+                logger.warning(
+                    "Refusing to save localhost backend URL; using production default",
+                    url=settings.backend_base_url,
+                )
+                settings.backend_base_url = "https://livetranslatedubtool-production.up.railway.app"
+
             # Exclude internal fields from saved config
             data = settings.model_dump(
                 exclude={"_elevenlabs_api_key", "_openai_api_key"},
