@@ -133,6 +133,31 @@ def _configure_structlog() -> None:
     )
 
 
+def _hide_child_console_windows() -> None:
+    """Stop helper programs such as ffmpeg from flashing a console window.
+
+    The windowed build has no console, so Windows opens a new one for every
+    console program it starts.  pydub starts ffmpeg for each dubbed clip and
+    accepts no ``creationflags``, so default them for every child process.
+    GUI programs (sndvol, Control Panel) ignore the flag.
+    """
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    import subprocess
+
+    original = subprocess.Popen.__init__
+    if getattr(original, "hides_console", False):
+        return
+
+    def init(self: subprocess.Popen, *args: object, **kwargs: object) -> None:
+        if not kwargs.get("creationflags"):
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    init.hides_console = True  # type: ignore[attr-defined]
+    subprocess.Popen.__init__ = init  # type: ignore[method-assign]
+
+
 def _configure_pydub_ffmpeg() -> None:
     """Point pydub at the bundled ffmpeg so MP3 decoding works in PyInstaller builds.
 
@@ -184,6 +209,8 @@ def main() -> NoReturn:
 
     # Fix stdio FIRST — everything else may log or print
     _fix_stdio_for_windowed_app()
+
+    _hide_child_console_windows()
 
     # Load .env early for Supabase config
     _load_env_early()

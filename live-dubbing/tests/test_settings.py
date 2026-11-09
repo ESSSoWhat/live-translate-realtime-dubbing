@@ -2,9 +2,11 @@
 Tests for configuration settings.
 """
 
-import pytest
+import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 
 class TestAppSettings:
@@ -124,3 +126,29 @@ class TestSupportedLanguage:
         codes = [code for code, name in languages]
         assert "auto" in codes
         assert len(languages) == 13  # 12 languages + auto
+
+
+class TestWindowedStartup:
+    """Tests for process setup in the windowed build."""
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+    def test_child_processes_start_without_a_console_window(self, monkeypatch):
+        """Helper programs such as ffmpeg get CREATE_NO_WINDOW unless the caller chose flags."""
+        import subprocess
+
+        from live_dubbing.__main__ import _hide_child_console_windows
+
+        seen = []
+
+        def record(self, *args, **kwargs):
+            seen.append(kwargs.get("creationflags", 0))
+
+        monkeypatch.setattr(subprocess.Popen, "__init__", record)
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        _hide_child_console_windows()
+        subprocess.Popen.__init__(object.__new__(subprocess.Popen), ["ffmpeg"])
+        subprocess.Popen.__init__(
+            object.__new__(subprocess.Popen), ["ffmpeg"], creationflags=subprocess.CREATE_NEW_CONSOLE
+        )
+
+        assert seen == [subprocess.CREATE_NO_WINDOW, subprocess.CREATE_NEW_CONSOLE]
