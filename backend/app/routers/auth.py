@@ -58,7 +58,7 @@ def _default_usage(tier: str = "free") -> dict:
         "free": (1800, 50000, 1800, 50000, 1),
         "starter": (18000, 500000, 18000, 500000, 5),
         "pro": (54000, 2000000, 54000, 2000000, 20),
-        "early_adopters": (_UNLIMITED, _UNLIMITED, _UNLIMITED, _UNLIMITED, 99),
+        "early_adopters": (_UNLIMITED, _UNLIMITED, _UNLIMITED, _UNLIMITED, _UNLIMITED),
     }
     dub, tts, stt, trans, clones = limits.get(tier, limits["free"])
     return {
