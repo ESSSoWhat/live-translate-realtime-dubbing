@@ -80,9 +80,9 @@ def simulate_failure(endpoint: str, status_code: int, detail: str = "") -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager."""
-    print("🚀 Mock backend started")
+    print(">> Mock backend started")
     yield
-    print("🛑 Mock backend stopped")
+    print(">> Mock backend stopped")
 
 
 app = FastAPI(title="Live Translate Mock Backend", lifespan=lifespan)
@@ -288,6 +288,6 @@ def run_server(port: int = 8765, host: str = "127.0.0.1") -> None:
 if __name__ == "__main__":
     import sys
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    print(f"\n🚀 Starting mock backend on http://127.0.0.1:{port}")
+    print(f"\n>> Starting mock backend on http://127.0.0.1:{port}")
     print(f"Valid token: {VALID_TOKEN}\n")
     run_server(port=port)

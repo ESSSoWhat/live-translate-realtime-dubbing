@@ -170,6 +170,7 @@ a = Analysis(
         "ruff",
         "black",
         "pip",
+        "onnxruntime",  # Not used by this app (silero uses torch, not ONNX) - saves ~31 MB
         # NOTE: Do NOT exclude setuptools or wheel — pkg_resources (and
         # PyInstaller's pyi_rth_pkgres / setuptools hooks) depend on them at
         # runtime. Excluding "wheel" makes PyInstaller's setuptools hook fail with
@@ -193,6 +194,23 @@ a.binaries = [
     (name, path, typ)
     for name, path, typ in a.binaries
     if not any(pattern in name.lower() for pattern in cuda_dll_patterns)
+]
+
+# ── Filter out software OpenGL renderer (saves ~20 MB) ───────────────────────
+# opengl32sw.dll is a software OpenGL renderer; not needed for this 2D GUI app
+a.binaries = [
+    (name, path, typ)
+    for name, path, typ in a.binaries
+    if 'opengl32sw' not in name.lower()
+]
+
+# ── Filter out large unused torch subdirectories ─────────────────────────────
+# These torch modules are not needed for basic inference with silero_vad (saves ~17 MB)
+torch_exclude_dirs = ('torch/distributed', 'torch/_inductor', 'torch/testing')
+a.datas = [
+    (name, path, typ)
+    for name, path, typ in a.datas
+    if not any(excl in name.replace('\\', '/') for excl in torch_exclude_dirs)
 ]
 
 # ── Deduplicate dist-info metadata (prevents duplicate package versions) ─────

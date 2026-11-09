@@ -89,6 +89,16 @@ try {
     # Step 4: Build with PyInstaller
     if ($Build) {
         Write-Host "`n━━━ Building with PyInstaller ━━━`n" -ForegroundColor Cyan
+        
+        # Set FFMPEG_DIR if ffmpeg is in WinGet location
+        if (-not $env:FFMPEG_DIR) {
+            $wingetFfmpeg = "C:\Users\$env:USERNAME\AppData\Local\Microsoft\WinGet\Links"
+            if (Test-Path "$wingetFfmpeg\ffmpeg.exe") {
+                $env:FFMPEG_DIR = $wingetFfmpeg
+                Write-Host "Using ffmpeg from: $wingetFfmpeg" -ForegroundColor Gray
+            }
+        }
+        
         pyinstaller live_translate.spec --noconfirm
         
         if ($LASTEXITCODE -ne 0) {
@@ -102,6 +112,17 @@ try {
         # Show bundle size
         $bundleSize = (Get-ChildItem -Path "dist\LiveTranslate" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
         Write-Host "Bundle size: $([math]::Round($bundleSize, 2)) MB" -ForegroundColor Cyan
+        
+        # Security check: ensure no .env files in dist
+        Write-Host "`nSecurity check: .env files..." -ForegroundColor Yellow
+        $envFiles = Get-ChildItem -Path "dist\LiveTranslate" -Recurse -Filter "*.env" -Force
+        $envFiles += Get-ChildItem -Path "dist\LiveTranslate" -Recurse -Filter ".env" -Force
+        if ($envFiles) {
+            Write-Host "✗ SECURITY ERROR: Found .env files in dist:" -ForegroundColor Red
+            $envFiles | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+            exit 1
+        }
+        Write-Host "  ✓ No .env files found in dist" -ForegroundColor Green
     }
     
     # Step 5: Build installer
@@ -128,7 +149,45 @@ try {
         }
         
         Write-Host "`n✓ Installer build complete" -ForegroundColor Green
-        Write-Host "Output: dist\LiveTranslate-Setup.exe" -ForegroundColor Gray
+        
+        # Find installer file
+        $installerFile = Get-ChildItem -Path "dist" -Filter "LiveTranslate-*-Setup.exe" | Select-Object -First 1
+        if ($installerFile) {
+            Write-Host "Output: $($installerFile.Name)" -ForegroundColor Gray
+            Write-Host "Size: $([math]::Round($installerFile.Length/1MB,2)) MB" -ForegroundColor Cyan
+            
+            # Security check: verify no .env in installer
+            Write-Host "`nSecurity check: .env in installer..." -ForegroundColor Yellow
+            
+            # Try innounp first, then 7-Zip
+            $innounpPath = Get-Command innounp -ErrorAction SilentlyContinue
+            $sevenZipPath = "C:\Program Files\7-Zip\7z.exe"
+            
+            if ($innounpPath) {
+                Write-Host "  Using innounp to list installer contents..." -ForegroundColor Gray
+                $listOutput = & innounp -v $installerFile.FullName 2>&1 | Out-String
+                if ($listOutput -match "\.env") {
+                    Write-Host "✗ SECURITY ERROR: Installer contains .env files!" -ForegroundColor Red
+                    Write-Host $listOutput -ForegroundColor Red
+                    exit 1
+                }
+                Write-Host "  ✓ No .env files found in installer" -ForegroundColor Green
+            }
+            elseif (Test-Path $sevenZipPath) {
+                Write-Host "  Using 7-Zip to list installer contents..." -ForegroundColor Gray
+                $listOutput = & $sevenZipPath l $installerFile.FullName 2>&1 | Out-String
+                if ($listOutput -match "\.env") {
+                    Write-Host "✗ SECURITY ERROR: Installer contains .env files!" -ForegroundColor Red
+                    Write-Host ($listOutput -split "`n" | Select-String "\.env") -ForegroundColor Red
+                    exit 1
+                }
+                Write-Host "  ✓ No .env files found in installer" -ForegroundColor Green
+            }
+            else {
+                Write-Host "  ⚠ innounp and 7-Zip not found, skipping installer contents check" -ForegroundColor Yellow
+                Write-Host "  Install innounp or 7-Zip to verify installer contents" -ForegroundColor Gray
+            }
+        }
     }
     
     Write-Host "`n✓ Clean build complete!" -ForegroundColor Green
