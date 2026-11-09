@@ -23,6 +23,11 @@ dependencies:
   agora_rtc_engine: ^6.5.3
   supabase_flutter: ^2.12.4
   flutter_overlay_window: ^0.5.0
+  http_parser: ^4.0.2
+  shared_preferences: ^2.3.3
+  file_picker: ^8.1.7
+  audio_session: ^0.1.25
+  google_mlkit_text_recognition: ^0.15.0
 
 dev_dependencies:
   flutter_test:

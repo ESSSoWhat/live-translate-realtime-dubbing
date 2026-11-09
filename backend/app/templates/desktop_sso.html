@@ -109,33 +109,106 @@
   <script>
 (function () {
   var params = new URLSearchParams(window.location.search);
-  var sessionId = params.get("session_id") || "";
-  var redirectUri = params.get("redirect_uri") || "";
+  var sessionId = params.get("session_id") || sessionStorage.getItem("lt_sso_session") || "";
+  var redirectUri = params.get("redirect_uri") || sessionStorage.getItem("lt_sso_redirect") || "";
   var msg = document.getElementById("msg");
   var loginBtn = document.getElementById("loginBtn");
   var googleBtn = document.getElementById("googleBtn");
   var keyBtn = document.getElementById("keyBtn");
   var openApp = document.getElementById("openApp");
 
+  function rememberSession() {
+    if (sessionId) sessionStorage.setItem("lt_sso_session", sessionId);
+    if (redirectUri) sessionStorage.setItem("lt_sso_redirect", redirectUri);
+  }
+  rememberSession();
+
+  function randomVerifier() {
+    var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+    var arr = new Uint8Array(64);
+    crypto.getRandomValues(arr);
+    var out = "";
+    for (var i = 0; i < arr.length; i++) out += chars[arr[i] % chars.length];
+    return out;
+  }
+
+  function b64url(bytes) {
+    var str = "";
+    var u8 = new Uint8Array(bytes);
+    for (var i = 0; i < u8.length; i++) str += String.fromCharCode(u8[i]);
+    return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  async function sha256b64url(plain) {
+    var data = new TextEncoder().encode(plain);
+    var hash = await crypto.subtle.digest("SHA-256", data);
+    return b64url(hash);
+  }
+
   function setMsg(text, ok) {
     msg.textContent = text || "";
     msg.className = ok ? "err ok" : "err";
   }
 
+  function isSafeDesktopRedirect(uri) {
+    // Same allow-list as backend _is_valid_desktop_redirect: localhost HTTP
+    // or Live Translate HTTPS. Reject other schemes and hosts.
+    var parsed;
+    try {
+      parsed = new URL(uri);
+    } catch (e) {
+      return false;
+    }
+    if (parsed.username || parsed.password) return false;
+    var host = (parsed.hostname || "").toLowerCase();
+    var protocol = parsed.protocol;
+    if ((host === "localhost" || host === "127.0.0.1") && protocol === "http:") {
+      return true;
+    }
+    if (protocol !== "https:") return false;
+    var trusted = [
+      "livetranslate.app",
+      "www.livetranslate.app",
+      "livetranslate.net",
+      "www.livetranslate.net",
+    ];
+    for (var i = 0; i < trusted.length; i++) {
+      var t = trusted[i];
+      if (host === t || host.slice(-(t.length + 1)) === "." + t) return true;
+    }
+    return false;
+  }
+
+  function safeAppCallback(uri, apiKey) {
+    if (!uri || !isSafeDesktopRedirect(uri)) return "";
+    var parsed = new URL(uri);
+    var clean = new URL(parsed.protocol + "//" + parsed.host + (parsed.pathname || "/"));
+    parsed.searchParams.forEach(function (value, key) { clean.searchParams.set(key, value); });
+    if (apiKey) clean.searchParams.set("api_key", apiKey);
+    return clean.href;
+  }
+
   function showOpenApp(url) {
-    openApp.href = url;
+    var safe = safeAppCallback(url, "");
+    if (!safe) return;
+    openApp.href = safe;
     openApp.style.display = "inline-flex";
   }
 
-  function finishLocal(apiKey) {
-    // Handoff is already stored; the desktop app polls and finishes without localhost.
-    // Do not auto-navigate to http://localhost — the callback port is often closed by then
-    // (ERR_CONNECTION_REFUSED), which looks like a failed sign-in even when it succeeded.
-    setMsg("Signed in! You can close this tab and return to the Live Translate app.", true);
-    if (redirectUri) {
-      var sep = redirectUri.indexOf("?") >= 0 ? "&" : "?";
-      showOpenApp(redirectUri + sep + "api_key=" + encodeURIComponent(apiKey));
+  function finishLocal(apiKey, serverRedirect) {
+    setMsg("Signed in! Returning to the Live Translate app…", true);
+    var appUrl = safeAppCallback(serverRedirect || "", apiKey) ||
+      safeAppCallback(redirectUri, apiKey);
+    if (!appUrl) {
+      setMsg("Signed in! You can close this tab and return to the Live Translate app.", true);
+      return;
     }
+    showOpenApp(appUrl);
+    // Handoff is stored so the app can finish by polling even if this
+    // navigation fails (browser blocks localhost, or the callback already closed).
+    window.setTimeout(function () {
+      window.location.replace(appUrl);
+    }, 250);
   }
 
   function detailMessage(data, status) {
@@ -163,7 +236,7 @@
         throw new Error(detailMessage(data, res.status));
       }
       if (data.api_key) {
-        finishLocal(data.api_key);
+        finishLocal(data.api_key, data.redirect || "");
         return;
       }
       if (data.redirect) {
@@ -180,8 +253,9 @@
     }
   }
 
-  // Google returns here with tokens in the URL hash (Supabase implicit/PKCE fragment).
+  // Google / Supabase may return tokens in the hash (implicit) or a PKCE code.
   var hash = window.location.hash ? window.location.hash.substring(1) : "";
+  var qParams = new URLSearchParams(window.location.search);
   if (hash) {
     var hParams = new URLSearchParams(hash);
     var access = hParams.get("access_token");
@@ -192,6 +266,14 @@
       history.replaceState(null, "", window.location.pathname + window.location.search);
       complete({ access_token: access });
     }
+  } else if (qParams.get("error")) {
+    setMsg(qParams.get("error_description") || qParams.get("error"));
+  } else if (qParams.get("code")) {
+    var verifier = sessionStorage.getItem("lt_pkce_" + sessionId) || sessionStorage.getItem("lt_pkce") || "";
+    history.replaceState(null, "", window.location.pathname +
+      "?session_id=" + encodeURIComponent(sessionId) +
+      (redirectUri ? "&redirect_uri=" + encodeURIComponent(redirectUri) : ""));
+    complete({ oauth_code: qParams.get("code"), code_verifier: verifier || null });
   }
 
   document.getElementById("loginForm").addEventListener("submit", function (ev) {
@@ -219,6 +301,11 @@
     setMsg("Opening Google…");
     googleBtn.disabled = true;
     try {
+      rememberSession();
+      var verifier = randomVerifier();
+      sessionStorage.setItem("lt_pkce_" + sessionId, verifier);
+      sessionStorage.setItem("lt_pkce", verifier);
+      var challenge = await sha256b64url(verifier);
       // Return to this bridge (not localhost) so we can store handoff even if localhost is blocked.
       var bridgeUrl =
         window.location.origin +
@@ -226,7 +313,8 @@
         "?session_id=" + encodeURIComponent(sessionId) +
         (redirectUri ? "&redirect_uri=" + encodeURIComponent(redirectUri) : "");
       var res = await fetch(
-        "/api/v1/auth/oauth/google?redirect_uri=" + encodeURIComponent(bridgeUrl)
+        "/api/v1/auth/oauth/google?redirect_uri=" + encodeURIComponent(bridgeUrl) +
+        "&code_challenge=" + encodeURIComponent(challenge)
       );
       var data = await res.json();
       if (!res.ok || !data.url) throw new Error(data.detail || "Could not start Google sign-in");

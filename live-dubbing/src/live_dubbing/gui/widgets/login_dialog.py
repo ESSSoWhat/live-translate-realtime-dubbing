@@ -942,8 +942,8 @@ class LoginDialog(QDialog):
         self._wix_btn.clicked.connect(self._on_wix_signin)
         layout.addWidget(self._wix_btn)
         wix_tip = QLabel(
-            "Opens livetranslate.net — sign in there (Google/email). "
-            "Return to this app when the browser says you’re signed in."
+            "Opens a sign-in page — use Google or email. "
+            "The app continues automatically when the browser finishes."
         )
         wix_tip.setWordWrap(True)
         wix_tip.setStyleSheet("color: #888; font-size: 11px;")
@@ -1180,17 +1180,12 @@ class LoginDialog(QDialog):
     # ── Google OAuth ──────────────────────────────────────────────────────────
 
     def _on_google_signin(self) -> None:
-        """Start the Google OAuth flow: open Chrome and wait for the redirect."""
-        assert self._error_label is not None
-        self._set_busy(True)
-        self._error_label.hide()
+        """Google sign-in uses the desktop SSO bridge (handoff + localhost).
 
-        worker = _OAuthWorker(self._settings.get_backend_url())
-        worker.success.connect(self._on_auth_success)
-        worker.error.connect(self._on_oauth_error)
-        worker.finished.connect(worker.deleteLater)
-        self._oauth_worker = worker  # keep reference
-        worker.start()
+        Direct Supabase ``redirect_to=http://localhost:PORT/`` is not in the
+        project allow-list, so the browser never returns to the app.
+        """
+        self._on_wix_signin()
 
     def _on_oauth_error(self, message: str) -> None:
         """Show the error and re-enable UI after a failed OAuth attempt."""

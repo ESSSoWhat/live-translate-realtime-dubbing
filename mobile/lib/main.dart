@@ -4,11 +4,13 @@ import 'package:flutter/services.dart';
 import 'package:live_translate_mobile/app.dart';
 import 'package:live_translate_mobile/config/api_config.dart';
 import 'package:live_translate_mobile/features/mic_translate/overlay/overlay_entry.dart';
+import 'package:live_translate_mobile/services/app_settings.dart';
 import 'package:live_translate_mobile/services/qonversion_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ApiConfig.init();
+  await AppSettings.init();
   await QonversionService.init();
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,

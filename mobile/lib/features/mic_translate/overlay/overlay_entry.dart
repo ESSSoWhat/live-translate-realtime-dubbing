@@ -1,14 +1,30 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
+import 'overlay_bridge.dart';
+
+/// Default ElevenLabs voice (Rachel) — keep in sync with MicTranslateService.
+/// Do NOT import mic_translate_service here: the overlay isolate must stay light.
+const _kDefaultVoiceId = '21m00Tcm4TlvDq8ikWAM';
+
 /// Separate Flutter entry point for the Android overlay bubble.
 /// Prefer calling [overlayMain] from `main.dart` so the VM entry-point is linked.
 void runOverlayTranslateApp() {
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(const OverlayTranslateApp());
+  runZonedGuarded(() {
+    WidgetsFlutterBinding.ensureInitialized();
+    FlutterError.onError = (details) {
+      FlutterError.dumpErrorToConsole(details, forceReport: true);
+    };
+    runApp(const OverlayTranslateApp());
+  }, (Object error, StackTrace stack) {
+    // Keep the overlay engine alive; log instead of killing the process.
+    // ignore: avoid_print
+    print('Overlay isolate error: $error\n$stack');
+  });
 }
 
 class OverlayTranslateApp extends StatelessWidget {
@@ -16,14 +32,42 @@ class OverlayTranslateApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    // Match main app logo palette (cyan on navy). Keep theme inline so the
+    // overlay isolate does not import the full app tree.
+    const cyan = Color(0xFF68F8F8);
+    const navy = Color(0xFF000810);
+    const navySurface = Color(0xFF001020);
+    const navyCard = Color(0xFF001830);
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: OverlayBubble(),
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        colorScheme: const ColorScheme.dark(
+          primary: cyan,
+          onPrimary: navy,
+          surface: navySurface,
+          onSurface: Color(0xFFE8F7FF),
+          secondary: Color(0xFF00C4FC),
+          onSecondary: navy,
+        ),
+        scaffoldBackgroundColor: Colors.transparent,
+        cardColor: navyCard,
+        sliderTheme: const SliderThemeData(
+          activeTrackColor: cyan,
+          thumbColor: cyan,
+          inactiveTrackColor: Color(0xFF002040),
+        ),
+      ),
+      home: const OverlayBubble(),
     );
   }
 }
 
-/// Draggable bubble: status, live captions, mute TTS, stop.
+/// Bubble pinned to the right edge: captions, volume, voice, mute, stop.
+///
+/// Drag is intentionally disabled — flutter_overlay_window's native drag
+/// listener prevents Flutter from receiving taps.
 class OverlayBubble extends StatefulWidget {
   const OverlayBubble({super.key});
 
@@ -32,30 +76,97 @@ class OverlayBubble extends StatefulWidget {
 }
 
 class _OverlayBubbleState extends State<OverlayBubble> {
-  static const _collapsedSize = 72;
-  static const _expandedWidth = 280;
-  static const _expandedHeight = 220;
+  static const _collapsedSize = 96;
+  static const _expandedWidth = 320;
+  static const _expandedHeight = 520;
+  static const _maxCaptionLines = 80;
 
-  StreamSubscription<dynamic>? _sub;
+  StreamSubscription<dynamic>? _shareSub;
+  bool _bridgeReady = false;
   bool _expanded = false;
   bool _muted = false;
+  bool _resizing = false;
+  bool _cloning = false;
   String _status = 'Listening…';
   String _source = '';
   String _translated = '';
+  final List<String> _sourceLines = [];
+  final List<String> _translatedLines = [];
+  /// 0 = oldest, 1 = latest (currently read) line.
+  double _sourceFocus = 1;
+  double _translatedFocus = 1;
+  bool _sourceFollowLatest = true;
+  bool _translatedFollowLatest = true;
+  double _fontSize = 14;
+  double _opacity = 1;
+  double _volume = 1;
+  String _voiceId = _kDefaultVoiceId;
+  List<Map<String, String>> _voices = const [];
+  String? _lastUpdateKey;
+  final GlobalKey _sourceHighlightKey = GlobalKey();
+  final GlobalKey _translatedHighlightKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
-    _sub = FlutterOverlayWindow.overlayListener.listen(_onEvent);
+    OverlayBridge.listenOnOverlay(_onBridgeEvent);
+    try {
+      _shareSub = FlutterOverlayWindow.overlayListener.listen(_onShareEvent);
+    } catch (e) {
+      // Plugin channel may not be ready in the overlay engine yet.
+      // ignore: avoid_print
+      print('Overlay share listener unavailable: $e');
+    }
+    try {
+      OverlayBridge.sendToMain(jsonEncode({'type': 'ready'}));
+    } catch (_) {}
   }
 
   @override
   void dispose() {
-    _sub?.cancel();
+    _shareSub?.cancel();
+    OverlayBridge.disposeOverlay();
     super.dispose();
   }
 
-  void _onEvent(dynamic event) {
+  void _onBridgeEvent(dynamic event) {
+    _bridgeReady = true;
+    if (_shareSub != null) {
+      unawaited(_shareSub!.cancel());
+      _shareSub = null;
+    }
+    _applyUpdate(event);
+  }
+
+  void _onShareEvent(dynamic event) {
+    if (_bridgeReady) return;
+    _applyUpdate(event);
+  }
+
+  void _appendCaptionLine(List<String> lines, String text) {
+    final t = text.trim();
+    if (t.isEmpty) return;
+    if (lines.isNotEmpty && lines.last == t) return;
+    lines.add(t);
+    while (lines.length > _maxCaptionLines) {
+      lines.removeAt(0);
+    }
+  }
+
+  void _ensureHighlightVisible(GlobalKey key) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = key.currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.35,
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  void _applyUpdate(dynamic event) {
     Map<String, dynamic>? map;
     if (event is Map) {
       map = Map<String, dynamic>.from(event);
@@ -71,160 +182,574 @@ class _OverlayBubbleState extends State<OverlayBubble> {
     }
     if (map == null || map['type'] != 'update') return;
     if (!mounted) return;
+
+    final status = (map['status'] as String?) ?? _status;
+    final source = (map['source'] as String?) ?? _source;
+    final translated = (map['translated'] as String?) ?? _translated;
+    final muted = (map['muted'] as bool?) ?? _muted;
+    final cloning = (map['cloning'] as bool?) ?? _cloning;
+    var fontSize = _fontSize;
+    var opacity = _opacity;
+    var volume = _volume;
+    var voiceId = _voiceId;
+    var voices = _voices;
+    final fs = map['fontSize'];
+    if (fs is num) fontSize = fs.toDouble();
+    final op = map['opacity'];
+    if (op is num) opacity = op.toDouble().clamp(0.3, 1.0);
+    final vol = map['volume'];
+    if (vol is num) volume = vol.toDouble().clamp(0.0, 1.0);
+    final vid = map['voiceId'];
+    if (vid is String && vid.isNotEmpty) voiceId = vid;
+    final rawVoices = map['voices'];
+    if (rawVoices is List) {
+      final parsed = <Map<String, String>>[];
+      for (final item in rawVoices) {
+        if (item is! Map) continue;
+        final id = item['id']?.toString() ?? '';
+        if (id.isEmpty) continue;
+        final name = item['name']?.toString();
+        parsed.add({
+          'id': id,
+          'name': (name == null || name.isEmpty) ? id : name,
+        });
+      }
+      if (parsed.isNotEmpty) voices = parsed;
+    }
+
+    final voiceKey = voices.map((v) => v['id']).join(',');
+    final key =
+        '$status|$source|$translated|$muted|$cloning|$fontSize|$opacity|$volume|$voiceId|$voiceKey';
+    if (key == _lastUpdateKey) return;
+    _lastUpdateKey = key;
+
+    final sourceAdded = source.trim().isNotEmpty &&
+        (_sourceLines.isEmpty || _sourceLines.last != source.trim());
+    final translatedAdded = translated.trim().isNotEmpty &&
+        (_translatedLines.isEmpty || _translatedLines.last != translated.trim());
+
     setState(() {
-      _status = (map!['status'] as String?) ?? _status;
-      _source = (map['source'] as String?) ?? _source;
-      _translated = (map['translated'] as String?) ?? _translated;
-      _muted = (map['muted'] as bool?) ?? _muted;
+      _status = status;
+      _source = source;
+      _translated = translated;
+      _muted = muted;
+      _cloning = cloning;
+      _fontSize = fontSize;
+      _opacity = opacity;
+      _volume = volume;
+      _voiceId = voiceId;
+      _voices = voices;
+      if (sourceAdded) {
+        _appendCaptionLine(_sourceLines, source);
+        if (_sourceFollowLatest) _sourceFocus = 1;
+      }
+      if (translatedAdded) {
+        _appendCaptionLine(_translatedLines, translated);
+        if (_translatedFollowLatest) _translatedFocus = 1;
+      }
     });
-  }
 
-  Future<void> _send(Map<String, dynamic> payload) async {
-    await FlutterOverlayWindow.shareData(jsonEncode(payload));
-  }
-
-  Future<void> _toggleExpand() async {
-    final next = !_expanded;
-    setState(() => _expanded = next);
-    if (next) {
-      await FlutterOverlayWindow.resizeOverlay(
-        _expandedWidth,
-        _expandedHeight,
-        true,
-      );
-    } else {
-      await FlutterOverlayWindow.resizeOverlay(
-        _collapsedSize,
-        _collapsedSize,
-        true,
-      );
+    if (sourceAdded && _sourceFollowLatest) {
+      _ensureHighlightVisible(_sourceHighlightKey);
+    }
+    if (translatedAdded && _translatedFollowLatest) {
+      _ensureHighlightVisible(_translatedHighlightKey);
     }
   }
 
-  Future<void> _toggleMute() async {
-    await _send({'type': 'toggleMute'});
+  void _send(Map<String, dynamic> payload) {
+    final encoded = jsonEncode(payload);
+    final delivered = OverlayBridge.sendToMain(encoded);
+    if (!delivered) {
+      unawaited(FlutterOverlayWindow.shareData(encoded));
+    }
   }
 
-  Future<void> _stop() async {
-    await _send({'type': 'stop'});
+  Future<void> _toggleExpand() async {
+    if (_resizing) return;
+    final next = !_expanded;
+    _resizing = true;
+    try {
+      final w = next ? _expandedWidth : _collapsedSize;
+      final h = next ? _expandedHeight : _collapsedSize;
+      if (next) {
+        final ok = await FlutterOverlayWindow.resizeOverlay(w, h, false)
+            .timeout(const Duration(seconds: 2), onTimeout: () => false);
+        if (!mounted) return;
+        // Only flip UI after a successful resize to avoid painting the panel
+        // inside a 96×96 window (overflow / “crash” stripes).
+        if (ok == true) {
+          setState(() => _expanded = true);
+        }
+      } else {
+        setState(() => _expanded = false);
+        await FlutterOverlayWindow.resizeOverlay(w, h, false)
+            .timeout(const Duration(seconds: 2), onTimeout: () => false);
+      }
+    } catch (_) {
+      // Native resize can fail if overlay was closed; keep a usable bubble.
+      if (mounted && next) {
+        setState(() => _expanded = false);
+      }
+    } finally {
+      if (mounted) _resizing = false;
+    }
+  }
+
+  void _toggleMute() {
+    _send({'type': 'toggleMute'});
+  }
+
+  void _setVolume(double value) {
+    final v = value.clamp(0.0, 1.0);
+    setState(() => _volume = v);
+    _send({'type': 'setVolume', 'volume': v});
+  }
+
+  void _setOpacity(double value) {
+    final o = value.clamp(0.3, 1.0);
+    setState(() => _opacity = o);
+    _send({'type': 'setOpacity', 'opacity': o});
+  }
+
+  void _setSourceFocus(double value) {
+    final v = value.clamp(0.0, 1.0);
+    setState(() {
+      _sourceFocus = v;
+      _sourceFollowLatest = v >= 0.98;
+    });
+    _ensureHighlightVisible(_sourceHighlightKey);
+  }
+
+  void _setTranslatedFocus(double value) {
+    final v = value.clamp(0.0, 1.0);
+    setState(() {
+      _translatedFocus = v;
+      _translatedFollowLatest = v >= 0.98;
+    });
+    _ensureHighlightVisible(_translatedHighlightKey);
+  }
+
+  void _setVoice(String? id) {
+    if (id == null || id.isEmpty) return;
+    setState(() => _voiceId = id);
+    _send({'type': 'setVoice', 'voiceId': id});
+  }
+
+  void _stop() {
+    _send({'type': 'stop'});
+  }
+
+  void _liveClone() {
+    if (_cloning) return;
+    setState(() => _cloning = true);
+    _send({'type': 'liveClone'});
+  }
+
+  String get _selectedVoiceId {
+    if (_voices.any((v) => v['id'] == _voiceId)) return _voiceId;
+    if (_voices.isNotEmpty) return _voices.first['id']!;
+    return _kDefaultVoiceId;
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_expanded) {
-      return Material(
-        color: Colors.transparent,
-        child: GestureDetector(
-          onTap: _toggleExpand,
-          child: Container(
+    final scheme = Theme.of(context).colorScheme;
+
+    // Prefer real FlutterView constraints over MediaQuery (often full-screen
+    // in the overlay isolate even when the native window is 96×96).
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wideEnough =
+            constraints.hasBoundedWidth &&
+            constraints.maxWidth >= (_expandedWidth * 0.75);
+        final showPanel = _expanded && wideEnough;
+
+        if (!showPanel) {
+          return SizedBox(
             width: _collapsedSize.toDouble(),
             height: _collapsedSize.toDouble(),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary,
-              shape: BoxShape.circle,
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x40000000),
-                  blurRadius: 8,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Icon(
-              _muted ? Icons.mic_off : Icons.translate,
-              color: Theme.of(context).colorScheme.onPrimary,
-              size: 32,
-            ),
-          ),
-        ),
-      );
-    }
-
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      elevation: 8,
-      borderRadius: BorderRadius.circular(16),
-      color: scheme.surface,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _status,
-                    style: Theme.of(context).textTheme.labelLarge,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'Collapse',
-                  onPressed: _toggleExpand,
-                  icon: const Icon(Icons.unfold_less),
-                ),
-              ],
-            ),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (_source.isNotEmpty) ...[
-                      Text(
-                        'Source',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
-                      ),
-                      Text(_source, style: Theme.of(context).textTheme.bodySmall),
-                      const SizedBox(height: 8),
-                    ],
-                    if (_translated.isNotEmpty) ...[
-                      Text(
-                        'Translation',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
-                      ),
-                      Text(
-                        _translated,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
-                      ),
-                    ],
-                    if (_source.isEmpty && _translated.isEmpty)
-                      Text(
-                        'Speak near the mic — captions appear here.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
-                      ),
-                  ],
+            child: Material(
+              color: scheme.primary.withValues(alpha: _opacity),
+              shape: const CircleBorder(),
+              elevation: 6,
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _resizing ? null : _toggleExpand,
+                child: Icon(
+                  _muted ? Icons.mic_off : Icons.translate,
+                  color: scheme.onPrimary,
+                  size: 32,
                 ),
               ),
             ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                IconButton(
-                  tooltip: _muted ? 'Unmute TTS' : 'Mute TTS',
-                  onPressed: _toggleMute,
-                  icon: Icon(_muted ? Icons.volume_off : Icons.volume_up),
-                ),
-                FilledButton.tonal(
-                  onPressed: _stop,
-                  child: const Text('Stop'),
-                ),
-              ],
+          );
+        }
+
+        return Material(
+          elevation: 8,
+          borderRadius: BorderRadius.circular(16),
+          color: scheme.surface.withValues(alpha: _opacity),
+          clipBehavior: Clip.antiAlias,
+          child: SizedBox(
+            width: _expandedWidth.toDouble(),
+            height: _expandedHeight.toDouble(),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _status,
+                          style: Theme.of(context).textTheme.labelLarge,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: 'Collapse',
+                        onPressed: _resizing ? null : _toggleExpand,
+                        icon: const Icon(Icons.unfold_less),
+                      ),
+                    ],
+                  ),
+                  _VoicePicker(
+                    voices: _voices,
+                    selectedId: _selectedVoiceId,
+                    onSelected: _setVoice,
+                  ),
+                  _CompactSliderRow(
+                    icon: _muted ? Icons.volume_off : Icons.volume_up,
+                    value: _volume,
+                    enabled: !_muted,
+                    onChanged: (v) => setState(() => _volume = v),
+                    onChangeEnd: _setVolume,
+                  ),
+                  _CompactSliderRow(
+                    icon: Icons.opacity,
+                    value: _opacity,
+                    min: 0.3,
+                    enabled: true,
+                    onChanged: (v) => setState(() => _opacity = v),
+                    onChangeEnd: _setOpacity,
+                  ),
+                  Expanded(
+                    child: _CaptionLane(
+                      title: 'Source',
+                      lines: _sourceLines,
+                      focus: _sourceFocus,
+                      fontSize: _fontSize,
+                      textOpacity: _opacity,
+                      highlightKey: _sourceHighlightKey,
+                      onFocusChanged: _setSourceFocus,
+                      emptyHint:
+                          'Source captions appear here while Live Translate runs.',
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Expanded(
+                    child: _CaptionLane(
+                      title: 'Translation',
+                      lines: _translatedLines,
+                      focus: _translatedFocus,
+                      fontSize: _fontSize,
+                      textOpacity: _opacity,
+                      highlightKey: _translatedHighlightKey,
+                      emphasize: true,
+                      onFocusChanged: _setTranslatedFocus,
+                      emptyHint: 'Translations appear here.',
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: TextButton.icon(
+                          onPressed:
+                              _cloning || _resizing ? null : _liveClone,
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                          icon: Icon(
+                            _cloning
+                                ? Icons.hourglass_top
+                                : Icons.record_voice_over,
+                            size: 18,
+                          ),
+                          label: Text(_cloning ? 'Cloning…' : 'Clone'),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: _muted ? 'Unmute TTS' : 'Mute TTS',
+                        onPressed: _cloning ? null : _toggleMute,
+                        icon: Icon(
+                          _muted ? Icons.volume_off : Icons.volume_up,
+                        ),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: _cloning ? null : _stop,
+                        child: const Text('Stop'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CompactSliderRow extends StatelessWidget {
+  const _CompactSliderRow({
+    required this.icon,
+    required this.value,
+    required this.onChanged,
+    required this.onChangeEnd,
+    this.enabled = true,
+    this.min = 0,
+  });
+
+  final IconData icon;
+  final double value;
+  final double min;
+  final bool enabled;
+  final ValueChanged<double> onChanged;
+  final ValueChanged<double> onChangeEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: scheme.onSurfaceVariant),
+        Expanded(
+          child: Slider(
+            min: min,
+            max: 1,
+            value: value.clamp(min, 1.0),
+            onChanged: enabled ? onChanged : null,
+            onChangeEnd: enabled ? onChangeEnd : null,
+          ),
         ),
-      ),
+        SizedBox(
+          width: 36,
+          child: Text(
+            '${(value * 100).round()}%',
+            style: Theme.of(context).textTheme.labelSmall,
+            textAlign: TextAlign.end,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Caption history with a vertical scrubber that highlights the focused line.
+class _CaptionLane extends StatelessWidget {
+  const _CaptionLane({
+    required this.title,
+    required this.lines,
+    required this.focus,
+    required this.fontSize,
+    required this.textOpacity,
+    required this.highlightKey,
+    required this.onFocusChanged,
+    required this.emptyHint,
+    this.emphasize = false,
+  });
+
+  final String title;
+  final List<String> lines;
+  final double focus;
+  final double fontSize;
+  final double textOpacity;
+  final GlobalKey highlightKey;
+  final ValueChanged<double> onFocusChanged;
+  final String emptyHint;
+  final bool emphasize;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final hasLines = lines.isNotEmpty;
+    final idx = hasLines
+        ? (focus.clamp(0.0, 1.0) * math.max(lines.length - 1, 0)).round()
+        : 0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          title,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+        ),
+        const SizedBox(height: 2),
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: hasLines
+                      ? ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
+                          itemCount: lines.length,
+                          itemBuilder: (context, i) {
+                            final active = i == idx;
+                            return Container(
+                              key: active ? highlightKey : null,
+                              margin: const EdgeInsets.only(bottom: 4),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: active
+                                    ? scheme.primary.withValues(alpha: 0.22)
+                                    : null,
+                                borderRadius: BorderRadius.circular(6),
+                                border: active
+                                    ? Border.all(
+                                        color: scheme.primary
+                                            .withValues(alpha: 0.55),
+                                      )
+                                    : null,
+                              ),
+                              child: Text(
+                                lines[i],
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      fontSize: fontSize,
+                                      fontWeight: emphasize && active
+                                          ? FontWeight.w600
+                                          : FontWeight.w400,
+                                      color: scheme.onSurface.withValues(
+                                        alpha: active
+                                            ? textOpacity
+                                            : textOpacity * 0.55,
+                                      ),
+                                    ),
+                              ),
+                            );
+                          },
+                        )
+                      : Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Text(
+                            emptyHint,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                        ),
+                ),
+              ),
+              if (hasLines && lines.length > 1)
+                SizedBox(
+                  width: 28,
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.keyboard_arrow_up,
+                        size: 16,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      Expanded(
+                        child: RotatedBox(
+                          quarterTurns: 3,
+                          child: Slider(
+                            value: focus.clamp(0.0, 1.0),
+                            onChanged: onFocusChanged,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 16,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Compact voice control that does not rely on overlay popup menus.
+class _VoicePicker extends StatelessWidget {
+  const _VoicePicker({
+    required this.voices,
+    required this.selectedId,
+    required this.onSelected,
+  });
+
+  final List<Map<String, String>> voices;
+  final String selectedId;
+  final ValueChanged<String?> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    if (voices.isEmpty) {
+      return Text(
+        'Voice: loading…',
+        style: Theme.of(context).textTheme.labelMedium,
+      );
+    }
+    final idx = voices.indexWhere((v) => v['id'] == selectedId);
+    final current = idx >= 0 ? voices[idx] : voices.first;
+    final name = current['name'] ?? current['id'] ?? 'Voice';
+
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+        ),
+        IconButton(
+          tooltip: 'Previous voice',
+          visualDensity: VisualDensity.compact,
+          onPressed: () {
+            final i = idx >= 0 ? idx : 0;
+            final prev = (i - 1 + voices.length) % voices.length;
+            onSelected(voices[prev]['id']);
+          },
+          icon: const Icon(Icons.chevron_left),
+        ),
+        IconButton(
+          tooltip: 'Next voice',
+          visualDensity: VisualDensity.compact,
+          onPressed: () {
+            final i = idx >= 0 ? idx : 0;
+            final next = (i + 1) % voices.length;
+            onSelected(voices[next]['id']);
+          },
+          icon: const Icon(Icons.chevron_right),
+        ),
+      ],
     );
   }
 }

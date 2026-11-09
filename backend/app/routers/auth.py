@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field  # pylint: disable=import-error
 from app.config import get_settings
 from app.models.requests import ApiKeyRequest, ForgotPasswordRequest, LoginRequest, RefreshRequest, RegisterRequest
 from app.models.responses import AuthResponse, TokenResponse
-from app.services.supabase_client import get_supabase
+from app.services.supabase_client import create_auth_client, get_supabase
 from app.services.usage import get_usage_snapshot
 
 logger = structlog.get_logger(__name__)
@@ -228,6 +228,8 @@ class DesktopSsoCompleteRequest(BaseModel):
     password: str | None = None
     api_key: str | None = None
     access_token: str | None = None
+    oauth_code: str | None = None
+    code_verifier: str | None = None
 
 
 @router.get("/desktop-sso", response_class=HTMLResponse, include_in_schema=False)
@@ -255,11 +257,35 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     if redirect_uri and not _is_valid_desktop_redirect(redirect_uri):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid redirect_uri")
 
-    sb = await get_supabase()
+    # A long-lived client keeps the last user's access token. PostgREST then
+    # rejects that expired token (PGRST303) and the page shows a 500.
+    sb = await create_auth_client()
     api_key: str | None = None
 
     pasted = (body.api_key or "").strip()
     access_token = (body.access_token or "").strip()
+    oauth_code = (body.oauth_code or "").strip()
+    if oauth_code and not access_token:
+        try:
+            exchange_params: dict = {"auth_code": oauth_code}
+            if body.code_verifier:
+                exchange_params["code_verifier"] = body.code_verifier.strip()
+            # Throwaway client: exchanging PKCE on the service-role singleton
+            # would attach the user JWT and make put_handoff fail RLS (403).
+            auth_sb = await create_auth_client()
+            exchanged = await auth_sb.auth.exchange_code_for_session(exchange_params)
+        except Exception as exc:
+            logger.error("Desktop SSO OAuth code exchange failed", error=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Google sign-in expired. Close this tab and try again from the app.",
+            ) from exc
+        if exchanged is None or exchanged.session is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Google sign-in did not return a session",
+            )
+        access_token = exchanged.session.access_token
     if pasted:
         result = await sb.table("users").select("*").eq("api_key", pasted).maybe_single().execute()
         if not result or not result.data:
@@ -309,7 +335,8 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
         api_key = await _ensure_user_api_key(sb, user_row)
     elif body.email and body.password:
         try:
-            resp = await sb.auth.sign_in_with_password(
+            auth_sb = await create_auth_client()
+            resp = await auth_sb.auth.sign_in_with_password(
                 {"email": body.email.strip(), "password": body.password}
             )
         except Exception as exc:
@@ -348,7 +375,7 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provide email/password, api_key, or access_token",
+            detail="Provide email/password, api_key, access_token, or oauth_code",
         )
 
     # Sync website Pricing Plan → users.tier so desktop usage matches Wix package.
@@ -364,7 +391,14 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     except Exception as exc:
         logger.warning("Desktop SSO Wix tier refresh skipped", error=str(exc))
 
-    await put_handoff(session_id, api_key)
+    try:
+        await put_handoff(session_id, api_key)
+    except Exception as exc:
+        logger.error("Desktop SSO handoff store failed", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Signed in, but the app could not receive the session. Try again.",
+        ) from exc
     logger.info("Desktop SSO complete", session_prefix=session_id[:8])
 
     out: dict = {"ok": True, "api_key": api_key}
@@ -377,10 +411,10 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest) -> AuthResponse:
     """Create a new account."""
-    sb = await get_supabase()
+    auth_sb = await create_auth_client()
 
     try:
-        resp = await sb.auth.sign_up({"email": body.email, "password": body.password})
+        resp = await auth_sb.auth.sign_up({"email": body.email, "password": body.password})
     except Exception as exc:
         logger.exception("Registration failed")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Authentication failed") from exc
@@ -396,7 +430,8 @@ async def register(body: RegisterRequest) -> AuthResponse:
             detail="Please check your email to confirm your account, then sign in.",
         )
 
-    # Create internal user row (rollback Supabase user on insert failure)
+    # Create internal user row on a client that is still the service role.
+    sb = await create_auth_client()
     try:
         insert_result = (
             await sb.table("users")
@@ -443,10 +478,10 @@ async def register(body: RegisterRequest) -> AuthResponse:
 @router.post("/login", response_model=AuthResponse)
 async def login(body: LoginRequest) -> AuthResponse:
     """Login with email and password."""
-    sb = await get_supabase()
+    auth_sb = await create_auth_client()
 
     try:
-        resp = await sb.auth.sign_in_with_password({"email": body.email, "password": body.password})
+        resp = await auth_sb.auth.sign_in_with_password({"email": body.email, "password": body.password})
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -456,9 +491,15 @@ async def login(body: LoginRequest) -> AuthResponse:
     if resp.user is None or resp.session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login failed")
 
-    # Fetch internal user row (maybe_single so auto-create path runs when no row)
-    result = await sb.table("users").select("*").eq("supabase_uid", resp.user.id).maybe_single().execute()
-    if not result or not result.data:
+    # Fetch internal user row on a client that is still the service role.
+    sb = await create_auth_client()
+    try:
+        result = await sb.table("users").select("*").eq("supabase_uid", resp.user.id).limit(1).execute()
+    except Exception as exc:
+        logger.warning("User lookup after login failed", error=str(exc))
+        result = None
+    rows = result.data if result is not None and isinstance(result.data, list) else []
+    if not rows:
         # Auto-create if missing (e.g. user registered via web)
         try:
             result = (
@@ -476,7 +517,7 @@ async def login(body: LoginRequest) -> AuthResponse:
                 detail="Login could not be completed",
             ) from exc
     else:
-        user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        user_row = rows[0]
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))
@@ -498,7 +539,7 @@ async def login(body: LoginRequest) -> AuthResponse:
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(body: RefreshRequest) -> TokenResponse:
     """Exchange a refresh token for a new access token."""
-    sb = await get_supabase()
+    sb = await create_auth_client()
 
     try:
         resp = await sb.auth.refresh_session(body.refresh_token)
@@ -521,7 +562,7 @@ async def refresh(body: RefreshRequest) -> TokenResponse:
 @router.post("/forgot-password")
 async def forgot_password(body: ForgotPasswordRequest) -> Response:
     """Trigger a password reset email via Supabase."""
-    sb = await get_supabase()
+    sb = await create_auth_client()
     with contextlib.suppress(Exception):
         await sb.auth.reset_password_email(body.email)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -537,11 +578,16 @@ _OAUTH_REDIRECT_URI_QUERY = Query(
         "Must be in Supabase → Auth → URL Configuration → Additional Redirect URLs."
     ),
 )
+_OAUTH_CODE_CHALLENGE_QUERY = Query(
+    None,
+    description="PKCE S256 challenge. Required for the HTTPS desktop-sso bridge.",
+)
 
 
 @router.get("/oauth/google")
 async def google_oauth_url(
     redirect_uri: str = _OAUTH_REDIRECT_URI_QUERY,
+    code_challenge: str | None = _OAUTH_CODE_CHALLENGE_QUERY,
 ) -> JSONResponse:
     """
     Return the Google OAuth redirect URL for the desktop client.
@@ -558,13 +604,29 @@ async def google_oauth_url(
     """
     cfg = get_settings()
     supabase_base = cfg.supabase_url.rstrip("/")
-    params = urllib.parse.urlencode({
+    params: dict[str, str] = {
         "provider": "google",
         "redirect_to": redirect_uri,
-        "flow_type": "pkce",
-    })
-    url = f"{supabase_base}/auth/v1/authorize?{params}"
-    logger.info("Generated Google OAuth URL", redirect_uri=redirect_uri)
+    }
+    challenge = (code_challenge or "").strip()
+    if challenge:
+        params["code_challenge"] = challenge
+        params["code_challenge_method"] = "S256"
+    else:
+        # Native localhost callbacks still advertise PKCE; the desktop client
+        # injects code_challenge itself. Do not set flow_type=pkce for the
+        # HTTPS bridge — without a challenge the user lands on ?code= and
+        # the page cannot finish.
+        parsed = urllib.parse.urlparse(redirect_uri)
+        host = (parsed.hostname or "").lower()
+        if host in ("localhost", "127.0.0.1"):
+            params["flow_type"] = "pkce"
+    url = f"{supabase_base}/auth/v1/authorize?{urllib.parse.urlencode(params)}"
+    logger.info(
+        "Generated Google OAuth URL",
+        redirect_uri=redirect_uri,
+        pkce=bool(challenge) or "flow_type" in params,
+    )
     return JSONResponse({"url": url})
 
 
@@ -583,13 +645,13 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
     URL.  Returns the same ``AuthResponse`` as the password-login endpoint
     so the caller can store and use the tokens identically.
     """
-    sb = await get_supabase()
+    auth_sb = await create_auth_client()
 
     try:
         exchange_params: dict = {"auth_code": body.code}
         if body.code_verifier:
             exchange_params["code_verifier"] = body.code_verifier
-        resp = await sb.auth.exchange_code_for_session(exchange_params)
+        resp = await auth_sb.auth.exchange_code_for_session(exchange_params)
     except Exception as exc:
         logger.error("OAuth code exchange failed", error=str(exc), code_len=len(body.code))
         raise HTTPException(
@@ -603,15 +665,21 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
             detail="OAuth exchange returned no session",
         )
 
-    # Upsert internal user row (maybe_single so creation path runs when missing)
-    result = (
-        await sb.table("users")
-        .select("*")
-        .eq("supabase_uid", resp.user.id)
-        .maybe_single()
-        .execute()
-    )
-    if not result or not result.data:
+    # Upsert internal user row on a client that is still the service role.
+    sb = await create_auth_client()
+    try:
+        result = (
+            await sb.table("users")
+            .select("*")
+            .eq("supabase_uid", resp.user.id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("User lookup after OAuth exchange failed", error=str(exc))
+        result = None
+    oauth_rows = result.data if result is not None and isinstance(result.data, list) else []
+    if not oauth_rows:
         try:
             result = (
                 await sb.table("users")
@@ -632,7 +700,7 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
                 detail="OAuth sign-in could not be completed",
             ) from exc
     else:
-        user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        user_row = oauth_rows[0]
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))
@@ -662,13 +730,13 @@ class _IdTokenRequest(BaseModel):
 
 async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> AuthResponse:
     """Common logic for ID token sign-in (Google/Apple native SDKs)."""
-    sb = await get_supabase()
+    auth_sb = await create_auth_client()
 
     try:
         sign_in_params: dict = {"provider": provider, "token": id_token}
         if nonce:
             sign_in_params["nonce"] = nonce
-        resp = await sb.auth.sign_in_with_id_token(sign_in_params)
+        resp = await auth_sb.auth.sign_in_with_id_token(sign_in_params)
     except Exception as exc:
         logger.error(f"{provider} ID token sign-in failed", error=str(exc))
         raise HTTPException(
@@ -682,15 +750,21 @@ async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> Au
             detail=f"{provider.title()} sign-in returned no session",
         )
 
-    # Upsert internal user row
-    result = (
-        await sb.table("users")
-        .select("*")
-        .eq("supabase_uid", resp.user.id)
-        .maybe_single()
-        .execute()
-    )
-    if not result or not result.data:
+    # Upsert internal user row on a client that is still the service role.
+    sb = await create_auth_client()
+    try:
+        result = (
+            await sb.table("users")
+            .select("*")
+            .eq("supabase_uid", resp.user.id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("User lookup after ID token sign-in failed", error=str(exc))
+        result = None
+    id_rows = result.data if result is not None and isinstance(result.data, list) else []
+    if not id_rows:
         try:
             result = (
                 await sb.table("users")
@@ -711,7 +785,7 @@ async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> Au
                 detail=f"{provider.title()} sign-in could not be completed",
             ) from exc
     else:
-        user_row = result.data if isinstance(result.data, dict) else result.data[0]
+        user_row = id_rows[0]
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))

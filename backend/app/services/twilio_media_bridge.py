@@ -20,6 +20,7 @@ import structlog
 from elevenlabs import AsyncElevenLabs
 
 from app.config import get_settings
+from app.services.text_filter import strip_non_verbal
 
 logger = structlog.get_logger(__name__)
 
@@ -95,8 +96,11 @@ class AudioProcessor:
             text = await self._stt(mulaw_bytes)
             if not text or not text.strip():
                 return
-            translated = await self._translate(text)
-            if not translated or not translated.strip():
+            text = strip_non_verbal(text)
+            if not text:
+                return
+            translated = strip_non_verbal(await self._translate(text))
+            if not translated:
                 return
             mulaw_out = await self._tts(translated)
             if mulaw_out:

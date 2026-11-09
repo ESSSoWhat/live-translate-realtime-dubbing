@@ -33,13 +33,24 @@ flutter build apk --release --dart-define=API_BASE_URL=https://your-api.com/
 
 Without `--dart-define=API_BASE_URL=...`, the app targets **localhost** (see above). For a **release APK/IPA** pointing at a hosted API, always pass `--dart-define=API_BASE_URL=https://your-api/`.
 
+## Desktop parity (mic mode)
+
+Android aims to match the desktop **Microphone / Mic Translate** experience:
+
+- **Mic Translate** — microphone → captions in-app
+- **Live Translate** — **App audio** (MediaProjection playback) or **Screen text** (OCR) + overlay bubble
+- From / To languages, voice select / clone / import / rename / delete
+- Mute TTS, settings (volume, caption style, auto-clone)
+
+**Not on Android:** VB-Cable play-as-mic. Live Translate app-audio details: [docs/MEDIA_PROJECTION_PHASE2.md](docs/MEDIA_PROJECTION_PHASE2.md).
+
 ## Virtual mic on Android
 
 The Android app is standalone: it uses the Live Translate backend for translation but does not require the Windows desktop app. Translated audio is played to the device's speaker/earpiece. Other apps on the same device cannot use this as a "microphone" input—that is an Android/platform limitation; there is no in-app workaround for routing translated audio as a system mic on device. For virtual mic routing into Discord, Zoom, etc., use the **Windows desktop app** with **VB-Cable** (a virtual audio cable): set the desktop app's output to CABLE Input and set Discord/Zoom input to CABLE Output. See [VB-Audio Cable](https://vb-audio.com/Cable/) for setup.
 
 ## Overlay captions (Android)
 
-Starting translation can show a bubble over other apps (status, captions, mute, stop). See [docs/OVERLAY_TRANSLATE.md](docs/OVERLAY_TRANSLATE.md) for permission setup, the mic-only limitation (no YouTube media capture), and the required background notification.
+**Live Translate** mode captures **app playback** or **on-screen text** (with system consent) and can show a bubble over other apps. **Mic Translate** uses the mic and keeps captions in the app. See [docs/OVERLAY_TRANSLATE.md](docs/OVERLAY_TRANSLATE.md) and [docs/MEDIA_PROJECTION_PHASE2.md](docs/MEDIA_PROJECTION_PHASE2.md).
 
 ## Google Sign-In (SSO)
 

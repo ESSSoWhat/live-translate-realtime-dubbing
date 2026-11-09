@@ -32,3 +32,19 @@ async def get_supabase() -> AsyncClient:
                 _client = await acreate_client(cfg.supabase_url, cfg.supabase_service_role_key)
                 logger.info("Supabase client initialised")
     return _client
+
+
+async def create_auth_client() -> AsyncClient:
+    """Short-lived client for password / OAuth exchange.
+
+    ``exchange_code_for_session`` and ``sign_in_with_password`` replace the
+    client's session with the end-user JWT. Reusing ``get_supabase()`` for
+    those calls makes later service-role table writes (e.g. desktop handoff)
+    run as that user and fail RLS.
+    """
+    cfg = get_settings()
+    if not (cfg.supabase_url and cfg.supabase_service_role_key):
+        raise SupabaseNotConfiguredError(
+            "Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env"
+        )
+    return await acreate_client(cfg.supabase_url, cfg.supabase_service_role_key)

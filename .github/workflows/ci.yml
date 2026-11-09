@@ -222,6 +222,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          # Fail the release if the installer (or zip) is missing, so we never
+          # ship a release without a working downloadable Setup .exe.
+          fail_on_unmatched_files: true
           files: |
             LiveTranslate-${{ github.ref_name }}.zip
             live-dubbing/dist/LiveTranslate-*-Setup.exe

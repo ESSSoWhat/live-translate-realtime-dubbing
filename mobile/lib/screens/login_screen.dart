@@ -24,9 +24,10 @@ class _LoginScreenState extends State<LoginScreen> {
   final _api = ApiClient();
   final _sso = SsoService();
   bool _loading = false;
+  bool _registerMode = false;
   String? _error;
 
-  Future<void> _login() async {
+  Future<void> _submitAuth() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
     if (email.isEmpty || password.isEmpty) {
@@ -36,12 +37,20 @@ class _LoginScreenState extends State<LoginScreen> {
       });
       return;
     }
+    if (_registerMode && password.length < 8) {
+      setState(() {
+        _error = 'Password must be at least 8 characters';
+      });
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final body = await _api.login(email, password);
+      final body = _registerMode
+          ? await _api.register(email, password)
+          : await _api.login(email, password);
       await _auth.saveFromAuthResponse(body);
       if (QonversionService.isAvailable) {
         final userId = body['user_id'] as String?;
@@ -251,14 +260,27 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 24),
               FilledButton(
-                onPressed: _loading ? null : _login,
+                onPressed: _loading ? null : _submitAuth,
                 child: _loading
                     ? const SizedBox(
                         height: 20,
                         width: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Text('Sign in'),
+                    : Text(_registerMode ? 'Create account' : 'Sign in'),
+              ),
+              TextButton(
+                onPressed: _loading
+                    ? null
+                    : () => setState(() {
+                          _registerMode = !_registerMode;
+                          _error = null;
+                        }),
+                child: Text(
+                  _registerMode
+                      ? 'Already have an account? Sign in'
+                      : 'Need an account? Register',
+                ),
               ),
             ],
           ),

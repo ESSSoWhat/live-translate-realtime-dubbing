@@ -25,6 +25,7 @@ from app.models.responses import (
     VoiceItem,
 )
 from app.services.supabase_client import get_supabase
+from app.services.text_filter import strip_non_verbal
 from app.services.usage import QuotaExceededError, check_and_record_quota, check_quota
 
 logger = structlog.get_logger(__name__)
@@ -194,11 +195,18 @@ async def transcribe(
         await check_and_record_quota(user["id"], "stt", int(round(duration_seconds)))
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("STT quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     client = _elevenlabs()
     try:
+        # Named tuple so ElevenLabs multipart includes a filename (bare BytesIO can 500 upstream).
+        audio_file = ("audio.wav", audio_bytes, "audio/wav")
         result = await client.speech_to_text.convert(
-            file=io.BytesIO(audio_bytes),
+            file=audio_file,
             model_id="scribe_v1",
             language_code=None if language == "auto" else language,
         )
@@ -207,9 +215,10 @@ async def transcribe(
     except Exception as exc:
         raise _elevenlabs_upstream_error("Transcription", exc) from exc
 
+    lang = getattr(result, "language_code", None) or language or "auto"
     return TranscriptionResponse(
-        text=result.text,
-        language_code=result.language_code or language,
+        text=(getattr(result, "text", None) or "").strip(),
+        language_code=str(lang),
     )
 
 
@@ -222,7 +231,7 @@ async def synthesize(
     user: dict = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     """Synthesize text to MP3 via ElevenLabs TTS; record usage by character count."""
-    text = (body.text or "").strip()
+    text = strip_non_verbal(body.text or "")
     if not text:
         raise HTTPException(status_code=400, detail="Text must not be empty")
     char_count = len(text)
@@ -233,11 +242,21 @@ async def synthesize(
         await check_and_record_quota(user["id"], "tts", char_count)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("TTS quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     try:
         await check_and_record_quota(user["id"], "dub", estimated_dub_sec)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Dubbing quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     client = _elevenlabs()
     try:
@@ -312,7 +331,7 @@ async def synthesize_stream(
     user: dict = Depends(get_current_user),  # noqa: B008
 ) -> StreamingResponse:
     """Stream TTS audio chunks from ElevenLabs."""
-    text = (body.text or "").strip()
+    text = strip_non_verbal(body.text or "")
     if not text:
         raise HTTPException(status_code=400, detail="Text must not be empty")
     estimated_dub_sec = max(1, int(round(len(text) / 14.0)))
@@ -320,10 +339,20 @@ async def synthesize_stream(
         await check_and_record_quota(user["id"], "tts", len(text))
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("TTS stream quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
     try:
         await check_and_record_quota(user["id"], "dub", estimated_dub_sec)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Dubbing stream quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
     return StreamingResponse(
         _stream_tts_chunks(
             body.voice_id,
@@ -338,6 +367,57 @@ async def synthesize_stream(
 
 # ── Translation ──────────────────────────────────────────────────────────────
 
+_GOOGLE_LANGUAGE_IDS = {"zh": "zh-CN", "fil": "tl", "iw": "he"}
+_LANGUAGE_NAMES = {
+    "en": "English",
+    "es": "Spanish",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh": "Simplified Chinese",
+    "id": "Indonesian",
+    "th": "Thai",
+    "ru": "Russian",
+    "hi": "Hindi",
+    "vi": "Vietnamese",
+    "tl": "Filipino (Tagalog)",
+    "fil": "Filipino (Tagalog)",
+    "kk": "Kazakh",
+}
+
+
+async def _google_translate(text: str, target: str) -> str | None:
+    """Translate with Google's public JSON endpoints; each is rate limited separately, so try both."""
+    errors: list[str] = []
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            response = await client.get(
+                "https://clients5.google.com/translate_a/t",
+                params={"client": "dict-chrome-ex", "sl": "auto", "tl": target, "q": text},
+            )
+            response.raise_for_status()
+            first = (response.json() or [None])[0]
+            translated = first[0] if isinstance(first, list) else first
+            if isinstance(translated, str) and translated.strip():
+                return translated.strip()
+        except (httpx.HTTPError, ValueError, IndexError, TypeError) as exc:
+            errors.append(f"clients5: {exc}")
+        try:
+            response = await client.get(
+                "https://translate.googleapis.com/translate_a/single",
+                params={"client": "gtx", "sl": "auto", "tl": target, "dt": "t", "q": text},
+            )
+            response.raise_for_status()
+            sentences = response.json()[0] or []
+            translated = "".join(part[0] for part in sentences if part and part[0]).strip()
+            if translated:
+                return translated
+        except (httpx.HTTPError, ValueError, IndexError, TypeError) as exc:
+            errors.append(f"gtx: {exc}")
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    return None
+
+
 @router.post("/translate", response_model=TranslationResponse)
 async def translate(
     body: TranslateRequest,
@@ -351,12 +431,18 @@ async def translate(
         await check_and_record_quota(user["id"], "translate", char_count)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Translate quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     cfg = get_settings()
     translated = body.text
     source_lang = body.source_language
+    target = body.target_language.strip().lower()
+    target_name = _LANGUAGE_NAMES.get(target, body.target_language)
 
-    # Try OpenAI first, fall back to Google Translate
     if cfg.openai_api_key:
         try:
             from openai import AsyncOpenAI
@@ -366,7 +452,7 @@ async def translate(
                     model="gpt-4o-mini",
                     messages=[
                         {"role": "system", "content": (
-                            f"Translate the following text to {body.target_language}. "
+                            f"Translate the following text to {target_name}. "
                             "Return only the translated text, no explanations."
                         )},
                         {"role": "user", "content": body.text},
@@ -379,18 +465,31 @@ async def translate(
         except Exception as exc:
             logger.warning("OpenAI translation failed, falling back", error=str(exc))
 
+    google_target = _GOOGLE_LANGUAGE_IDS.get(target, target)
     if translated == body.text:
-        # Google Translate fallback (e.g. when OpenAI not configured or failed)
+        try:
+            translated = await _google_translate(body.text, google_target) or body.text
+        except (httpx.HTTPError, RuntimeError) as exc:
+            logger.warning("Google translate endpoint failed, falling back", error=str(exc))
+
+    if translated == body.text:
         try:
             from deep_translator import GoogleTranslator
+
             translated = await asyncio.to_thread(
-                GoogleTranslator(source="auto", target=body.target_language.strip().lower()).translate,
+                GoogleTranslator(source="auto", target=google_target).translate,
                 body.text,
             )
         except Exception as exc:
             logger.error("Google Translate fallback failed", error=str(exc))
 
-    return TranslationResponse(translated_text=translated, source_language=source_lang)
+    if translated == body.text:
+        logger.error("All translation methods returned the original text", target=target, chars=char_count)
+
+    return TranslationResponse(
+        translated_text=(translated or "").strip() or body.text,
+        source_language=source_lang or "auto",
+    )
 
 
 # ── Voice Management ─────────────────────────────────────────────────────────
@@ -401,10 +500,21 @@ async def list_voices(user: dict = Depends(get_current_user)) -> list[VoiceItem]
     client = _elevenlabs()
     try:
         result = await client.voices.get_all()
-        return [
-            VoiceItem(voice_id=v.voice_id, name=v.name, category=v.category or "premade")
-            for v in result.voices
-        ]
+        items: list[VoiceItem] = []
+        for v in result.voices:
+            vid = str(getattr(v, "voice_id", "") or "").strip()
+            if not vid:
+                continue
+            raw_cat = getattr(v, "category", None)
+            if raw_cat is None:
+                cat = "premade"
+            elif hasattr(raw_cat, "value"):
+                cat = str(raw_cat.value)
+            else:
+                cat = str(raw_cat) or "premade"
+            name = str(getattr(v, "name", None) or "").strip() or vid
+            items.append(VoiceItem(voice_id=vid, name=name, category=cat))
+        return items
     except HTTPException:
         raise
     except Exception as exc:
@@ -440,6 +550,59 @@ async def delete_voice(voice_id: str, user: dict = Depends(get_current_user)) ->
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.patch("/voices/{voice_id}", response_model=CloneVoiceResponse)
+async def rename_voice(
+    voice_id: str,
+    user: dict = Depends(get_current_user),  # noqa: B008
+    name: str = Form(...),  # noqa: B008
+) -> CloneVoiceResponse:
+    """Rename a user-owned cloned voice on ElevenLabs."""
+    new_name = (name or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name must not be empty")
+
+    client = _elevenlabs()
+    try:
+        all_voices = await client.voices.get_all()
+        voice_meta = next((v for v in all_voices.voices if v.voice_id == voice_id), None)
+        if voice_meta is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice not found")
+        if getattr(voice_meta, "category", None) == "premade":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot rename premade voices")
+
+        sb = await get_supabase()
+        owned = (
+            await sb.table("user_voices")
+            .select("voice_id")
+            .eq("voice_id", voice_id)
+            .eq("user_id", user["id"])
+            .maybe_single()
+            .execute()
+        )
+        if not owned.data:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to rename this voice")
+
+        key = get_settings().elevenlabs_api_key
+        if not key:
+            raise HTTPException(status_code=503, detail="ElevenLabs API key not configured")
+        async with httpx.AsyncClient(timeout=60.0) as http:
+            resp = await http.post(
+                f"https://api.elevenlabs.io/v1/voices/{voice_id}/edit",
+                headers={"xi-api-key": key},
+                data={"name": new_name},
+            )
+        if resp.status_code >= 400:
+            raise _elevenlabs_upstream_error(
+                "Rename voice",
+                Exception(f"status_code: {resp.status_code}, body: {resp.text[:800]}"),
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _elevenlabs_upstream_error("Rename voice", exc) from exc
+    return CloneVoiceResponse(voice_id=voice_id, name=new_name)
+
+
 @router.post("/clone-voice", response_model=CloneVoiceResponse)
 async def clone_voice(
     background_tasks: BackgroundTasks,
@@ -455,6 +618,11 @@ async def clone_voice(
         await check_quota(user["id"], "clone", 1)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Clone quota check failed", user_id=user["id"])
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
     audio_bytes = await audio.read()
     if not audio_bytes:
