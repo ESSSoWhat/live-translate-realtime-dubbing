@@ -7,16 +7,35 @@ import contextlib
 import faulthandler
 import io
 import logging
+import logging.handlers
 import os
 import sys
 from typing import NoReturn
+
+_LOG_MAX_BYTES = 5 * 1024 * 1024
+_LOG_BACKUPS = 2
+
+
+def _log_dir() -> str:
+    path = os.path.join(
+        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+        "Live Translate",
+        "logs",
+    )
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _debug_logging() -> bool:
+    """Full DEBUG logs when running from source or with LIVE_TRANSLATE_DEBUG=1."""
+    return not getattr(sys, "frozen", False) or os.environ.get("LIVE_TRANSLATE_DEBUG") == "1"
 
 
 def _enable_faulthandler() -> None:
     """Enable faulthandler to capture segfaults and other low-level crashes.
 
     This helps debug crashes in native libraries like PortAudio (sounddevice).
-    Output goes to stderr (redirected to app.log when windowed).
+    Output goes to stderr (redirected to stdout.log when windowed).
     """
     with contextlib.suppress(Exception):
         faulthandler.enable(all_threads=True)
@@ -33,21 +52,21 @@ def _fix_stdio_for_windowed_app() -> None:
     We redirect both to a log file so all write calls succeed and output
     is captured for debugging.  After the fallback is in place we attempt
     a UTF-8 upgrade for cases where a real console IS attached.
+
+    The file is separate from app.log: Windows cannot rename a file another
+    handle holds open, so sharing it would stop app.log from rotating.
     """
-    # --- Determine a log file path in LOCALAPPDATA ---
-    _log_dir = os.path.join(
-        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-        "Live Translate",
-        "logs",
-    )
-    os.makedirs(_log_dir, exist_ok=True)
-    _log_path = os.path.join(_log_dir, "app.log")
+    _log_path = os.path.join(_log_dir(), "stdout.log")
 
     # --- Fallback: replace None streams with log file (or devnull) ---
     _log_file = None
     if sys.stdout is None or sys.stderr is None:
         try:
-            _log_file = open(_log_path, "a", encoding="utf-8")  # noqa: SIM115
+            too_big = os.path.getsize(_log_path) > _LOG_MAX_BYTES
+        except OSError:
+            too_big = False
+        try:
+            _log_file = open(_log_path, "w" if too_big else "a", encoding="utf-8")  # noqa: SIM115
         except Exception:
             _log_file = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
 
@@ -76,30 +95,38 @@ def _setup_file_logging() -> None:
     This captures output from all libraries that use the standard
     ``logging`` module, as well as structlog (when it falls back to
     stdlib).  The log file lives next to the stdio redirect log so
-    all diagnostic information is in one place.
+    all diagnostic information is in one place.  It rotates at 5 MB and
+    keeps two old files.
     """
-    _log_dir = os.path.join(
-        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-        "Live Translate",
-        "logs",
-    )
-    os.makedirs(_log_dir, exist_ok=True)
-    _log_path = os.path.join(_log_dir, "app.log")
+    _log_path = os.path.join(_log_dir(), "app.log")
+    level = logging.DEBUG if _debug_logging() else logging.INFO
 
-    # Configure root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
+    root_logger.setLevel(level)
+    if level > logging.DEBUG:
+        # httpx logs every request at INFO, including the usage poll each minute.
+        for noisy in ("httpx", "httpcore", "urllib3", "keyring", "asyncio"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    # File handler — appends to the same log file stdio redirects use
     try:
-        fh = logging.FileHandler(_log_path, encoding="utf-8")
-        fh.setLevel(logging.DEBUG)
+        fh = logging.handlers.RotatingFileHandler(
+            _log_path,
+            maxBytes=_LOG_MAX_BYTES,
+            backupCount=_LOG_BACKUPS,
+            encoding="utf-8",
+        )
+        fh.setLevel(level)
         fmt = logging.Formatter(
             "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             datefmt="%H:%M:%S",
         )
         fh.setFormatter(fmt)
         root_logger.addHandler(fh)
+        if not getattr(sys, "frozen", False):
+            console = logging.StreamHandler(sys.stderr)
+            console.setLevel(level)
+            console.setFormatter(fmt)
+            root_logger.addHandler(console)
     except Exception:
         pass  # Don't crash if logging setup fails
 
@@ -112,23 +139,22 @@ def _configure_structlog() -> None:
     been None at the time structlog's _output module was imported,
     causing the captured 'stdout' module variable to be None.
     Routing structlog through stdlib avoids this entirely and
-    ensures all log output is captured in the log file.
+    ensures all log output goes to the rotating app.log at the same level.
     """
     import structlog
 
     structlog.configure(
         processors=[
+            structlog.stdlib.filter_by_level,
             structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
             structlog.processors.StackInfoRenderer(),
             structlog.dev.set_exc_info,
-            structlog.processors.TimeStamper(fmt="%H:%M:%S"),
             structlog.processors.format_exc_info,
-            structlog.dev.ConsoleRenderer(),
+            structlog.dev.ConsoleRenderer(colors=False),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
+        wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
 

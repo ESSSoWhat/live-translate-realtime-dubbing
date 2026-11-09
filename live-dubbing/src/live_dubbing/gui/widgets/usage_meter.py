@@ -2,6 +2,7 @@
 Usage meter widget — shows monthly dubbing quota and an upgrade button.
 
 Refreshes automatically every 60 seconds by polling GET /api/v1/user/usage.
+After a failed fetch the wait doubles, up to 15 minutes, until one succeeds.
 """
 
 from __future__ import annotations
@@ -25,6 +26,9 @@ if TYPE_CHECKING:
     from live_dubbing.config.settings import AppSettings
 
 logger = structlog.get_logger(__name__)
+
+_POLL_MS = 60_000
+_MAX_POLL_MS = 15 * 60_000
 
 
 class _UsageFetcher(QThread):
@@ -85,7 +89,7 @@ class UsageMeterWidget(QFrame):
 
         # Auto-refresh timer
         self._timer = QTimer(self)
-        self._timer.setInterval(60_000)  # 60 seconds
+        self._timer.setInterval(_POLL_MS)
         self._timer.timeout.connect(self.refresh)
 
     def _build_ui(self) -> None:
@@ -162,6 +166,7 @@ class UsageMeterWidget(QFrame):
 
     def _on_fetcher_failed(self) -> None:
         """On fetch failure keep previous data; use free-tier defaults if none."""
+        self._timer.setInterval(min(self._timer.interval() * 2, _MAX_POLL_MS))
         if not self._usage:
             self._usage = {
                 "tier": "free",
@@ -172,6 +177,7 @@ class UsageMeterWidget(QFrame):
         self._update_display()  # always render (cached or default) so UI never stuck on "Loading usage…"
 
     def _on_usage_fetched(self, data: dict) -> None:
+        self._timer.setInterval(_POLL_MS)
         self._usage = data
         # Update tier from server so subscription level stays in sync
         tier = data.get("tier")
