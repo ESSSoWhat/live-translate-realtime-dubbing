@@ -73,11 +73,11 @@ class QueueIndicator(QFrame):
         # Color code based on fill level
         fill_percent = depth / self._max_size if self._max_size > 0 else 0
         if fill_percent < 0.5:
-            color = "#4CAF50"  # Green
+            color = "#97C693"  # Green
         elif fill_percent < 0.8:
             color = "#FFC107"  # Yellow
         else:
-            color = "#F44336"  # Red
+            color = "#9C2426"  # Red
 
         self._bar.setStyleSheet(f"QProgressBar::chunk {{ background-color: {color}; }}")
 
@@ -104,7 +104,7 @@ class PipelineStatusPanel(QGroupBox):
 
         # Queue depths header
         queue_header = QLabel("Queue Depths:")
-        queue_header.setStyleSheet("font-size: 11px; color: gray;")
+        queue_header.setStyleSheet("font-size: 11px; color: #7D809C;")
         layout.addWidget(queue_header)
 
         # Queue indicators (horizontal layout)
@@ -145,11 +145,11 @@ class PipelineStatusPanel(QGroupBox):
         # Color code state
         state_colors = {
             "INITIALIZING": "#FFC107",
-            "READY": "#4CAF50",
-            "RUNNING": "#2196F3",
+            "READY": "#97C693",
+            "RUNNING": "#FCA311",
             "CONFIGURING": "#9C27B0",
-            "STOPPING": "#FF9800",
-            "ERROR": "#F44336",
+            "STOPPING": "#FCA311",
+            "ERROR": "#9C2426",
         }
         color = state_colors.get(state_name, "#666")
         self._state_label.setStyleSheet(f"font-weight: bold; color: {color};")
@@ -190,7 +190,7 @@ class LatencyGraph(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Background
-        painter.fillRect(self.rect(), QColor("#1a1a1a"))
+        painter.fillRect(self.rect(), QColor("#10121C"))
 
         height = self.height()
         width = self.width()
@@ -208,7 +208,7 @@ class LatencyGraph(QWidget):
         painter.drawLine(0, y_1s, width, y_1s)
 
         # 2 second line (red dashed)
-        painter.setPen(QPen(QColor("#F44336"), 1, Qt.PenStyle.DashLine))
+        painter.setPen(QPen(QColor("#9C2426"), 1, Qt.PenStyle.DashLine))
         y_2s = int(height - (2000 / self._max_value) * height)
         painter.drawLine(0, y_2s, width, y_2s)
 
@@ -224,7 +224,7 @@ class LatencyGraph(QWidget):
             points.append((x, y))
 
         # Draw line
-        painter.setPen(QPen(QColor("#2196F3"), 2))
+        painter.setPen(QPen(QColor("#FCA311"), 2))
         for i in range(len(points) - 1):
             painter.drawLine(
                 points[i][0], points[i][1], points[i + 1][0], points[i + 1][1]
@@ -249,7 +249,7 @@ class LatencyPanel(QGroupBox):
         metrics_layout.addWidget(self._current_label)
 
         self._average_label = QLabel("Average: --ms")
-        self._average_label.setStyleSheet("font-size: 12px; color: gray;")
+        self._average_label.setStyleSheet("font-size: 12px; color: #7D809C;")
         metrics_layout.addWidget(self._average_label)
 
         metrics_layout.addStretch()
@@ -273,11 +273,11 @@ class LatencyPanel(QGroupBox):
 
         # Color code current latency
         if current < 1000:
-            color = "#4CAF50"
+            color = "#97C693"
         elif current < 2000:
             color = "#FFC107"
         else:
-            color = "#F44336"
+            color = "#9C2426"
         self._current_label.setStyleSheet(f"font-size: 12px; color: {color};")
 
         # Update graph
@@ -314,20 +314,20 @@ class VoiceClonePanel(QGroupBox):
 
         # Voice ID
         self._voice_id_label = QLabel("Voice ID: --")
-        self._voice_id_label.setStyleSheet("font-size: 10px; color: gray;")
+        self._voice_id_label.setStyleSheet("font-size: 10px; color: #7D809C;")
         self._voice_id_label.setWordWrap(True)
         layout.addWidget(self._voice_id_label)
 
     def set_progress(self, progress: float) -> None:
         """Update voice clone progress (0.0 to 1.0)."""
         self._status_label.setText("Capturing...")
-        self._status_label.setStyleSheet("font-weight: bold; color: #2196F3;")
+        self._status_label.setStyleSheet("font-weight: bold; color: #FCA311;")
         self._progress.setValue(int(progress * 100))
 
     def set_completed(self, voice_id: str) -> None:
         """Mark voice clone as completed."""
         self._status_label.setText("Ready")
-        self._status_label.setStyleSheet("font-weight: bold; color: #4CAF50;")
+        self._status_label.setStyleSheet("font-weight: bold; color: #97C693;")
         self._progress.setValue(100)
         self._voice_id_label.setText(f"Voice ID: {voice_id}")
 
@@ -353,7 +353,7 @@ class RealTimeTextPanel(QGroupBox):
         trans_header = QHBoxLayout()
         trans_header.addWidget(QLabel("Transcription:"))
         self._trans_timestamp = QLabel("")
-        self._trans_timestamp.setStyleSheet("font-size: 10px; color: gray;")
+        self._trans_timestamp.setStyleSheet("font-size: 10px; color: #7D809C;")
         trans_header.addWidget(self._trans_timestamp)
         trans_header.addStretch()
         layout.addLayout(trans_header)
@@ -363,7 +363,7 @@ class RealTimeTextPanel(QGroupBox):
         self._transcription_text.setStyleSheet(
             """
             QLabel {
-                background-color: #2a2a2a;
+                background-color: #10121C;
                 padding: 8px;
                 border-radius: 4px;
                 font-size: 12px;
@@ -377,7 +377,7 @@ class RealTimeTextPanel(QGroupBox):
         transl_header = QHBoxLayout()
         transl_header.addWidget(QLabel("Translation:"))
         self._transl_timestamp = QLabel("")
-        self._transl_timestamp.setStyleSheet("font-size: 10px; color: gray;")
+        self._transl_timestamp.setStyleSheet("font-size: 10px; color: #7D809C;")
         transl_header.addWidget(self._transl_timestamp)
         transl_header.addStretch()
         layout.addLayout(transl_header)
@@ -387,11 +387,11 @@ class RealTimeTextPanel(QGroupBox):
         self._translation_text.setStyleSheet(
             """
             QLabel {
-                background-color: #2a2a2a;
+                background-color: #10121C;
                 padding: 8px;
                 border-radius: 4px;
                 font-size: 12px;
-                color: #4CAF50;
+                color: #97C693;
             }
         """
         )
@@ -455,7 +455,7 @@ class EventLogPanel(QGroupBox):
             QTextEdit {
                 font-family: 'Consolas', 'Monaco', monospace;
                 font-size: 11px;
-                background-color: #1a1a1a;
+                background-color: #10121C;
                 color: #ddd;
             }
         """
@@ -492,9 +492,9 @@ class EventLogPanel(QGroupBox):
             if len(data_summary) > 60:
                 data_summary = data_summary[:57] + "..."
 
-        html = f'<span style="color: gray;">{timestamp}</span> '
+        html = f'<span style="color: #7D809C;">{timestamp}</span> '
         html += f'<span style="color: {color};">[{event_type}]</span>'
-        html += f'<span style="color: #aaa;">{data_summary}</span><br/>'
+        html += f'<span style="color: #7D809C;">{data_summary}</span><br/>'
 
         self._log_text.insertHtml(html)
 
@@ -507,13 +507,13 @@ class EventLogPanel(QGroupBox):
         """Get color for event type."""
         name = event_type.name
         if "ERROR" in name:
-            return "#F44336"
+            return "#9C2426"
         elif "WARNING" in name:
             return "#FFC107"
         elif "COMPLETED" in name or "STARTED" in name:
-            return "#4CAF50"
+            return "#97C693"
         elif "UPDATE" in name:
-            return "#2196F3"
+            return "#FCA311"
         else:
             return "#ddd"
 

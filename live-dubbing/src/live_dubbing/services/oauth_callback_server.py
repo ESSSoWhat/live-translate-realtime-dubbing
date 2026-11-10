@@ -42,14 +42,14 @@ _CAPTURE_HTML = """\
   <title>Live Translate — Sign In</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:'Segoe UI',sans-serif;background:#111;color:#eee;
+    body{font-family:'Segoe UI',sans-serif;background:#151723;color:#9195BB;
          display:flex;align-items:center;justify-content:center;height:100vh}
-    .card{background:#1e1e1e;border:1px solid #333;border-radius:12px;
+    .card{background:#1B1D2B;border:1px solid #343749;border-radius:12px;
           padding:40px 48px;text-align:center;max-width:420px;width:90%}
     h1{font-size:1.5rem;margin-bottom:.5rem}
-    p{color:#aaa;font-size:.95rem}
-    .success h1{color:#4CAF50}
-    .error   h1{color:#e05555}
+    p{color:#7D809C;font-size:.95rem}
+    .success h1{color:#FCA311}
+    .error   h1{color:#9C2426}
   </style>
 </head>
 <body>

@@ -218,7 +218,7 @@ class MicTranslateWidget(QWidget):
 
         # Voice status label
         self._voice_status = QLabel("")
-        self._voice_status.setStyleSheet("color: gray; font-size: 11px;")
+        self._voice_status.setStyleSheet("color: #7D809C; font-size: 11px;")
         self._voice_status.setVisible(False)
         voice_layout.addWidget(self._voice_status)
 
@@ -230,14 +230,15 @@ class MicTranslateWidget(QWidget):
         self._start_btn.setStyleSheet(
             """
             QPushButton {
-                background-color: #1a7a1a;
-                color: white;
-                font-weight: bold;
+                background-color: #FCA311;
+                color: #14213D;
+                font-weight: 600;
                 padding: 8px 16px;
-                border-radius: 4px;
+                border: none;
+                border-radius: 8px;
             }
-            QPushButton:hover { background-color: #228a22; }
-            QPushButton:disabled { background-color: #2a2a2a; color: #666; }
+            QPushButton:hover { background-color: #FFC14D; }
+            QPushButton:disabled { background-color: #343749; color: #7D809C; }
             """
         )
         self._start_btn.clicked.connect(self._on_start_clicked)
@@ -247,14 +248,14 @@ class MicTranslateWidget(QWidget):
         self._stop_btn.setStyleSheet(
             """
             QPushButton {
-                background-color: #7a1a1a;
-                color: white;
+                background-color: #9C2426;
+                color: #9195BB;
                 font-weight: bold;
                 padding: 8px 16px;
                 border-radius: 4px;
             }
-            QPushButton:hover { background-color: #8a2222; }
-            QPushButton:disabled { background-color: #2a2a2a; color: #666; }
+            QPushButton:hover { background-color: #C43A3C; }
+            QPushButton:disabled { background-color: #343749; color: #7D809C; }
             """
         )
         self._stop_btn.setEnabled(False)
@@ -265,7 +266,7 @@ class MicTranslateWidget(QWidget):
         # -- Status label --
         self._status_label = QLabel("Idle")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status_label.setStyleSheet("color: gray; font-size: 12px;")
+        self._status_label.setStyleSheet("color: #7D809C; font-size: 12px;")
         root.addWidget(self._status_label)
 
         # -- Audio meter --
@@ -286,8 +287,8 @@ class MicTranslateWidget(QWidget):
         self._transcript_text.setStyleSheet(
             """
             QTextEdit {
-                background-color: #1e1e1e;
-                color: #ddd;
+                background-color: #10121C;
+                color: #9195BB;
                 font-size: 12px;
                 border: none;
             }
@@ -306,8 +307,8 @@ class MicTranslateWidget(QWidget):
         self._translation_text.setStyleSheet(
             """
             QTextEdit {
-                background-color: #1e1e1e;
-                color: #4CAF50;
+                background-color: #10121C;
+                color: #97C693;
                 font-size: 12px;
                 border: none;
             }
@@ -465,7 +466,7 @@ class MicTranslateWidget(QWidget):
             else:
                 logger.warning("Rename failed", voice_id=voice_id)
                 self._voice_status.setText("Rename failed. Please try again.")
-                self._voice_status.setStyleSheet("color: #F44336; font-size: 11px;")
+                self._voice_status.setStyleSheet("color: #9C2426; font-size: 11px;")
                 self._voice_status.setVisible(True)
 
     @pyqtSlot()
@@ -481,7 +482,7 @@ class MicTranslateWidget(QWidget):
         voice_name = self._voice_name_input.text().strip()
         if not voice_name:
             self._voice_status.setText("Please enter a voice name")
-            self._voice_status.setStyleSheet("color: #F44336; font-size: 11px;")
+            self._voice_status.setStyleSheet("color: #9C2426; font-size: 11px;")
             self._voice_status.setVisible(True)
             return
 
@@ -496,7 +497,7 @@ class MicTranslateWidget(QWidget):
         self._capture_progress.setValue(0)
         self._capture_progress.setVisible(True)
         self._voice_status.setText("Speak clearly into your microphone...")
-        self._voice_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
+        self._voice_status.setStyleSheet("color: #97C693; font-size: 11px;")
         self._voice_status.setVisible(True)
 
         if self._async_worker:
@@ -542,7 +543,7 @@ class MicTranslateWidget(QWidget):
         self._import_btn.setEnabled(True)
         self._capture_progress.setFormat("Creating voice clone...")
         self._voice_status.setText("Processing voice clone...")
-        self._voice_status.setStyleSheet("color: #FFC107; font-size: 11px;")
+        self._voice_status.setStyleSheet("color: #FCA311; font-size: 11px;")
 
         if self._async_worker:
             self._async_worker.run_coroutine(
@@ -558,12 +559,12 @@ class MicTranslateWidget(QWidget):
         self._capture_progress.setVisible(False)
         if voice:
             self._voice_status.setText("Voice cloned successfully!")
-            self._voice_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
+            self._voice_status.setStyleSheet("color: #97C693; font-size: 11px;")
             self._voice_name_input.clear()
             QTimer.singleShot(500, self._populate_voices)
         else:
             self._voice_status.setText("Voice capture failed - not enough audio")
-            self._voice_status.setStyleSheet("color: #F44336; font-size: 11px;")
+            self._voice_status.setStyleSheet("color: #9C2426; font-size: 11px;")
 
     def _on_capture_error(self, error_msg: str) -> None:
         """Called when voice capture fails."""
@@ -579,7 +580,7 @@ class MicTranslateWidget(QWidget):
         self._import_btn.setEnabled(True)
         self._capture_progress.setVisible(False)
         self._voice_status.setText(f"Error: {error_msg[:50]}")
-        self._voice_status.setStyleSheet("color: #F44336; font-size: 11px;")
+        self._voice_status.setStyleSheet("color: #9C2426; font-size: 11px;")
 
     @pyqtSlot()
     def _on_import_clicked(self) -> None:
@@ -599,7 +600,7 @@ class MicTranslateWidget(QWidget):
             self._voice_name_input.setText(voice_name)
 
         self._voice_status.setText("Importing voice from file...")
-        self._voice_status.setStyleSheet("color: #FFC107; font-size: 11px;")
+        self._voice_status.setStyleSheet("color: #FCA311; font-size: 11px;")
         self._voice_status.setVisible(True)
         self._import_btn.setEnabled(False)
 
@@ -617,19 +618,19 @@ class MicTranslateWidget(QWidget):
         self._import_btn.setEnabled(True)
         if voice:
             self._voice_status.setText("Voice imported successfully!")
-            self._voice_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
+            self._voice_status.setStyleSheet("color: #97C693; font-size: 11px;")
             self._voice_name_input.clear()
             QTimer.singleShot(500, self._populate_voices)
         else:
             self._voice_status.setText("Voice import failed")
-            self._voice_status.setStyleSheet("color: #F44336; font-size: 11px;")
+            self._voice_status.setStyleSheet("color: #9C2426; font-size: 11px;")
 
     def _on_import_error(self, error_msg: str) -> None:
         """Called when voice import fails."""
         logger.error("Voice import failed", error=error_msg)
         self._import_btn.setEnabled(True)
         self._voice_status.setText(f"Import error: {error_msg[:50]}")
-        self._voice_status.setStyleSheet("color: #F44336; font-size: 11px;")
+        self._voice_status.setStyleSheet("color: #9C2426; font-size: 11px;")
 
     # -- Event subscriptions --
 
@@ -685,7 +686,7 @@ class MicTranslateWidget(QWidget):
 
         self._start_btn.setEnabled(False)
         self._status_label.setText("Starting...")
-        self._status_label.setStyleSheet("color: #FFC107; font-size: 12px;")
+        self._status_label.setStyleSheet("color: #FCA311; font-size: 12px;")
 
         if not self._async_worker:
             self._on_start_error("Application not ready (no async worker).")
@@ -710,7 +711,7 @@ class MicTranslateWidget(QWidget):
 
         self._stop_btn.setEnabled(False)
         self._status_label.setText("Stopping...")
-        self._status_label.setStyleSheet("color: #FFC107; font-size: 12px;")
+        self._status_label.setStyleSheet("color: #FCA311; font-size: 12px;")
 
         if self._async_worker:
             self._async_worker.run_coroutine(
@@ -724,7 +725,7 @@ class MicTranslateWidget(QWidget):
         self._start_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
         self._status_label.setText(f"Error: {error_msg[:80]}")
-        self._status_label.setStyleSheet("color: #F44336; font-size: 12px;")
+        self._status_label.setStyleSheet("color: #9C2426; font-size: 12px;")
 
     def _on_stop_error(self, error_msg: str) -> None:
         """Called on the Qt thread when stop() raises."""
@@ -732,7 +733,7 @@ class MicTranslateWidget(QWidget):
         self._start_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
         self._status_label.setText("Stopped (with error)")
-        self._status_label.setStyleSheet("color: #F44336; font-size: 12px;")
+        self._status_label.setStyleSheet("color: #9C2426; font-size: 12px;")
 
     # -- Event handlers (run on Qt main thread via EventBus signal) --
 
@@ -742,7 +743,7 @@ class MicTranslateWidget(QWidget):
         self._start_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
         self._status_label.setText(f"Listening -> {lang.upper()}")
-        self._status_label.setStyleSheet("color: #4CAF50; font-size: 12px; font-weight: bold;")
+        self._status_label.setStyleSheet("color: #97C693; font-size: 12px; font-weight: bold;")
         self._mic_combo.setEnabled(False)
         self._lang_combo.setEnabled(False)
         self._output_combo.setEnabled(False)
@@ -756,7 +757,7 @@ class MicTranslateWidget(QWidget):
         self._start_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
         self._status_label.setText("Idle")
-        self._status_label.setStyleSheet("color: gray; font-size: 12px;")
+        self._status_label.setStyleSheet("color: #7D809C; font-size: 12px;")
         self._mic_combo.setEnabled(True)
         self._lang_combo.setEnabled(True)
         self._output_combo.setEnabled(True)
@@ -800,7 +801,7 @@ class MicTranslateWidget(QWidget):
         error = event.data.get("error", "Unknown error")
         logger.error("Voice clone failed", error=error)
         self._voice_status.setText(f"Clone failed: {str(error)[:40]}")
-        self._voice_status.setStyleSheet("color: #F44336; font-size: 11px;")
+        self._voice_status.setStyleSheet("color: #9C2426; font-size: 11px;")
         self._voice_status.setVisible(True)
 
 

@@ -870,7 +870,7 @@ class LoginDialog(QDialog):
 
         subtitle = QLabel("Real-time AI dubbing")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("color: #888; margin-bottom: 24px;")
+        subtitle.setStyleSheet("color: #7D809C; margin-bottom: 24px;")
         root.addWidget(subtitle)
 
         root.addSpacing(16)
@@ -904,9 +904,9 @@ class LoginDialog(QDialog):
         btn.setMinimumHeight(40)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         btn.setStyleSheet(
-            "QPushButton { background: #4f8cff; color: white; border-radius: 6px; font-weight: bold; }"
-            "QPushButton:hover { background: #3a72e0; }"
-            "QPushButton:disabled { background: #555; color: #999; }"
+            "QPushButton { background: #FCA311; color: #14213D; border-radius: 8px; font-weight: 600; }"
+            "QPushButton:hover { background: #FFC14D; }"
+            "QPushButton:disabled { background: #343749; color: #7D809C; }"
         )
         return btn
 
@@ -942,15 +942,15 @@ class LoginDialog(QDialog):
         btn.setStyleSheet(
             """
             QPushButton {
-                background: #0c6efc;
-                color: #fff;
+                background: #FCA311;
+                color: #14213D;
                 border: none;
-                border-radius: 6px;
-                font-weight: 500;
+                border-radius: 8px;
+                font-weight: 600;
                 font-size: 14px;
             }
-            QPushButton:hover { background: #0b5ed7; }
-            QPushButton:disabled { background: #555; color: #999; }
+            QPushButton:hover { background: #FFC14D; }
+            QPushButton:disabled { background: #343749; color: #7D809C; }
             """
         )
         btn.setText("Sign in with livetranslate.net")
@@ -964,18 +964,20 @@ class LoginDialog(QDialog):
         for side in (True, False):
             line = QFrame()
             line.setFrameShape(QFrame.Shape.HLine)
-            line.setStyleSheet("color: #444;")
+            line.setStyleSheet("color: #343749;")
             row.addWidget(line, 1)
             if side:
                 lbl = QLabel(text)
-                lbl.setStyleSheet("color: #888; padding: 0 8px; font-size: 12px;")
+                lbl.setStyleSheet("color: #7D809C; padding: 0 8px; font-size: 12px;")
                 row.addWidget(lbl)
         return w
 
     def _link_button(self, text: str) -> QPushButton:
         btn = QPushButton(text)
         btn.setFlat(True)
-        btn.setStyleSheet("QPushButton { color: #4f8cff; text-decoration: underline; border: none; }")
+        btn.setStyleSheet(
+            "QPushButton { color: #FCA311; background: transparent; border: none; }"
+        )
         return btn
 
     # ── Page builders ─────────────────────────────────────────────────────────
@@ -996,7 +998,7 @@ class LoginDialog(QDialog):
             "The app continues automatically when the browser finishes."
         )
         wix_tip.setWordWrap(True)
-        wix_tip.setStyleSheet("color: #888; font-size: 11px;")
+        wix_tip.setStyleSheet("color: #7D809C; font-size: 11px;")
         layout.addWidget(wix_tip)
 
         self._cancel_wait_btn = self._link_button("Cancel waiting")

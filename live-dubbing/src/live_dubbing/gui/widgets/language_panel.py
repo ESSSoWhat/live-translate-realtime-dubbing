@@ -75,7 +75,7 @@ class LanguagePanel(QWidget):
         self._info_label = QLabel(
             "Source language is auto-detected. Select your target language for translation."
         )
-        self._info_label.setStyleSheet("color: gray; font-size: 11px;")
+        self._info_label.setStyleSheet("color: #7D809C; font-size: 11px;")
         self._info_label.setWordWrap(True)
         group_layout.addWidget(self._info_label)
 

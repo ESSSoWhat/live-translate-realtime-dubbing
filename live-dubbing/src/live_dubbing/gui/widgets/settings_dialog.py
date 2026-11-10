@@ -63,7 +63,7 @@ class SettingsDialog(QDialog):
             "Note: Production builds always use the backend proxy.\n"
             "For local development, set LT_DEV_DIRECT_API=1 environment variable."
         )
-        note.setStyleSheet("color: gray; font-size: 10px; margin-top: 8px;")
+        note.setStyleSheet("color: #7D809C; font-size: 10px; margin-top: 8px;")
         note.setWordWrap(True)
         layout.addWidget(note)
 
