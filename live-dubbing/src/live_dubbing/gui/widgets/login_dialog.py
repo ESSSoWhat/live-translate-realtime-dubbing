@@ -706,11 +706,24 @@ class _WixSsoWorker(QThread):
 
         logger.info("Waiting for Wix SSO (handoff poll + localhost callback)…")
         result = None
-        remaining = 300.0
-        # Prefer short non-blocking polls. wait_for_token must not starve handoff checks —
-        # Wix cannot redirect to localhost, so backend handoff is the real path.
+        
+        # Hard timeout: 2 minutes (120 seconds) — stop polling even if user hasn't finished
+        HARD_TIMEOUT_SEC = 120.0
+        # Exponential backoff: start at 1s, double up to 8s max
+        BASE_INTERVAL_SEC = 1.0
+        MAX_INTERVAL_SEC = 8.0
+        
+        poll_interval = BASE_INTERVAL_SEC
+        elapsed = 0.0
+        poll_count = 0
+        success_received = False
+        
+        # Track active polling to prevent multiple concurrent handoff checks
         with httpx.Client(timeout=5.0) as client:
-            while remaining > 0 and not self.isInterruptionRequested():
+            while elapsed < HARD_TIMEOUT_SEC and not self.isInterruptionRequested() and not success_received:
+                poll_count += 1
+                
+                # Handoff poll with exponential backoff
                 try:
                     r = client.get(
                         f"{self._base_url}/api/v1/auth/desktop-handoff/{desktop_session}"
@@ -719,20 +732,57 @@ class _WixSsoWorker(QThread):
                         payload = r.json()
                         if payload.get("ready") and payload.get("api_key"):
                             result = {"api_key": payload["api_key"]}
+                            success_received = True
                             logger.info(
                                 "Wix SSO handoff received",
                                 session_prefix=desktop_session[:8],
+                                poll_count=poll_count,
+                                elapsed_sec=elapsed,
                             )
                             break
+                    elif r.status_code == 500:
+                        # Backend error — continue but log it
+                        logger.warning(
+                            "Handoff poll returned 500",
+                            poll_count=poll_count,
+                            detail=r.text[:200] if r.text else "",
+                        )
                 except Exception as exc:
-                    logger.debug("Handoff poll error", error=str(exc))
+                    logger.debug("Handoff poll error", error=str(exc), poll_count=poll_count)
 
                 # Fallback: localhost redirect (often blocked by Wix)
-                result = server.wait_for_token(timeout=0.5)
+                # Check briefly without blocking
+                result = server.wait_for_token(timeout=0.1)
                 if result is not None:
+                    success_received = True
+                    logger.info(
+                        "Localhost callback received",
+                        poll_count=poll_count,
+                        elapsed_sec=elapsed,
+                    )
                     break
-                remaining -= 0.5
+                
+                # Sleep for backoff interval (broken into small chunks to respect cancellation)
+                sleep_remaining = poll_interval
+                while sleep_remaining > 0 and not self.isInterruptionRequested() and not success_received:
+                    chunk = min(0.1, sleep_remaining)
+                    import time
+                    time.sleep(chunk)
+                    sleep_remaining -= chunk
+                    elapsed += chunk
+                
+                # Exponential backoff: double interval up to max
+                poll_interval = min(poll_interval * 2, MAX_INTERVAL_SEC)
+        
         server.stop()
+        
+        if not result and not self.isInterruptionRequested():
+            logger.warning(
+                "Handoff poll timed out",
+                poll_count=poll_count,
+                elapsed_sec=elapsed,
+                timeout_sec=HARD_TIMEOUT_SEC,
+            )
 
         if not result:
             self.error.emit(
@@ -820,7 +870,7 @@ class LoginDialog(QDialog):
 
         subtitle = QLabel("Real-time AI dubbing")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("color: #888; margin-bottom: 24px;")
+        subtitle.setStyleSheet("color: #7D809C; margin-bottom: 24px;")
         root.addWidget(subtitle)
 
         root.addSpacing(16)
@@ -854,9 +904,9 @@ class LoginDialog(QDialog):
         btn.setMinimumHeight(40)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         btn.setStyleSheet(
-            "QPushButton { background: #4f8cff; color: white; border-radius: 6px; font-weight: bold; }"
-            "QPushButton:hover { background: #3a72e0; }"
-            "QPushButton:disabled { background: #555; color: #999; }"
+            "QPushButton { background: #FCA311; color: #14213D; border-radius: 8px; font-weight: 600; }"
+            "QPushButton:hover { background: #FFC14D; }"
+            "QPushButton:disabled { background: #343749; color: #7D809C; }"
         )
         return btn
 
@@ -892,15 +942,15 @@ class LoginDialog(QDialog):
         btn.setStyleSheet(
             """
             QPushButton {
-                background: #0c6efc;
-                color: #fff;
+                background: #FCA311;
+                color: #14213D;
                 border: none;
-                border-radius: 6px;
-                font-weight: 500;
+                border-radius: 8px;
+                font-weight: 600;
                 font-size: 14px;
             }
-            QPushButton:hover { background: #0b5ed7; }
-            QPushButton:disabled { background: #555; color: #999; }
+            QPushButton:hover { background: #FFC14D; }
+            QPushButton:disabled { background: #343749; color: #7D809C; }
             """
         )
         btn.setText("Sign in with livetranslate.net")
@@ -914,18 +964,20 @@ class LoginDialog(QDialog):
         for side in (True, False):
             line = QFrame()
             line.setFrameShape(QFrame.Shape.HLine)
-            line.setStyleSheet("color: #444;")
+            line.setStyleSheet("color: #343749;")
             row.addWidget(line, 1)
             if side:
                 lbl = QLabel(text)
-                lbl.setStyleSheet("color: #888; padding: 0 8px; font-size: 12px;")
+                lbl.setStyleSheet("color: #7D809C; padding: 0 8px; font-size: 12px;")
                 row.addWidget(lbl)
         return w
 
     def _link_button(self, text: str) -> QPushButton:
         btn = QPushButton(text)
         btn.setFlat(True)
-        btn.setStyleSheet("QPushButton { color: #4f8cff; text-decoration: underline; border: none; }")
+        btn.setStyleSheet(
+            "QPushButton { color: #FCA311; background: transparent; border: none; }"
+        )
         return btn
 
     # ── Page builders ─────────────────────────────────────────────────────────
@@ -946,7 +998,7 @@ class LoginDialog(QDialog):
             "The app continues automatically when the browser finishes."
         )
         wix_tip.setWordWrap(True)
-        wix_tip.setStyleSheet("color: #888; font-size: 11px;")
+        wix_tip.setStyleSheet("color: #7D809C; font-size: 11px;")
         layout.addWidget(wix_tip)
 
         self._cancel_wait_btn = self._link_button("Cancel waiting")

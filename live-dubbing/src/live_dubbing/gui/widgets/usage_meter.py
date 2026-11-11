@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 
 if TYPE_CHECKING:
     from live_dubbing.config.settings import AppSettings
+from live_dubbing.gui.theme import ACCENT, ACCENT_HOVER, ACCENT_INK, DANGER, MUTED, progress_css
 
 logger = structlog.get_logger(__name__)
 
@@ -106,7 +107,7 @@ class UsageMeterWidget(QFrame):
         left.setSpacing(2)
 
         self._tier_label = QLabel("Free tier")
-        self._tier_label.setStyleSheet("font-size: 11px; color: #aaa;")
+        self._tier_label.setStyleSheet(f"font-size: 11px; color: {MUTED};")
         left.addWidget(self._tier_label)
 
         self._progress = QProgressBar()
@@ -114,14 +115,11 @@ class UsageMeterWidget(QFrame):
         self._progress.setTextVisible(False)
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
-        self._progress.setStyleSheet(
-            "QProgressBar { border-radius: 4px; background: #2a2a2a; }"
-            "QProgressBar::chunk { background: #4f8cff; border-radius: 4px; }"
-        )
+        self._progress.setStyleSheet(progress_css(ACCENT))
         left.addWidget(self._progress)
 
         self._usage_label = QLabel("Loading usage…")
-        self._usage_label.setStyleSheet("font-size: 10px; color: #777;")
+        self._usage_label.setStyleSheet(f"font-size: 10px; color: {MUTED};")
         left.addWidget(self._usage_label)
 
         layout.addLayout(left, stretch=1)
@@ -130,9 +128,9 @@ class UsageMeterWidget(QFrame):
         self._upgrade_btn = QPushButton("⬆ Upgrade")
         self._upgrade_btn.setMaximumWidth(90)
         self._upgrade_btn.setStyleSheet(
-            "QPushButton { background: #f0a020; color: black; border-radius: 5px; "
-            "font-weight: bold; font-size: 11px; padding: 4px 8px; }"
-            "QPushButton:hover { background: #e09010; }"
+            f"QPushButton {{ background: {ACCENT}; color: {ACCENT_INK}; border-radius: 8px; "
+            "font-weight: 600; font-size: 11px; padding: 4px 8px; }"
+            f"QPushButton:hover {{ background: {ACCENT_HOVER}; }}"
         )
         self._upgrade_btn.clicked.connect(self._on_upgrade_clicked)
         layout.addWidget(self._upgrade_btn)
@@ -235,22 +233,18 @@ class UsageMeterWidget(QFrame):
                 else f"You've used {pct}% of your minutes — upgrade"
             )
             self._usage_label.setText(msg)
-            self._usage_label.setStyleSheet("font-size: 10px; color: #f0a020; font-weight: bold;")
+            self._usage_label.setStyleSheet(
+                f"font-size: 10px; color: {ACCENT}; font-weight: bold;"
+            )
         else:
             self._usage_label.setText(f"{used_min} / {limit_min} min dubbed this month")
-            self._usage_label.setStyleSheet("font-size: 10px; color: #777;")
+            self._usage_label.setStyleSheet(f"font-size: 10px; color: {MUTED};")
 
         # Colour progress bar red when near limit
         if pct >= 90:
-            self._progress.setStyleSheet(
-                "QProgressBar { border-radius: 4px; background: #2a2a2a; }"
-                "QProgressBar::chunk { background: #e05555; border-radius: 4px; }"
-            )
+            self._progress.setStyleSheet(progress_css(DANGER))
         else:
-            self._progress.setStyleSheet(
-                "QProgressBar { border-radius: 4px; background: #2a2a2a; }"
-                "QProgressBar::chunk { background: #4f8cff; border-radius: 4px; }"
-            )
+            self._progress.setStyleSheet(progress_css(ACCENT))
 
     def set_tier(self, tier: str) -> None:
         """Set the displayed tier label and show/hide upgrade button."""

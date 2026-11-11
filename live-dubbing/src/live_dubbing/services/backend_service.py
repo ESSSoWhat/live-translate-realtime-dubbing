@@ -72,6 +72,7 @@ class BackendProxyService:
             base_url=self._base_url,
             timeout=60.0,
             headers={"User-Agent": "LiveTranslate-Desktop/1.0"},
+            follow_redirects=True,  # Handle 301/302 redirects automatically
         )
 
     def update_tokens(self, access_token: str, refresh_token: str = "") -> None:
@@ -145,12 +146,20 @@ class BackendProxyService:
 
         # Only attempt refresh when we have a refresh token (JWT flow); API key has none
         if response.status_code == 401 and retry_on_401 and (self._refresh_token or "").strip():
+            logger.info("Received 401, attempting token refresh", path=path)
             try:
                 await self._refresh_access_token()
                 kwargs["headers"].update(self._auth_headers())
                 response = await self._client.request(method, path, **kwargs)
+                if response.status_code == 401:
+                    # Refresh succeeded but still getting 401 — token is permanently invalid
+                    logger.error("Token refresh succeeded but still got 401", path=path)
+                    raise AuthExpiredException("Session expired — please log in again")
+                logger.info("Token refresh successful, request retried", path=path)
             except AuthExpiredException:
-                pass  # Re-raise after we check status below
+                # Token refresh failed — session is expired
+                logger.error("Token refresh failed", path=path)
+                raise
 
         if response.status_code == 402:
             try:
@@ -166,6 +175,8 @@ class BackendProxyService:
             )
 
         if response.status_code == 401:
+            # Final 401 after potential retry — session expired
+            logger.error("Authentication failed", path=path, retried=not retry_on_401)
             raise AuthExpiredException("Session expired — please log in again")
 
         if response.status_code >= 500:
@@ -362,15 +373,37 @@ class BackendProxyService:
         description: str | None = None,
         filename: str = "audio.wav",
     ) -> str:
-        """Clone a voice and return the new voice_id."""
-        response = await self._request(
-            "POST",
-            "/api/v1/proxy/clone-voice",
-            files={"audio": (filename, io.BytesIO(audio_data), "audio/wav")},
-            data={"name": name, "description": description or ""},
-            headers={},
-        )
-        return response.json()["voice_id"]
+        """Clone a voice and return the new voice_id.
+        
+        Raises:
+            RuntimeError: With user-friendly message on 502 (server timeout/gateway error)
+        """
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/proxy/clone-voice",
+                files={"audio": (filename, io.BytesIO(audio_data), "audio/wav")},
+                data={"name": name, "description": description or ""},
+                headers={},
+            )
+            return response.json()["voice_id"]
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 502:
+                # 502 Bad Gateway — upstream timeout or connection failure
+                logger.error("Voice cloning failed with 502", name=name)
+                raise RuntimeError(
+                    "Voice cloning failed: the server did not respond in time.\n\n"
+                    "This usually means:\n"
+                    "• The audio file is too large or complex\n"
+                    "• The backend's ElevenLabs request timed out\n"
+                    "• Temporary network issue between backend and ElevenLabs\n\n"
+                    "You can:\n"
+                    "• Try again with a shorter audio clip (3-10 seconds)\n"
+                    "• Use a default voice instead\n"
+                    "• Check if the backend is healthy"
+                )
+            # Re-raise other HTTP errors
+            raise
 
     async def clone_voice_from_file(
         self,
@@ -414,6 +447,54 @@ class BackendProxyService:
         return bool(self._access_token)
 
     async def get_usage(self) -> dict:
-        """Fetch current usage snapshot for the logged-in user."""
-        response = await self._request("GET", "/api/v1/user/usage", headers={})
-        return response.json()
+        """Fetch current usage snapshot for the logged-in user.
+        
+        Retries on 5xx/503 errors with exponential backoff. Skips if signed out.
+        """
+        # Don't call usage endpoint when signed out (no token)
+        if not self._access_token:
+            logger.debug("Skipping usage fetch — not signed in")
+            return {}
+        
+        max_retries = 3
+        base_delay = 1.0
+        
+        for attempt in range(max_retries):
+            try:
+                response = await self._request("GET", "/api/v1/user/usage", headers={})
+                return response.json()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                
+                # Don't retry on client errors (except 401, which _request handles)
+                if 400 <= status < 500 and status != 401:
+                    logger.warning("Usage fetch failed with client error", status=status)
+                    return {}
+                
+                # Retry on 5xx errors
+                if status >= 500 and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(
+                        "Usage fetch failed, retrying",
+                        status=status,
+                        attempt=attempt + 1,
+                        retry_in_sec=delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                
+                # Final retry failed
+                logger.error("Usage fetch failed after retries", status=status, attempts=attempt + 1)
+                return {}
+            except AuthExpiredException:
+                # Token expired — don't retry, let caller handle re-login
+                logger.warning("Usage fetch failed — auth expired")
+                raise
+            except Exception as exc:
+                logger.warning("Usage fetch error", error=str(exc), attempt=attempt + 1)
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(base_delay * (2 ** attempt))
+                    continue
+                return {}
+        
+        return {}

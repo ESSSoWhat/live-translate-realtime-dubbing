@@ -25,6 +25,7 @@ class UsageReporter:
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
         self._shutdown = False
+        self._pending_reports: set[asyncio.Task] = set()  # Track background report tasks
 
     async def _client_or_new(self) -> httpx.AsyncClient | None:
         async with self._client_lock:
@@ -42,9 +43,21 @@ class UsageReporter:
             return self._client
 
     async def aclose(self) -> None:
-        """Close the HTTP client and release resources."""
+        """Close the HTTP client and release resources. Cancels all pending reports."""
         async with self._client_lock:
             self._shutdown = True
+        
+        # Cancel all pending report tasks
+        for task in self._pending_reports:
+            task.cancel()
+        
+        # Wait for cancellations to complete
+        if self._pending_reports:
+            await asyncio.gather(*self._pending_reports, return_exceptions=True)
+            self._pending_reports.clear()
+        
+        # Close HTTP client
+        async with self._client_lock:
             if self._client is not None:
                 await self._client.aclose()
                 self._client = None
@@ -53,7 +66,10 @@ class UsageReporter:
         """Report usage asynchronously; does not block. Ignores errors."""
         if event_type not in VALID_EVENT_TYPES or quantity <= 0:
             return
-        asyncio.create_task(self._report_async(event_type, quantity))
+        task = asyncio.create_task(self._report_async(event_type, quantity))
+        self._pending_reports.add(task)
+        # Remove from set when done (prevents memory leak for long-running sessions)
+        task.add_done_callback(self._pending_reports.discard)
 
     async def _report_async(self, event_type: str, quantity: int) -> None:
         """POST usage to backend; log and discard on failure."""

@@ -234,6 +234,66 @@ class ElevenLabsService:
         with open(file_path, "rb") as f:
             audio_data = f.read()
         return await self.clone_voice(audio_data, name, description)
+    
+    async def _retry_with_backoff(self, func, operation_name: str, max_retries: int = 3):
+        """Retry an operation with exponential backoff on 429 rate limit errors.
+        
+        Args:
+            func: Coroutine or callable to retry
+            operation_name: Name for logging
+            max_retries: Maximum retry attempts
+            
+        Returns:
+            Result from func
+            
+        Raises:
+            RuntimeError: If rate limit persists after retries
+            Original exception: For non-rate-limit errors
+        """
+        base_delay = 1.0
+        
+        for attempt in range(max_retries):
+            try:
+                # Check if func is a coroutine or callable
+                import inspect
+                if inspect.iscoroutinefunction(func) or inspect.iscoroutine(func):
+                    return await func
+                else:
+                    return await asyncio.to_thread(func)
+            except Exception as e:
+                error_str = str(e).lower()
+                
+                # Check for rate limit errors (429, "rate_limit", "too many requests")
+                is_rate_limit = any(
+                    marker in error_str
+                    for marker in ["rate", "429", "too many", "quota"]
+                )
+                
+                if is_rate_limit and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"{operation_name} rate limited, retrying",
+                        attempt=attempt + 1,
+                        retry_in_sec=delay,
+                        error=error_str[:100],
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                elif is_rate_limit:
+                    logger.error(
+                        f"{operation_name} rate limit exceeded after retries",
+                        attempts=max_retries,
+                    )
+                    raise RuntimeError(
+                        f"Rate limit exceeded for {operation_name}. "
+                        "Please wait a moment and try again, or use the backend proxy "
+                        "(disable 'Prefer direct API' in settings)."
+                    )
+                
+                # Not a rate limit error, re-raise immediately
+                raise
+        
+        raise RuntimeError(f"{operation_name} failed after {max_retries} retries")
 
     async def transcribe(
         self,
@@ -254,19 +314,22 @@ class ElevenLabsService:
             # Use async client for proper timeout handling
             client = self._get_async_client()
 
-            # Use speech-to-text endpoint with timeout
-            try:
-                result = await asyncio.wait_for(
-                    client.speech_to_text.convert(
-                        file=("audio.wav", audio_data),
-                        model_id="scribe_v2",
-                        language_code=language if language and language != "auto" else None,
-                    ),
-                    timeout=15.0  # 15 second timeout - asyncio can cancel async calls
-                )
-            except asyncio.TimeoutError as e:
-                logger.error("Transcription timed out after 15s")
-                raise RuntimeError("Transcription timed out") from e
+            # Define transcription operation with retry on rate limit
+            async def _do_transcribe():
+                try:
+                    return await asyncio.wait_for(
+                        client.speech_to_text.convert(
+                            file=("audio.wav", audio_data),
+                            model_id="scribe_v2",
+                            language_code=language if language and language != "auto" else None,
+                        ),
+                        timeout=15.0  # 15 second timeout - asyncio can cancel async calls
+                    )
+                except asyncio.TimeoutError as e:
+                    logger.error("Transcription timed out after 15s")
+                    raise RuntimeError("Transcription timed out") from e
+            
+            result = await self._retry_with_backoff(_do_transcribe, "transcribe")
 
             logger.info("Transcription completed", text_len=len(result.text) if result.text else 0)
 
@@ -348,28 +411,32 @@ class ElevenLabsService:
             if client is None:
                 return None  # No OpenAI available, caller should try fallback
 
-            response = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": f"You are a translator. Translate the following text to {target_lang_name}. "
-                                       f"Only output the translated text, nothing else. "
-                                       f"Preserve the tone and style of the original. "
-                                       f"Remove any non-verbal markers like [MUSIC], (laughter), [PAUSE], ♪, etc. "
-                                       f"Only output spoken words."
-                        },
-                        {
-                            "role": "user",
-                            "content": text
-                        }
-                    ],
-                    temperature=0.3,
-                    max_tokens=500,
-                ),
-                timeout=10.0,
-            )
+            # Wrap OpenAI call with retry logic for rate limits
+            async def _do_openai_translate():
+                return await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": f"You are a translator. Translate the following text to {target_lang_name}. "
+                                           f"Only output the translated text, nothing else. "
+                                           f"Preserve the tone and style of the original. "
+                                           f"Remove any non-verbal markers like [MUSIC], (laughter), [PAUSE], ♪, etc. "
+                                           f"Only output spoken words."
+                            },
+                            {
+                                "role": "user",
+                                "content": text
+                            }
+                        ],
+                        temperature=0.3,
+                        max_tokens=500,
+                    ),
+                    timeout=10.0,
+                )
+            
+            response = await self._retry_with_backoff(_do_openai_translate, "OpenAI translate")
 
             content = response.choices[0].message.content
             translated = content.strip() if content else text
@@ -485,7 +552,7 @@ class ElevenLabsService:
 
             vs = VoiceSettings(stability=stability, similarity_boost=similarity_boost)
 
-            # TTS synthesis - run in thread pool to avoid blocking async loop
+            # TTS synthesis with retry on rate limit
             def _synthesize() -> Any:
                 return client.text_to_speech.convert(
                     text=text,
@@ -496,7 +563,7 @@ class ElevenLabsService:
                     request_options={"timeout_in_seconds": 30},
                 )
 
-            audio = await asyncio.to_thread(_synthesize)
+            audio = await self._retry_with_backoff(_synthesize, "synthesize")
 
             # SDK returns Iterator[bytes]; handle bytes or iterator
             if isinstance(audio, bytes):

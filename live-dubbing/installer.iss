@@ -47,10 +47,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "installvbcable"; Description: "Install VB-Audio Virtual Cable (recommended for play-as-mic)"; GroupDescription: "Optional components:"; Flags: unchecked
 
 [Files]
-; Main application files from PyInstaller output
-Source: "dist\LiveTranslate\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-; API key config (bundled next to exe so the app finds it on any machine)
-Source: ".env"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+; Main application files from PyInstaller output (exclude secrets)
+Source: "dist\LiveTranslate\*"; DestDir: "{app}"; Excludes: ".env,*.env,account.json,*secret*,*credential*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

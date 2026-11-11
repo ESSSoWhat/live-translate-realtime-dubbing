@@ -132,7 +132,7 @@ class DetectionPage(WizardPage):
 
         if found:
             self._result_icon.setText("✓")
-            self._result_icon.setStyleSheet("color: #4CAF50; font-size: 48px;")
+            self._result_icon.setStyleSheet("color: #97C693; font-size: 48px;")
             self._result_text.setText(
                 "Virtual cable is installed.\n\n"
                 "Click Next to configure audio routing."
@@ -140,7 +140,7 @@ class DetectionPage(WizardPage):
             self._status_label.setText("Virtual cable detected.")
         else:
             self._result_icon.setText("✗")
-            self._result_icon.setStyleSheet("color: #f44336; font-size: 48px;")
+            self._result_icon.setStyleSheet("color: #9C2426; font-size: 48px;")
             self._result_text.setText(
                 "VB-Audio Virtual Cable is not installed.\n\n"
                 "Click Next to download and install it."
@@ -173,14 +173,14 @@ class InstallPage(WizardPage):
         download_btn.setMinimumHeight(40)
         download_btn.setStyleSheet("""
             QPushButton {
-                background-color: #2196F3;
-                color: white;
+                background-color: #FCA311;
+                color: #14213D;
                 font-size: 14px;
-                font-weight: bold;
-                border-radius: 5px;
+                font-weight: 600;
+                border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: #1976D2;
+                background-color: #FFC14D;
             }
         """)
         download_btn.clicked.connect(self._open_download_page)
@@ -191,17 +191,18 @@ class InstallPage(WizardPage):
         bundled_btn.setToolTip("Run the VB-Cable installer bundled with this app")
         bundled_btn.setStyleSheet("""
             QPushButton {
-                background-color: #4CAF50;
-                color: white;
+                background-color: #FCA311;
+                color: #14213D;
                 font-size: 14px;
-                font-weight: bold;
-                border-radius: 5px;
+                font-weight: 600;
+                border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: #45a049;
+                background-color: #FFC14D;
             }
             QPushButton:disabled {
-                background-color: #666;
+                background-color: #343749;
+                color: #7D809C;
             }
         """)
         bundled_btn.clicked.connect(self._run_bundled_installer)
@@ -400,13 +401,13 @@ class FallbackPage(WizardPage):
         fallback_btn = QPushButton("Use System Audio (Not Recommended)")
         fallback_btn.setStyleSheet("""
             QPushButton {
-                background-color: #FF9800;
-                color: white;
+                background-color: #FCA311;
+                color: #14213D;
                 font-size: 14px;
                 border-radius: 5px;
             }
             QPushButton:hover {
-                background-color: #F57C00;
+                background-color: #FFC14D;
             }
         """)
         fallback_btn.clicked.connect(self.use_fallback.emit)
@@ -425,7 +426,7 @@ class CompletePage(WizardPage):
         self._layout.addWidget(title)
 
         icon = QLabel("✓")
-        icon.setStyleSheet("color: #4CAF50; font-size: 64px;")
+        icon.setStyleSheet("color: #97C693; font-size: 64px;")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._layout.addWidget(icon)
 

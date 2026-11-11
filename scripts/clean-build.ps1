@@ -1,0 +1,197 @@
+﻿# Clean Build Script for Live Translate
+# Ensures a clean PyInstaller build with no duplicate dependencies
+
+param(
+    [switch]$Build = $false,
+    [switch]$Installer = $false,
+    [switch]$CleanVenv = $false,
+    [switch]$NoPrompt = $false
+)
+
+$ErrorActionPreference = "Stop"
+$workspaceRoot = Split-Path -Parent $PSScriptRoot
+$liveDubbingDir = Join-Path $workspaceRoot "live-dubbing"
+
+Write-Host "`n━━━ Live Translate Clean Build ━━━`n" -ForegroundColor Cyan
+
+Push-Location $liveDubbingDir
+try {
+    # Step 1: Clean previous build artifacts
+    Write-Host "Cleaning previous build artifacts..." -ForegroundColor Yellow
+    if (Test-Path "build") {
+        Remove-Item -Path "build" -Recurse -Force
+        Write-Host "  ✓ Removed build/" -ForegroundColor Gray
+    }
+    if (Test-Path "dist") {
+        Remove-Item -Path "dist" -Recurse -Force
+        Write-Host "  ✓ Removed dist/" -ForegroundColor Gray
+    }
+    
+    # Step 2: Clean venv (optional but recommended)
+    if ($NoPrompt) {
+        $cleanVenvResponse = if ($CleanVenv) { "y" } else { "n" }
+    } else {
+        $cleanVenvResponse = Read-Host "`nClean and recreate venv to ensure no duplicate packages? (y/N)"
+    }
+    if ($cleanVenvResponse -eq "y" -or $cleanVenvResponse -eq "Y") {
+        Write-Host "Cleaning venv..." -ForegroundColor Yellow
+        if (Test-Path "venv") {
+            Remove-Item -Path "venv" -Recurse -Force
+            Write-Host "  ✓ Removed venv/" -ForegroundColor Gray
+        }
+        
+        Write-Host "Creating fresh venv..." -ForegroundColor Green
+        python -m venv venv
+        & ".\venv\Scripts\Activate.ps1"
+        
+        Write-Host "Installing CPU-only torch for distribution..." -ForegroundColor Green
+        pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --quiet
+        
+        Write-Host "Installing package..." -ForegroundColor Green
+        pip install -e . --quiet
+        
+        Write-Host "Installing PyInstaller..." -ForegroundColor Green
+        pip install pyinstaller --quiet
+    } else {
+        Write-Host "Activating existing venv..." -ForegroundColor Gray
+        & ".\venv\Scripts\Activate.ps1"
+    }
+    
+    # Step 3: Verify no duplicate packages
+    Write-Host "`nChecking for duplicate package versions..." -ForegroundColor Cyan
+    $packages = @("numpy", "elevenlabs", "websockets", "structlog", "attrs", "click", "importlib_metadata", "setuptools")
+    $hasDuplicates = $false
+    
+    foreach ($pkg in $packages) {
+        $versions = pip list --format=freeze | Select-String "^$pkg==" | ForEach-Object { $_.ToString() }
+        if ($versions.Count -gt 1) {
+            Write-Host "  ⚠ Multiple versions of $pkg found:" -ForegroundColor Yellow
+            $versions | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+            $hasDuplicates = $true
+        }
+    }
+    
+    if ($hasDuplicates) {
+        Write-Host "`n⚠ Duplicate packages detected. Clean and recreate venv recommended." -ForegroundColor Yellow
+        if ($NoPrompt) {
+            Write-Host "  Continuing anyway (NoPrompt mode)..." -ForegroundColor Yellow
+        } else {
+            $continue = Read-Host "Continue anyway? (y/N)"
+            if ($continue -ne "y" -and $continue -ne "Y") {
+                Write-Host "Build cancelled." -ForegroundColor Red
+                exit 1
+            }
+        }
+    } else {
+        Write-Host "  ✓ No duplicate packages found" -ForegroundColor Green
+    }
+    
+    # Step 4: Build with PyInstaller
+    if ($Build) {
+        Write-Host "`n━━━ Building with PyInstaller ━━━`n" -ForegroundColor Cyan
+        
+        # Set FFMPEG_DIR if ffmpeg is in WinGet location
+        if (-not $env:FFMPEG_DIR) {
+            $wingetFfmpeg = "C:\Users\$env:USERNAME\AppData\Local\Microsoft\WinGet\Links"
+            if (Test-Path "$wingetFfmpeg\ffmpeg.exe") {
+                $env:FFMPEG_DIR = $wingetFfmpeg
+                Write-Host "Using ffmpeg from: $wingetFfmpeg" -ForegroundColor Gray
+            }
+        }
+        
+        pyinstaller live_translate.spec --noconfirm
+        
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "`n✗ PyInstaller build failed" -ForegroundColor Red
+            exit $LASTEXITCODE
+        }
+        
+        Write-Host "`n✓ PyInstaller build complete" -ForegroundColor Green
+        Write-Host "Output: dist\LiveTranslate\" -ForegroundColor Gray
+        
+        # Show bundle size
+        $bundleSize = (Get-ChildItem -Path "dist\LiveTranslate" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
+        Write-Host "Bundle size: $([math]::Round($bundleSize, 2)) MB" -ForegroundColor Cyan
+        
+        # Security check: ensure no .env files in dist
+        Write-Host "`nSecurity check: .env files..." -ForegroundColor Yellow
+        $envFiles = Get-ChildItem -Path "dist\LiveTranslate" -Recurse -Filter "*.env" -Force
+        $envFiles += Get-ChildItem -Path "dist\LiveTranslate" -Recurse -Filter ".env" -Force
+        if ($envFiles) {
+            Write-Host "✗ SECURITY ERROR: Found .env files in dist:" -ForegroundColor Red
+            $envFiles | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+            exit 1
+        }
+        Write-Host "  ✓ No .env files found in dist" -ForegroundColor Green
+    }
+    
+    # Step 5: Build installer
+    if ($Installer) {
+        Write-Host "`n━━━ Building Installer ━━━`n" -ForegroundColor Cyan
+        
+        if (-not (Test-Path "dist\LiveTranslate\LiveTranslate.exe")) {
+            Write-Host "✗ dist\LiveTranslate\LiveTranslate.exe not found. Run with -Build first." -ForegroundColor Red
+            exit 1
+        }
+        
+        $innoPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+        if (-not (Test-Path $innoPath)) {
+            Write-Host "✗ Inno Setup not found at: $innoPath" -ForegroundColor Red
+            Write-Host "Install from: https://jrsoftware.org/isdl.php" -ForegroundColor Yellow
+            exit 1
+        }
+        
+        & $innoPath "installer.iss"
+        
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "`n✗ Installer build failed" -ForegroundColor Red
+            exit $LASTEXITCODE
+        }
+        
+        Write-Host "`n✓ Installer build complete" -ForegroundColor Green
+        
+        # Find installer file
+        $installerFile = Get-ChildItem -Path "dist" -Filter "LiveTranslate-*-Setup.exe" | Select-Object -First 1
+        if ($installerFile) {
+            Write-Host "Output: $($installerFile.Name)" -ForegroundColor Gray
+            Write-Host "Size: $([math]::Round($installerFile.Length/1MB,2)) MB" -ForegroundColor Cyan
+            
+            # Security check: verify no .env in installer
+            Write-Host "`nSecurity check: .env in installer..." -ForegroundColor Yellow
+            
+            # Try innounp first, then 7-Zip
+            $innounpPath = Get-Command innounp -ErrorAction SilentlyContinue
+            $sevenZipPath = "C:\Program Files\7-Zip\7z.exe"
+            
+            if ($innounpPath) {
+                Write-Host "  Using innounp to list installer contents..." -ForegroundColor Gray
+                $listOutput = & innounp -v $installerFile.FullName 2>&1 | Out-String
+                if ($listOutput -match "\.env") {
+                    Write-Host "✗ SECURITY ERROR: Installer contains .env files!" -ForegroundColor Red
+                    Write-Host $listOutput -ForegroundColor Red
+                    exit 1
+                }
+                Write-Host "  ✓ No .env files found in installer" -ForegroundColor Green
+            }
+            elseif (Test-Path $sevenZipPath) {
+                Write-Host "  Using 7-Zip to list installer contents..." -ForegroundColor Gray
+                $listOutput = & $sevenZipPath l $installerFile.FullName 2>&1 | Out-String
+                if ($listOutput -match "\.env") {
+                    Write-Host "✗ SECURITY ERROR: Installer contains .env files!" -ForegroundColor Red
+                    Write-Host ($listOutput -split "`n" | Select-String "\.env") -ForegroundColor Red
+                    exit 1
+                }
+                Write-Host "  ✓ No .env files found in installer" -ForegroundColor Green
+            }
+            else {
+                Write-Host "  ⚠ innounp and 7-Zip not found, skipping installer contents check" -ForegroundColor Yellow
+                Write-Host "  Install innounp or 7-Zip to verify installer contents" -ForegroundColor Gray
+            }
+        }
+    }
+    
+    Write-Host "`n✓ Clean build complete!" -ForegroundColor Green
+    
+} finally {
+    Pop-Location
+}

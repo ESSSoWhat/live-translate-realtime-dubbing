@@ -1,7 +1,7 @@
 """
 Floating always-on-top Live Translate overlay HUD.
 
-Collapsed: a cyan bubble. Expanded: captions plus session controls
+Collapsed: a gold bubble. Expanded: captions plus session controls
 (status, voice, volume, mute, clone, stop, home), matching the mobile overlay.
 """
 
@@ -39,11 +39,13 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-_CYAN = "#68F8F8"
-_NAVY = "#000810"
-_NAVY_SURFACE = "#001020"
-_ON_SURFACE = "#E8F7FF"
-_MUTED = "#8AA4B5"
+_CYAN = "#FCA311"
+_NAVY = "#151723"
+_NAVY_SURFACE = "#1B1D2B"
+_ON_SURFACE = "#9195BB"
+_MUTED = "#7D809C"
+_LINE = "#343749"
+_INK = "#14213D"
 
 _COLLAPSED = 96
 _EXPANDED_WIDTH = 320
@@ -74,7 +76,7 @@ class _BubbleButton(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(_CYAN))
         painter.drawEllipse(rect)
-        painter.setPen(QColor(_NAVY))
+        painter.setPen(QColor(_INK))
         font = QFont()
         font.setBold(True)
         font.setPointSize(16)
@@ -197,10 +199,10 @@ class _CaptionPane(QWidget):
         self._apply_text_style()
 
     def _apply_text_style(self) -> None:
-        color = f"rgba(232, 247, 255, {self._text_alpha})"
+        color = f"rgba(145, 149, 187, {self._text_alpha})"
         self._text.setStyleSheet(
             f"background-color: {_NAVY}; color: {color}; "
-            f"border: 1px solid #003050; border-radius: 6px; padding: 6px;"
+            f"border: 1px solid {_LINE}; border-radius: 6px; padding: 6px;"
         )
 
     def _on_slider_changed(self, value: int) -> None:
@@ -245,7 +247,7 @@ class _CaptionPane(QWidget):
         cursor.setPosition(start)
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         fmt = QTextCharFormat()
-        fmt.setBackground(QColor("#0A4A68"))
+        fmt.setBackground(QColor("#3A2E14"))
         fmt.setForeground(QColor(_CYAN))
         selection = QTextEdit.ExtraSelection()
         selection.format = fmt
@@ -360,7 +362,7 @@ class DubbedWindow(QWidget):
             f"""
             QWidget#overlayPanel {{
                 background-color: {_NAVY_SURFACE};
-                border: 1px solid #003050;
+                border: 1px solid {_LINE};
                 border-radius: 16px;
             }}
             QLabel {{
@@ -369,33 +371,34 @@ class DubbedWindow(QWidget):
             QComboBox {{
                 background-color: {_NAVY};
                 color: {_ON_SURFACE};
-                border: 1px solid #003050;
+                border: 1px solid {_LINE};
                 border-radius: 4px;
                 padding: 4px 8px;
             }}
             QTextEdit {{
                 background-color: {_NAVY};
                 color: {_ON_SURFACE};
-                border: 1px solid #003050;
+                border: 1px solid {_LINE};
                 border-radius: 6px;
                 padding: 6px;
             }}
             QPushButton {{
-                background-color: #002040;
+                background-color: {_NAVY};
                 color: {_ON_SURFACE};
-                border: 1px solid #003050;
+                border: 1px solid {_LINE};
                 border-radius: 6px;
                 padding: 6px 10px;
             }}
             QPushButton:hover {{
-                background-color: #003050;
+                background-color: {_LINE};
+                color: {_CYAN};
             }}
             QPushButton:disabled {{
                 color: {_MUTED};
             }}
             QSlider::groove:horizontal {{
                 height: 4px;
-                background: #002040;
+                background: {_LINE};
                 border-radius: 2px;
             }}
             QSlider::handle:horizontal {{
@@ -406,7 +409,7 @@ class DubbedWindow(QWidget):
             }}
             QSlider::groove:vertical {{
                 width: 4px;
-                background: #002040;
+                background: {_LINE};
                 border-radius: 2px;
             }}
             QSlider::handle:vertical {{
@@ -509,7 +512,7 @@ class DubbedWindow(QWidget):
                 border-radius: 6px;
                 padding: 6px 12px;
             }}
-            QPushButton:hover {{ background-color: #9AFFFF; }}
+            QPushButton:hover {{ background-color: #FFC14D; }}
             """
         )
         self._stop_btn.clicked.connect(self.stop_requested.emit)

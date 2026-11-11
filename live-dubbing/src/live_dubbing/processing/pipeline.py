@@ -285,6 +285,7 @@ class ProcessingPipeline:
 
         # Tasks
         self._tasks: list[asyncio.Task] = []
+        self._background_tasks: set[asyncio.Task] = set()  # Track voice clone/background tasks
 
         # Dedicated thread pool for VAD (single thread to avoid PyTorch threading issues)
         self._vad_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vad")
@@ -424,6 +425,13 @@ class ProcessingPipeline:
         # Wait for tasks to finish
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
+
+        # Cancel and wait for background tasks (voice cloning, etc.)
+        for task in self._background_tasks:
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
         # Clear queues
         self._clear_queues()
@@ -690,10 +698,14 @@ class ProcessingPipeline:
                         if self._is_cloning_in_background:
                             # Initial auto-clone: swap active voice from fallback
                             self._is_cloning_in_background = False
-                            asyncio.create_task(self._run_voice_clone())
+                            task = asyncio.create_task(self._run_voice_clone())
+                            self._background_tasks.add(task)
+                            task.add_done_callback(self._background_tasks.discard)
                         else:
                             # Manual capture: clone and add to cache without auto-activating
-                            asyncio.create_task(self._run_manual_voice_clone())
+                            task = asyncio.create_task(self._run_manual_voice_clone())
+                            self._background_tasks.add(task)
+                            task.add_done_callback(self._background_tasks.discard)
 
                 # Always process speech for STT/translate/TTS (even during cloning)
                 if self._state == PipelineState.PROCESSING:
