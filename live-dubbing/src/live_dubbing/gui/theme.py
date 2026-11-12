@@ -1,6 +1,7 @@
-"""Live Translate desktop theme, matched to the live site and Dubtool.
+"""Live Translate desktop theme, matched to the app logo the way Dubtool is.
 
-Colors are the livetranslate.net theme tokens: indigo surfaces and the gold action color.
+The mark is a cyan globe on near-black navy. Surfaces stay in that navy,
+and actions use the logo's cyan.
 """
 
 from __future__ import annotations
@@ -8,21 +9,21 @@ from __future__ import annotations
 from PyQt6.QtGui import QColor, QFont, QPalette
 from PyQt6.QtWidgets import QApplication
 
-# Site tokens: background, panel, line, muted, text, action, button ink.
-BG = "#151723"
-PANEL = "#1B1D2B"
-FIELD = "#10121C"
-LINE = "#343749"
-TEXT = "#9195BB"
-MUTED = "#7D809C"
-ACCENT = "#FCA311"
-ACCENT_HOVER = "#FFC14D"
-ACCENT_INK = "#14213D"
-OK = "#97C693"
+# Sampled from the logo, same roles Dubtool uses for its mark.
+BG = "#04080F"
+PANEL = "#0B1C30"
+FIELD = "#071421"
+LINE = "#1C5878"
+TEXT = "#E7F6FF"
+MUTED = "#8EB8CC"
+ACCENT = "#3FD4FF"
+ACCENT_HOVER = "#68E4FF"
+ACCENT_INK = "#04202C"
+OK = "#7DDEC8"
 WARN = "#E2C16A"
-DANGER = "#9C2426"
-DANGER_HOVER = "#C43A3C"
-GLOW = "#2A3150"
+DANGER = "#FF8B8B"
+DANGER_HOVER = "#FFB0B0"
+GLOW = "#0E4D73"
 
 APP_STYLESHEET = f"""
 QMainWindow, QDialog {{
@@ -98,7 +99,7 @@ QLineEdit, QTextEdit, QPlainTextEdit, QListWidget, QComboBox, QSpinBox {{
     border: 1px solid {LINE};
     border-radius: 8px;
     padding: 6px 8px;
-    selection-background-color: rgba(252, 163, 17, 0.28);
+    selection-background-color: rgba(63, 212, 255, 0.28);
     selection-color: {ACCENT_INK};
 }}
 QComboBox::drop-down {{
@@ -109,7 +110,7 @@ QComboBox QAbstractItemView {{
     background: {PANEL};
     color: {TEXT};
     border: 1px solid {LINE};
-    selection-background-color: rgba(252, 163, 17, 0.28);
+    selection-background-color: rgba(63, 212, 255, 0.28);
     selection-color: {ACCENT_INK};
     outline: none;
 }}
@@ -118,11 +119,11 @@ QListWidget::item {{
     border-bottom: 1px solid {LINE};
 }}
 QListWidget::item:selected {{
-    background: rgba(252, 163, 17, 0.22);
+    background: rgba(63, 212, 255, 0.22);
     color: {TEXT};
 }}
 QListWidget::item:hover {{
-    background: rgba(252, 163, 17, 0.10);
+    background: rgba(63, 212, 255, 0.10);
 }}
 QCheckBox {{
     color: {TEXT};
@@ -176,7 +177,7 @@ QMenu {{
     padding: 4px;
 }}
 QMenu::item:selected {{
-    background: rgba(252, 163, 17, 0.22);
+    background: rgba(63, 212, 255, 0.22);
 }}
 QScrollBar:vertical {{
     background: transparent;
@@ -200,7 +201,7 @@ QToolTip {{
 
 
 def button_css(fill: str, ink: str, hover: str, *, size: str = "") -> str:
-    """A solid button in the site palette. White text fails on the gold action color."""
+    """A solid button. Cyan and the light danger color both need the dark ink."""
     size_rule = f"font-size: {size};" if size else ""
     return (
         "QPushButton {"
@@ -213,7 +214,7 @@ def button_css(fill: str, ink: str, hover: str, *, size: str = "") -> str:
 
 
 def progress_css(chunk: str) -> str:
-    """Progress bar on the site field color."""
+    """Progress bar on the navy field color."""
     return (
         "QProgressBar {"
         f"border: 1px solid {LINE}; border-radius: 6px; text-align: center;"
@@ -224,7 +225,7 @@ def progress_css(chunk: str) -> str:
 
 
 def apply_theme(app: QApplication) -> None:
-    """Apply the site palette to the whole desktop app."""
+    """Apply the logo palette to the whole desktop app."""
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 10))
     palette = app.palette()

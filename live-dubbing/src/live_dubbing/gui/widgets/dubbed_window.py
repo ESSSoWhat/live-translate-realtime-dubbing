@@ -39,13 +39,13 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-_CYAN = "#FCA311"
-_NAVY = "#151723"
-_NAVY_SURFACE = "#1B1D2B"
-_ON_SURFACE = "#9195BB"
-_MUTED = "#7D809C"
-_LINE = "#343749"
-_INK = "#14213D"
+_CYAN = "#3FD4FF"
+_NAVY = "#04080F"
+_NAVY_SURFACE = "#0B1C30"
+_ON_SURFACE = "#E7F6FF"
+_MUTED = "#8EB8CC"
+_LINE = "#1C5878"
+_INK = "#04202C"
 
 _COLLAPSED = 96
 _EXPANDED_WIDTH = 320
@@ -199,7 +199,7 @@ class _CaptionPane(QWidget):
         self._apply_text_style()
 
     def _apply_text_style(self) -> None:
-        color = f"rgba(145, 149, 187, {self._text_alpha})"
+        color = f"rgba(231, 246, 255, {self._text_alpha})"
         self._text.setStyleSheet(
             f"background-color: {_NAVY}; color: {color}; "
             f"border: 1px solid {_LINE}; border-radius: 6px; padding: 6px;"
@@ -247,7 +247,7 @@ class _CaptionPane(QWidget):
         cursor.setPosition(start)
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         fmt = QTextCharFormat()
-        fmt.setBackground(QColor("#3A2E14"))
+        fmt.setBackground(QColor("#0A4A68"))
         fmt.setForeground(QColor(_CYAN))
         selection = QTextEdit.ExtraSelection()
         selection.format = fmt
@@ -512,7 +512,7 @@ class DubbedWindow(QWidget):
                 border-radius: 6px;
                 padding: 6px 12px;
             }}
-            QPushButton:hover {{ background-color: #FFC14D; }}
+            QPushButton:hover {{ background-color: #68E4FF; }}
             """
         )
         self._stop_btn.clicked.connect(self.stop_requested.emit)

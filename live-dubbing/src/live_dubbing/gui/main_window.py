@@ -249,7 +249,7 @@ class MainWindow(QMainWindow):
         self._api_banner.setStyleSheet(
             f"""
             QFrame {{
-                background-color: #2A2414;
+                background-color: #0A2438;
                 border: 1px solid {ACCENT};
                 border-radius: 8px;
                 padding: 4px;
@@ -380,7 +380,7 @@ class MainWindow(QMainWindow):
         self._stop_btn = QPushButton("Stop")
         self._stop_btn.setMinimumHeight(40)
         self._stop_btn.setEnabled(False)
-        self._stop_btn.setStyleSheet(button_css(DANGER, TEXT, DANGER_HOVER, size="14px"))
+        self._stop_btn.setStyleSheet(button_css(DANGER, ACCENT_INK, DANGER_HOVER, size="14px"))
         self._stop_btn.clicked.connect(self._on_stop_clicked)
         button_layout.addWidget(self._stop_btn)
 
@@ -475,14 +475,14 @@ class MainWindow(QMainWindow):
                 border-bottom: 1px solid {LINE};
             }}
             QListWidget::item:alternate {{
-                background-color: #171926;
+                background-color: #0A1A2C;
             }}
             QListWidget::item:selected {{
-                background-color: rgba(252, 163, 17, 0.22);
+                background-color: rgba(63, 212, 255, 0.22);
                 color: {TEXT};
             }}
             QListWidget::item:hover {{
-                background-color: rgba(252, 163, 17, 0.10);
+                background-color: rgba(63, 212, 255, 0.10);
             }}
             """
         )
@@ -508,7 +508,7 @@ class MainWindow(QMainWindow):
         self._delete_voice_btn = QPushButton("Delete")
         self._delete_voice_btn.setMinimumHeight(28)
         self._delete_voice_btn.setToolTip("Delete selected voice from cache and ElevenLabs")
-        self._delete_voice_btn.setStyleSheet(button_css(DANGER, TEXT, DANGER_HOVER))
+        self._delete_voice_btn.setStyleSheet(button_css(DANGER, ACCENT_INK, DANGER_HOVER))
         self._delete_voice_btn.clicked.connect(self._on_delete_voice_clicked)
         voice_btn_layout.addWidget(self._delete_voice_btn)
 
@@ -581,7 +581,7 @@ class MainWindow(QMainWindow):
         self._delete_profile_btn = QPushButton("Delete")
         self._delete_profile_btn.setMinimumHeight(28)
         self._delete_profile_btn.setToolTip("Delete selected profile")
-        self._delete_profile_btn.setStyleSheet(button_css(DANGER, TEXT, DANGER_HOVER))
+        self._delete_profile_btn.setStyleSheet(button_css(DANGER, ACCENT_INK, DANGER_HOVER))
         self._delete_profile_btn.clicked.connect(self._on_delete_profile_clicked)
         profile_btn_row.addWidget(self._delete_profile_btn)
         profile_btn_row.addStretch()
@@ -2158,7 +2158,7 @@ class MainWindow(QMainWindow):
         # Apply to inline text display
         alpha = int(value * 2.55)
         self._translation_text.setStyleSheet(
-            f"color: rgba(145, 149, 187, {alpha});"
+            f"color: rgba(231, 246, 255, {alpha});"
         )
         if self._dubbed_window is not None:
             self._dubbed_window.set_text_opacity(value / 100.0)
