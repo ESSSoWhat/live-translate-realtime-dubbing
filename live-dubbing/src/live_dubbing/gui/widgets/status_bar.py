@@ -29,7 +29,7 @@ class StatusIndicator(QFrame):
             QFrame {{
                 background-color: {color};
                 border-radius: 6px;
-                border: 1px solid #343749;
+                border: 1px solid #1C5878;
             }}
             """
         )
