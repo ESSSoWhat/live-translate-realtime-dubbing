@@ -1,0 +1,7 @@
+{
+  "$schema": "https://dev.wix.com/wix-cli/schemas/embedded-script.json",
+  "id": "1acf45cb-3bc6-470f-a8f1-e1fccfd65c7d",
+  "name": "prior-order-redirect",
+  "scriptType": "FUNCTIONAL",
+  "placement": "BODY_END"
+}
