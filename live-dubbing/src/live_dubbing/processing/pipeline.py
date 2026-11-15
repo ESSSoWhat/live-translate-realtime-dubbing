@@ -105,32 +105,43 @@ def _is_mp3_like(data: bytes) -> bool:
     return len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0
 
 
-def _tts_audio_to_float32_bytes(audio_bytes: bytes) -> bytes:
+def _decode_mp3_to_float32(audio_bytes: bytes, target_sr: int) -> tuple[bytes, str]:
+    """Decode MP3 with the bundled ffmpeg. Empty bytes mean playback cannot start."""
+    from live_dubbing.ffmpeg_bundle import configure_pydub, find_ffmpeg
+
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        return b"", ""
+    try:
+        configure_pydub(ffmpeg)
+        from pydub import AudioSegment
+        from scipy import signal
+
+        seg = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
+        seg = seg.set_channels(1)
+        samples = np.array(seg.get_array_of_samples(), dtype=np.float32) / 32768.0
+        sr = seg.frame_rate
+        if sr != target_sr and len(samples) > 0:
+            num = int(len(samples) * target_sr / sr)
+            samples = signal.resample(samples, num).astype(np.float32)
+        out = samples.tobytes()
+        if len(out) > 0:
+            return out, ""
+        return b"", "The converter produced no audio."
+    except Exception as e:
+        logger.warning("MP3 decode failed", error=str(e))
+        return b"", str(e)
+
+
+def _tts_audio_to_float32_bytes(audio_bytes: bytes) -> tuple[bytes, str]:
     """Convert TTS output (MP3 or PCM) to float32 bytes for playback at 24kHz."""
     _target_sr = 24000
     if not audio_bytes:
-        return b""
+        return b"", "The translator returned no audio."
 
     # Prefer pydub for MP3 (dubbing API returns MP3); needs ffmpeg
     if _is_mp3_like(audio_bytes):
-        try:
-            from pydub import AudioSegment
-            from scipy import signal
-            seg = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
-            samples = np.array(seg.get_array_of_samples(), dtype=np.float32) / 32768.0
-            sr = seg.frame_rate
-            if sr != _target_sr:
-                num = int(len(samples) * _target_sr / sr)
-                samples = signal.resample(samples, num).astype(np.float32)
-            out = samples.tobytes()
-            if len(out) > 0:
-                return out
-        except Exception as e:
-            logger.warning(
-                "MP3 decode failed (install ffmpeg for pydub). No playback.",
-                error=str(e),
-            )
-            return b""
+        return _decode_mp3_to_float32(audio_bytes, _target_sr)
 
     try:
         data, sr = sf.read(io.BytesIO(audio_bytes))
@@ -141,28 +152,22 @@ def _tts_audio_to_float32_bytes(audio_bytes: bytes) -> bytes:
             from scipy import signal
             num = int(len(data) * _target_sr / sr)
             data = signal.resample(data, num).astype(np.float32)
-        return cast(bytes, data.tobytes())
+        return cast(bytes, data.tobytes()), ""
     except Exception:
         pass
-    try:
-        from pydub import AudioSegment
-        from scipy import signal
-        seg = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
-        samples = np.array(seg.get_array_of_samples(), dtype=np.float32) / 32768.0
-        sr = seg.frame_rate
-        if sr != _target_sr:
-            num = int(len(samples) * _target_sr / sr)
-            samples = signal.resample(samples, num).astype(np.float32)
-        return samples.tobytes()
-    except Exception:
-        pass
+    decoded, error = _decode_mp3_to_float32(audio_bytes, _target_sr)
+    if decoded:
+        return decoded, ""
+    if error:
+        return b"", error
     try:
         arr = np.frombuffer(audio_bytes, dtype=np.int16)
-        return (arr.astype(np.float32) / 32768.0).tobytes()
-    except Exception:
-        pass
-    logger.warning("Could not convert TTS audio to float32; skipping playback")
-    return b""
+        if arr.size == 0:
+            return b"", "The translator returned no audio."
+        return (arr.astype(np.float32) / 32768.0).tobytes(), ""
+    except Exception as e:
+        logger.warning("Could not convert TTS audio to float32; skipping playback", error=str(e))
+        return b"", str(e)
 
 
 class PipelineState(Enum):
@@ -256,6 +261,7 @@ class ProcessingPipeline:
         self._service = elevenlabs_service
         self._event_bus = event_bus
         self._config = config or PipelineConfig()
+        self._tts_convert_warned = False
 
         # Initialize components (lower threshold = more sensitive, captures quieter speech)
         self._vad = SileroVAD(threshold=0.05, min_silence_duration_ms=250)
@@ -334,6 +340,7 @@ class ProcessingPipeline:
             return
 
         logger.info("Starting processing pipeline")
+        self._tts_convert_warned = False
 
         self._on_output = on_output
         self._on_transcription = on_transcription
@@ -450,6 +457,21 @@ class ProcessingPipeline:
         self._vad_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vad")
 
         logger.info("Pipeline stopped")
+
+    def _warn_tts_conversion_once(self, error: str) -> None:
+        """Show one dialog when dubbed audio cannot be played."""
+        if self._tts_convert_warned:
+            return
+        self._tts_convert_warned = True
+        from live_dubbing.ffmpeg_bundle import find_ffmpeg, tts_playback_failure_message
+
+        self._event_bus.emit_warning(
+            tts_playback_failure_message(
+                ffmpeg_found=find_ffmpeg() is not None,
+                error=error,
+            ),
+            {},
+        )
 
     def _clear_queues(self) -> None:
         """Clear all queues."""
@@ -941,17 +963,16 @@ class ProcessingPipeline:
                                 )
 
                                 # Convert dubbed audio (MP3) to playable format
-                                dubbed_float32 = _tts_audio_to_float32_bytes(dub_result.audio)
+                                dubbed_float32, convert_error = _tts_audio_to_float32_bytes(
+                                    dub_result.audio
+                                )
 
                                 if not dubbed_float32:
                                     logger.warning(
-                                        "Dubbed audio conversion produced no data "
-                                        "(install ffmpeg for MP3 playback)"
+                                        "Dubbed audio conversion produced no data",
+                                        error=convert_error,
                                     )
-                                    self._event_bus.emit_warning(
-                                        "Audio conversion failed. Install ffmpeg for playback.",
-                                        {},
-                                    )
+                                    self._warn_tts_conversion_once(convert_error)
                                     continue
 
                                 # Queue for output
@@ -1155,14 +1176,14 @@ class ProcessingPipeline:
                         self._config.usage_reporter.report("dub", dub_sec)
 
                     # Convert to float32 for playback (TTS returns MP3)
-                    playback_bytes = _tts_audio_to_float32_bytes(audio_bytes)
+                    playback_bytes, convert_error = _tts_audio_to_float32_bytes(audio_bytes)
 
                     if not playback_bytes:
-                        logger.warning("TTS conversion produced no audio (check ffmpeg)")
-                        self._event_bus.emit_warning(
-                            "TTS audio conversion failed. Ensure ffmpeg is on PATH.",
-                            {},
+                        logger.warning(
+                            "TTS conversion produced no audio",
+                            error=convert_error,
                         )
+                        self._warn_tts_conversion_once(convert_error)
                     else:
                         try:
                             self._output_queue.put_nowait(playback_bytes)

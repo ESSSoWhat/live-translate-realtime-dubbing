@@ -185,39 +185,23 @@ def _hide_child_console_windows() -> None:
 
 
 def _configure_pydub_ffmpeg() -> None:
-    """Point pydub at the bundled ffmpeg so MP3 decoding works in PyInstaller builds.
+    """Point pydub at the bundled ffmpeg so MP3 decoding works in the install."""
+    from live_dubbing.ffmpeg_bundle import configure_pydub, find_ffmpeg
 
-    pydub resolves ffmpeg at class-definition time via its own ``which()``
-    function.  In a PyInstaller windowed app the subprocess PATH may not
-    match ``os.environ["PATH"]``, so pydub falls back to a bare ``"ffmpeg"``
-    command that ``CreateProcessW`` cannot find.  Setting the class attribute
-    to an absolute path bypasses the search entirely.
-    """
-    import shutil
-
-    # In a PyInstaller onedir bundle the layout is:
-    #   dist/LiveTranslate/LiveTranslate.exe
-    #   dist/LiveTranslate/_internal/ffmpeg.exe
-    _internal = os.path.join(os.path.dirname(sys.executable), "_internal")
-    ffmpeg_path = os.path.join(_internal, "ffmpeg.exe")
-    ffprobe_path = os.path.join(_internal, "ffprobe.exe")
-
-    if os.path.isfile(ffmpeg_path):
-        from pydub import AudioSegment
-
-        AudioSegment.converter = ffmpeg_path
-        AudioSegment.ffprobe = ffprobe_path
-        logging.getLogger(__name__).info(
-            "pydub configured with bundled ffmpeg: %s", ffmpeg_path,
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        logging.getLogger(__name__).warning(
+            "ffmpeg not found; dubbed MP3 playback will fail"
         )
         return
-
-    # Development mode: ffmpeg should be on PATH already.
-    if not shutil.which("ffmpeg"):
+    try:
+        configure_pydub(ffmpeg)
+    except Exception as exc:
         logging.getLogger(__name__).warning(
-            "ffmpeg not found on PATH; pydub MP3 decoding will fail. "
-            "Install ffmpeg or ensure it is on your system PATH.",
+            "Could not configure ffmpeg at %s: %s", ffmpeg, exc
         )
+        return
+    logging.getLogger(__name__).info("pydub configured with ffmpeg: %s", ffmpeg)
 
 
 def _load_env_early() -> None:
