@@ -393,10 +393,11 @@ class MainWindow(QMainWindow):
         voice_layout.setSpacing(6)
 
         # Auto-clone toggle
-        self._auto_clone_cb = QCheckBox("Auto clone voice on start")
+        self._auto_clone_cb = QCheckBox("Clone each translated line")
         self._auto_clone_cb.setChecked(self._settings.voice_clone.auto_clone_voice)
         self._auto_clone_cb.setToolTip(
-            "Automatically capture and clone the speaker's voice when translation starts"
+            "Speak each translated line in a clone of that line. "
+            "A line that matches a saved profile uses that profile."
         )
         self._auto_clone_cb.setStyleSheet(f"QCheckBox {{ color: {TEXT}; font-size: 12px; }}")
         self._auto_clone_cb.toggled.connect(self._on_auto_clone_toggled)

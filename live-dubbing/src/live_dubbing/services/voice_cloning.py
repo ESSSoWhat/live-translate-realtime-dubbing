@@ -105,6 +105,7 @@ class VoiceCloneManager:
         self._capture_profile_id: str | None = None
         self._sample_rate = 16000
         self._buffer_lock = asyncio.Lock()
+        self._clone_lock = asyncio.Lock()
 
         # Load previously saved voices from persistent store
         if self._voice_store:
@@ -236,62 +237,82 @@ class VoiceCloneManager:
             self._capture_speaker_label = None
             self._capture_profile_id = None
 
-        matched, _score = self._similar_profile(combined_audio)
-        if matched is not None:
-            reused = self._reuse_assigned_voice(matched, combined_audio)
-            if reused is not None:
-                return reused
-            link_profile_id = matched.id
-            label = label or matched.name
-
-        # Convert to bytes (WAV format)
-        audio_bytes = self._audio_to_wav(combined_audio)
-
-        # Generate name if not provided
-        if not name:
-            name = label or f"dynamic_clone_{int(time.time())}"
-
-        # Clone voice
-        voice_id = await self._service.clone_voice(
-            audio_data=audio_bytes,
+        return await self._clone_from_samples(
+            combined_audio,
+            buffer_duration,
             name=name,
-            description=f"Cloned voice for speaker: {label or name}",
+            label=label,
+            link_profile_id=link_profile_id,
         )
 
-        # Create voice info
-        cloned_voice = ClonedVoice(
-            voice_id=voice_id,
-            name=name,
-            sample_duration_sec=buffer_duration,
-            is_dynamic=True,
-            speaker_id=label,
-        )
+    async def voice_for_utterance(self, audio: np.ndarray) -> ClonedVoice | None:
+        """Clone or reuse a voice from the audio of one translated line.
 
-        # Cache the voice
-        self._voice_cache[voice_id] = cloned_voice
+        A line that matches a saved profile keeps that profile's voice.
+        A new speaker is cloned from this line, not from a separate recording.
+        """
+        speech = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if speech.size < int(self._sample_rate * 0.5):
+            return None
+        duration = float(speech.size) / self._sample_rate
+        return await self._clone_from_samples(speech, duration)
 
-        # Bind embedding + assignment to a voice profile (not the voice_id key)
-        self._link_clone_to_profile(
-            audio=combined_audio,
-            voice_id=voice_id,
-            label=label or name,
-            profile_id=link_profile_id,
-        )
-        # Persist to store
-        if self._voice_store:
-            try:
-                self._voice_store.save(cloned_voice)
-            except Exception as e:
-                logger.warning("Could not persist voice", error=str(e))
+    async def _clone_from_samples(
+        self,
+        combined_audio: np.ndarray,
+        buffer_duration: float,
+        *,
+        name: str | None = None,
+        label: str | None = None,
+        link_profile_id: str | None = None,
+    ) -> ClonedVoice:
+        """Turn one audio clip into a cloned voice, reusing a similar profile."""
+        async with self._clone_lock:
+            matched, _score = self._similar_profile(combined_audio)
+            if matched is not None:
+                reused = self._reuse_assigned_voice(matched, combined_audio)
+                if reused is not None:
+                    return reused
+                link_profile_id = matched.id
+                label = label or matched.name
 
-        logger.info(
-            "Dynamic voice clone created",
-            voice_id=voice_id,
-            speaker_label=label,
-            duration_sec=cloned_voice.sample_duration_sec,
-        )
+            audio_bytes = self._audio_to_wav(combined_audio)
+            if not name:
+                name = label or f"line_clone_{time.time_ns()}"
 
-        return cloned_voice
+            voice_id = await self._service.clone_voice(
+                audio_data=audio_bytes,
+                name=name,
+                description=f"Cloned voice for speaker: {label or name}",
+            )
+
+            cloned_voice = ClonedVoice(
+                voice_id=voice_id,
+                name=name,
+                sample_duration_sec=buffer_duration,
+                is_dynamic=True,
+                speaker_id=label,
+            )
+            self._voice_cache[voice_id] = cloned_voice
+            self._link_clone_to_profile(
+                audio=combined_audio,
+                voice_id=voice_id,
+                label=label or name,
+                profile_id=link_profile_id,
+            )
+            if self._voice_store:
+                try:
+                    self._voice_store.save(cloned_voice)
+                except Exception as e:
+                    logger.warning("Could not persist voice", error=str(e))
+
+            logger.info(
+                "Voice cloned from line",
+                voice_id=voice_id,
+                speaker_label=label,
+                duration_sec=cloned_voice.sample_duration_sec,
+            )
+            return cloned_voice
 
     async def create_clone_from_file(
         self,

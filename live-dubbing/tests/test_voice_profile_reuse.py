@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, Mock
 
 import numpy as np
@@ -99,3 +100,63 @@ async def test_different_speaker_gets_its_own_profile(tmp_path) -> None:
     assert second.reused_existing is False
     assert second.voice_id == "voice-2"
     assert len(manager.list_profiles()) == 2
+
+
+@pytest.mark.asyncio
+async def test_each_line_is_cloned_from_its_own_audio(tmp_path) -> None:
+    manager, service = _manager(tmp_path, "voice-1")
+    service.clone_voice = AsyncMock(side_effect=["voice-a", "voice-b"])
+    tone = _tone(180, seconds=1.2)
+    noise = np.random.default_rng(1).uniform(-0.5, 0.5, 16000).astype(np.float32)
+
+    first = await manager.voice_for_utterance(tone)
+    second = await manager.voice_for_utterance(noise)
+
+    assert first is not None and first.voice_id == "voice-a"
+    assert second is not None and second.voice_id == "voice-b"
+    assert service.clone_voice.await_count == 2
+    first_wav = service.clone_voice.await_args_list[0].kwargs["audio_data"]
+    import io
+    import wave
+
+    with wave.open(io.BytesIO(first_wav), "rb") as wav_file:
+        assert wav_file.getnframes() == len(tone)
+
+    again = await manager.voice_for_utterance(tone.copy())
+    assert again is not None
+    assert again.reused_existing is True
+    assert again.voice_id == "voice-a"
+    assert service.clone_voice.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_translated_line_keeps_its_voice_after_the_next_line(tmp_path) -> None:
+    from live_dubbing.core.events import EventBus
+    from live_dubbing.processing.pipeline import PipelineConfig, ProcessingPipeline
+    from live_dubbing.services.voice_cloning import ClonedVoice
+
+    service = Mock()
+    service.clone_voice = AsyncMock(side_effect=["voice-a", "voice-b"])
+    pipeline = ProcessingPipeline(
+        service,
+        EventBus(),
+        PipelineConfig(auto_clone_voice=True, min_voice_capture_sec=0.5),
+    )
+    pipeline._voice_manager = VoiceCloneManager(
+        service,
+        min_sample_duration_sec=0.5,
+        profile_store=VoiceProfileStore(str(tmp_path / "profiles.json")),
+    )
+    pipeline._cloned_voice = ClonedVoice(voice_id="fallback", name="Fallback")
+
+    first_task = asyncio.create_task(pipeline._voice_for_translated_line(_tone(180)))
+    first_item = await pipeline._item_for_line("first line", first_task)
+    noise = np.random.default_rng(2).uniform(-0.5, 0.5, 16000).astype(np.float32)
+    second_task = asyncio.create_task(pipeline._voice_for_translated_line(noise))
+    second_item = await pipeline._item_for_line("second line", second_task)
+
+    assert first_item.voice is not None and first_item.voice.voice_id == "voice-a"
+    assert second_item.voice is not None and second_item.voice.voice_id == "voice-b"
+    assert pipeline._cloned_voice is not None
+    assert pipeline._cloned_voice.voice_id == "voice-b"
+    assert first_item.text == "first line"
