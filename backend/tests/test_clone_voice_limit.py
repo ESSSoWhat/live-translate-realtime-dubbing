@@ -9,13 +9,15 @@ def test_voice_limit_detected_from_upstream_body() -> None:
     assert not voice_limit_reached('{"detail":{"status":"invalid_audio"}}')
 
 
-def test_orphan_clones_skip_owned_and_premade() -> None:
+def test_orphan_clones_skip_owned_premade_and_foreign() -> None:
+    app = {"app": "live-translate"}
     voices = [
-        {"voice_id": "old", "category": "cloned", "created_at_unix": 10},
-        {"voice_id": "kept", "category": "cloned", "created_at_unix": 5},
-        {"voice_id": "new", "category": "cloned", "created_at_unix": 20},
-        {"voice_id": "rachel", "category": "premade", "created_at_unix": 1},
-        {"voice_id": "", "category": "cloned", "created_at_unix": 1},
+        {"voice_id": "old", "category": "cloned", "created_at_unix": 10, "labels": app},
+        {"voice_id": "kept", "category": "cloned", "created_at_unix": 5, "labels": app},
+        {"voice_id": "new", "category": "cloned", "created_at_unix": 20, "labels": app},
+        {"voice_id": "rachel", "category": "premade", "created_at_unix": 1, "labels": app},
+        {"voice_id": "outside", "category": "cloned", "created_at_unix": 2, "labels": {}},
+        {"voice_id": "", "category": "cloned", "created_at_unix": 1, "labels": app},
     ]
     picked = orphan_cloned_voice_ids(voices, {"kept"}, limit=10)
     assert picked == ["old", "new"]

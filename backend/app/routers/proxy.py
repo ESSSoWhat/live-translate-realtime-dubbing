@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 
 import httpx
 import structlog
@@ -27,7 +28,11 @@ from app.models.responses import (
 from app.services.supabase_client import get_supabase
 from app.services.text_filter import strip_non_verbal
 from app.services.usage import QuotaExceededError, check_and_record_quota, check_quota
-from app.services.voice_library import orphan_cloned_voice_ids, voice_limit_reached
+from app.services.voice_library import (
+    APP_VOICE_LABEL,
+    orphan_cloned_voice_ids,
+    voice_limit_reached,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/proxy", tags=["proxy"])
@@ -698,7 +703,7 @@ async def clone_voice(
     # ("Labels must be serialized dictionary object").
     form_data: dict[str, str] = {
         "name": name.strip() or "cloned_voice",
-        "labels": "{}",
+        "labels": json.dumps({"app": APP_VOICE_LABEL}),
     }
     desc = (description or "").strip()
     if desc:
