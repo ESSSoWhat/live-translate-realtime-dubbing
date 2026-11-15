@@ -267,24 +267,24 @@ def _version_tuple(value: str) -> tuple[int, ...]:
 
 
 @app.get("/api/v1/app/update")
-async def check_update(current: str = "0.2.11") -> JSONResponse:
+async def check_update(current: str = "0.2.12") -> JSONResponse:
     """Check for app updates."""
     simulate_failure("update", 404, "No update available")
 
-    if _version_tuple(current) < (0, 2, 11):
+    if _version_tuple(current) < (0, 2, 12):
         return JSONResponse({
             "update_available": True,
-            "latest_version": "0.2.11",
+            "latest_version": "0.2.12",
             "download_url": (
                 "https://github.com/ESSSoWhat/live-translate-realtime-dubbing"
-                "/releases/download/v0.2.11/LiveTranslate-0.2.11-Setup.exe"
+                "/releases/download/v0.2.12/LiveTranslate-0.2.12-Setup.exe"
             ),
-            "release_notes": "Selected apps such as Firefox are captured on their own",
+            "release_notes": "The app updates itself when it starts",
         })
 
     return JSONResponse({
         "update_available": False,
-        "latest_version": "0.2.11",
+        "latest_version": "0.2.12",
     })
 
 
