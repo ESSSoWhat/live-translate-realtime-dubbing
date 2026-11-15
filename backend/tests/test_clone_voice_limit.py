@@ -61,6 +61,19 @@ def test_keeps_a_small_personal_library_when_nothing_else_is_ours() -> None:
     assert clone_ids_to_free(voices, {"only"}, {"only"}, keep_for_user=2) == []
 
 
+def test_failure_message_reads_python_dict_repr() -> None:
+    raw = (
+        "status_code: 401, body: {'detail': {'status': 'invalid_api_key', "
+        "'message': 'Invalid API key'}}"
+    )
+    assert elevenlabs_failure_message(raw) == "invalid_api_key: Invalid API key"
+
+
+def test_failure_message_reads_truncated_python_dict() -> None:
+    raw = "{'detail': {'message': 'Audio file is too short', 'status': 'invalid_audio'"
+    assert elevenlabs_failure_message(raw) == "Audio file is too short"
+
+
 def test_failure_message_reads_compact_json() -> None:
     body = '{"detail":{"status":"invalid_audio","message":"Audio file is too short"}}'
     wrapped = f"status_code: 400, body: {body}"

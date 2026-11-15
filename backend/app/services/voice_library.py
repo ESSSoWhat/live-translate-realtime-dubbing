@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 
@@ -101,20 +102,58 @@ def clone_ids_to_free(
 
 
 def elevenlabs_failure_message(raw: str) -> str:
-    """Short ElevenLabs message from a response body or wrapped exception text."""
+    """Short ElevenLabs message from JSON or a Python-dict exception string."""
     snippet = raw.strip()
     body_at = snippet.lower().find("body:")
     if body_at >= 0:
         snippet = snippet[body_at + len("body:") :].strip()
-    try:
-        payload = json.loads(snippet)
-    except json.JSONDecodeError:
-        return ""
-    detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
-    message = _first_failure_text(detail)
+    payload = _parse_failure_payload(snippet)
+    message = ""
+    if payload is not None:
+        detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
+        message = _first_failure_text(detail)
+    if not message:
+        message = _quoted_message(raw)
     if not message:
         return ""
     return _SECRET_RE.sub("sk_…", message)[:180]
+
+
+def _parse_failure_payload(snippet: str) -> object | None:
+    try:
+        return json.loads(snippet)
+    except json.JSONDecodeError:
+        pass
+    start = snippet.find("{")
+    if start < 0:
+        start = snippet.find("[")
+    if start < 0:
+        return None
+    try:
+        return ast.literal_eval(snippet[start:])
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _quoted_message(text: str) -> str:
+    """Read a message field when the body is truncated and will not parse."""
+    markers = (
+        "'message': '",
+        '"message": "',
+        "'message': \"",
+        '"message": \'',
+        "'msg': '",
+        '"msg": "',
+    )
+    for marker in markers:
+        start = text.find(marker)
+        if start < 0:
+            continue
+        start += len(marker)
+        end = text.find(marker[-1], start)
+        if end > start:
+            return text[start:end].strip()
+    return ""
 
 
 def _first_failure_text(node: object) -> str:
