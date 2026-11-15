@@ -85,23 +85,41 @@ def select_current_audio_outputs(
     *,
     exclude_pids: set[int] | None = None,
 ) -> list[AudioSessionInfo]:
-    """Keep apps that are outputting audio now, one row per process name.
+    """Keep every process that is outputting audio now.
 
     Inactive, expired, system, and this app's own processes are left out.
-    When one program has several sessions, the unmuted session is kept.
+    Two processes with the same executable stay as separate rows, because
+    capture follows the process id. Several sessions on one process collapse
+    to the unmuted session.
     """
     excluded = exclude_pids or set()
-    chosen: dict[str, AudioSessionInfo] = {}
+    chosen: dict[int, AudioSessionInfo] = {}
     for session in sessions:
         if session.pid in excluded or session.pid <= 0 or not session.name:
             continue
         if not session.is_active or session.name in SYSTEM_PROCESS_NAMES:
             continue
-        key = session.name.lower()
-        current = chosen.get(key)
+        current = chosen.get(session.pid)
         if current is None or _prefer_audio_session(session, current):
-            chosen[key] = session
-    return sorted(chosen.values(), key=lambda item: item.name.lower())
+            chosen[session.pid] = session
+    return sorted(chosen.values(), key=lambda item: (item.name.lower(), item.pid))
+
+
+def audio_output_menu_labels(sessions: list[AudioSessionInfo]) -> list[str]:
+    """Labels for the app menu. Repeated names include the process id."""
+    counts: dict[str, int] = {}
+    for session in sessions:
+        key = session.name.lower()
+        counts[key] = counts.get(key, 0) + 1
+    labels: list[str] = []
+    for session in sessions:
+        label = session.name
+        if counts[session.name.lower()] > 1:
+            label = f"{session.name} ({session.pid})"
+        if session.is_muted:
+            label += " (Muted)"
+        labels.append(label)
+    return labels
 
 
 def _prefer_audio_session(

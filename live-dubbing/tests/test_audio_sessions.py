@@ -2,6 +2,7 @@
 
 from live_dubbing.audio.session import (
     AudioSessionInfo,
+    audio_output_menu_labels,
     audio_session_state_is_active,
     select_current_audio_outputs,
 )
@@ -38,16 +39,32 @@ def test_inactive_and_system_processes_are_omitted() -> None:
     assert [item.name for item in shown] == ["Spotify.exe"]
 
 
-def test_same_program_keeps_the_unmuted_session() -> None:
+def test_same_process_keeps_the_unmuted_session() -> None:
     sessions = [
         _session(21, "chrome.exe", is_muted=True, volume=0.2),
-        _session(22, "chrome.exe", is_muted=False, volume=0.4),
+        _session(21, "chrome.exe", is_muted=False, volume=0.4),
     ]
 
     shown = select_current_audio_outputs(sessions)
 
     assert len(shown) == 1
-    assert shown[0].pid == 22
+    assert shown[0].pid == 21
+    assert shown[0].is_muted is False
+
+
+def test_two_processes_with_the_same_name_both_stay() -> None:
+    sessions = [
+        _session(22, "vlc.exe"),
+        _session(21, "vlc.exe", is_muted=True),
+    ]
+
+    shown = select_current_audio_outputs(sessions)
+
+    assert [item.pid for item in shown] == [21, 22]
+    assert audio_output_menu_labels(shown) == [
+        "vlc.exe (21) (Muted)",
+        "vlc.exe (22)",
+    ]
 
 
 def test_own_process_id_is_excluded() -> None:

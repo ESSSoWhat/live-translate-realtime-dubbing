@@ -55,7 +55,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
 
 from live_dubbing import __version__
 from live_dubbing.audio.playback import get_output_devices
-from live_dubbing.audio.session import AudioSessionInfo
+from live_dubbing.audio.session import AudioSessionInfo, audio_output_menu_labels
 from live_dubbing.config.settings import AppSettings, ConfigManager
 from live_dubbing.core.events import Event, EventBus, EventType
 from live_dubbing.core.mic_translator import MicTranslator
@@ -1322,10 +1322,8 @@ class MainWindow(QMainWindow):
             self._capture_channel_combo.addItem("All system audio", None)
             if self._orchestrator.is_process_loopback_supported:
                 sessions = self._orchestrator.get_audio_sessions()
-                for session in sessions:
-                    label = session.name
-                    if session.is_muted:
-                        label += " (Muted)"
+                labels = audio_output_menu_labels(sessions)
+                for session, label in zip(sessions, labels):
                     self._capture_channel_combo.addItem(label, session)
             saved_pid = self._settings.audio.capture_device_id
             if saved_pid and self._capture_channel_combo.count() > 1:

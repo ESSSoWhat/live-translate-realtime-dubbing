@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from live_dubbing.audio.session import AudioSessionInfo
+from live_dubbing.audio.session import AudioSessionInfo, audio_output_menu_labels
 
 logger = structlog.get_logger(__name__)
 
@@ -91,10 +91,7 @@ class AppSelectorWidget(QWidget):
         self._combo.blockSignals(True)
         self._combo.clear()
 
-        for session in sessions:
-            display_name = session.name
-            if session.is_muted:
-                display_name += " (Muted)"
+        for session, display_name in zip(sessions, audio_output_menu_labels(sessions)):
             self._combo.addItem(display_name, session)
 
         # Restore selection if possible
