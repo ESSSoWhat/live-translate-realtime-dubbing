@@ -5,8 +5,6 @@ VB-Cable Setup Wizard for guided audio routing configuration.
 import contextlib
 import os
 import subprocess
-import sys
-from pathlib import Path
 from collections.abc import Callable
 
 import structlog
@@ -246,13 +244,10 @@ class InstallPage(WizardPage):
 
     def _run_bundled_installer(self) -> None:
         """Run the bundled VBCABLE_Setup_x64.exe if present."""
-        exe_name = "VBCABLE_Setup_x64.exe"
-        if getattr(sys, "frozen", False):
-            base = Path(sys.executable).parent
-        else:
-            base = Path(__file__).resolve().parents[4] / "third_party"
-        installer_path = base / "VBCABLE_Driver_Pack43" / exe_name
-        if installer_path.exists():
+        from live_dubbing.vbcable_setup import find_vbcable_setup
+
+        installer_path = find_vbcable_setup()
+        if installer_path is not None:
             try:
                 os.startfile(str(installer_path))
             except OSError as e:
