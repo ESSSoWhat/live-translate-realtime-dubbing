@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 
 import httpx
 import structlog
@@ -27,6 +28,11 @@ from app.models.responses import (
 from app.services.supabase_client import get_supabase
 from app.services.text_filter import strip_non_verbal
 from app.services.usage import QuotaExceededError, check_and_record_quota, check_quota
+from app.services.voice_library import (
+    APP_VOICE_LABEL,
+    orphan_cloned_voice_ids,
+    voice_limit_reached,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/proxy", tags=["proxy"])
@@ -603,6 +609,60 @@ async def rename_voice(
     return CloneVoiceResponse(voice_id=voice_id, name=new_name)
 
 
+async def _drop_orphan_clones(api_key: str) -> int:
+    """Delete cloned voices that are not recorded in user_voices. Returns how many were removed."""
+    try:
+        sb = await get_supabase()
+        owned_rows = await sb.table("user_voices").select("voice_id").execute()
+    except Exception as exc:
+        logger.warning("Could not load owned voices before cleanup", error=str(exc)[:200])
+        return 0
+    owned = {
+        str(row.get("voice_id") or "").strip()
+        for row in (owned_rows.data or [])
+        if str(row.get("voice_id") or "").strip()
+    }
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        listed = await http.get(
+            "https://api.elevenlabs.io/v1/voices",
+            headers={"xi-api-key": api_key},
+        )
+        if listed.status_code >= 400:
+            logger.warning("Could not list voices for cleanup", status=listed.status_code)
+            return 0
+        payload = listed.json()
+        voices = payload.get("voices") if isinstance(payload, dict) else None
+        if not isinstance(voices, list):
+            return 0
+        targets = orphan_cloned_voice_ids(voices, owned)
+        removed = 0
+        for voice_id in targets:
+            resp = await http.delete(
+                f"https://api.elevenlabs.io/v1/voices/{voice_id}",
+                headers={"xi-api-key": api_key},
+            )
+            if resp.status_code < 400:
+                removed += 1
+        if removed:
+            logger.info("Removed orphaned cloned voices", removed=removed, candidates=len(targets))
+        return removed
+
+
+async def _post_instant_clone(
+    api_key: str,
+    form_data: dict[str, str],
+    filename: str,
+    audio_bytes: bytes,
+) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=90.0) as http:
+        return await http.post(
+            "https://api.elevenlabs.io/v1/voices/add",
+            headers={"xi-api-key": api_key},
+            data=form_data,
+            files={"files": (filename, audio_bytes, "audio/wav")},
+        )
+
+
 @router.post("/clone-voice", response_model=CloneVoiceResponse)
 async def clone_voice(
     background_tasks: BackgroundTasks,
@@ -643,22 +703,19 @@ async def clone_voice(
     # ("Labels must be serialized dictionary object").
     form_data: dict[str, str] = {
         "name": name.strip() or "cloned_voice",
-        "labels": "{}",
+        "labels": json.dumps({"app": APP_VOICE_LABEL}),
     }
     desc = (description or "").strip()
     if desc:
         form_data["description"] = desc
 
+    filename = audio.filename or "audio.wav"
     try:
-        async with httpx.AsyncClient(timeout=120.0) as http:
-            resp = await http.post(
-                "https://api.elevenlabs.io/v1/voices/add",
-                headers={"xi-api-key": key},
-                data=form_data,
-                files={
-                    "files": (audio.filename or "audio.wav", audio_bytes, "audio/wav"),
-                },
-            )
+        resp = await _post_instant_clone(key, form_data, filename, audio_bytes)
+        if resp.status_code >= 400 and voice_limit_reached(resp.text):
+            removed = await _drop_orphan_clones(key)
+            if removed:
+                resp = await _post_instant_clone(key, form_data, filename, audio_bytes)
         if resp.status_code >= 400:
             raise _elevenlabs_upstream_error(
                 "Voice cloning",

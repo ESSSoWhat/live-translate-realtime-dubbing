@@ -803,9 +803,24 @@ class ProcessingPipeline:
                 hint = " Sign in again from Account → Sign in."
             elif "402" in err_s or "quota" in err_s.lower():
                 hint = " Voice clone limit reached. Upgrade your plan for more."
+            elif (
+                "voice_limit" in err_s.lower()
+                or "maximum amount of custom voices" in err_s.lower()
+            ):
+                hint = " The voice library is full. Delete an old voice and try again."
+            elif "timed out" in err_s.lower() or "timeout" in err_s.lower():
+                hint = " The clone took too long. Try again with a shorter clip."
+            detail = ""
+            if not hint and err_s:
+                detail = err_s.split("\n")[0].strip()
+                if len(detail) > 120:
+                    detail = detail[:117] + "..."
+                if detail:
+                    detail = " " + detail
             self._event_bus.emit_warning(
                 "Voice clone failed — using default voice for TTS. You can still hear translated speech."
-                + hint,
+                + hint
+                + detail,
                 {"error": err_s[:100]},
             )
 

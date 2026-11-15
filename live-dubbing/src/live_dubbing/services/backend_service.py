@@ -385,6 +385,10 @@ class BackendProxyService:
                 files={"audio": (filename, io.BytesIO(audio_data), "audio/wav")},
                 data={"name": name, "description": description or ""},
                 headers={},
+                # The server waits on ElevenLabs for up to 90s, then may delete
+                # leftover clones and try once more. Stay past that so a slow
+                # success is not reported as a failure.
+                timeout=200.0,
             )
             return response.json()["voice_id"]
         except httpx.HTTPStatusError as exc:
