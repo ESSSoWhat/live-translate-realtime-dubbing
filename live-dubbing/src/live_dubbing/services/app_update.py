@@ -145,12 +145,26 @@ def schedule_install(installer: Path, relaunch: Path | None = None) -> None:
     )
 
 
+def is_inno_install(executable: Path) -> bool:
+    """True when *executable* is the Setup install, not an unpacked release zip.
+
+    Inno Setup writes ``unins000.exe`` beside the app. The zip does not, so an
+    unpacked copy must not install into ``Local AppData`` and then start itself
+    again. That copy would still be old and would download the installer on
+    every launch.
+    """
+    return (executable.resolve().parent / "unins000.exe").is_file()
+
+
 def apply_startup_update() -> bool:
     """Install a newer release before the window opens. True means this process should exit."""
     skip = os.environ.get("LIVE_TRANSLATE_SKIP_UPDATE", "").strip().lower()
     if skip in {"1", "true", "yes"}:
         return False
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return False
+    if not is_inno_install(Path(sys.executable)):
+        logger.info("Skipping startup update for an unpacked copy")
         return False
 
     from live_dubbing import __version__
