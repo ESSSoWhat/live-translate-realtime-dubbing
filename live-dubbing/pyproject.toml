@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "live-dubbing"
-version = "0.2.11"
+version = "0.2.12"
 description = "Real-time audio translation and voice-cloned dubbing for Windows applications"
 readme = "README.md"
 license = {text = "MIT"}
@@ -78,6 +78,8 @@ dev = [
     "mypy>=1.7.0",
     "ruff>=0.1.6",
     "black>=23.11.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
 ]
 
 [project.scripts]

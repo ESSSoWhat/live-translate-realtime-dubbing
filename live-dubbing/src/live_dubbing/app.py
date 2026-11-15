@@ -148,6 +148,12 @@ class Application:
 
         apply_theme(self._qt_app)
 
+        from live_dubbing.services.app_update import apply_startup_update
+
+        if apply_startup_update():
+            logger.info("Exiting so the downloaded update can install")
+            return 0
+
         # Set application icon
         import pathlib
 
