@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 
 import httpx
 import structlog
@@ -30,7 +31,8 @@ from app.services.text_filter import strip_non_verbal
 from app.services.usage import QuotaExceededError, check_and_record_quota, check_quota
 from app.services.voice_library import (
     APP_VOICE_LABEL,
-    orphan_cloned_voice_ids,
+    clone_ids_to_free,
+    elevenlabs_failure_message,
     voice_limit_reached,
 )
 
@@ -141,29 +143,23 @@ def _elevenlabs_upstream_error(action: str, exc: Exception) -> HTTPException:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"{action} failed: server ElevenLabs API key rejected. Check Railway ELEVENLABS_API_KEY.",
         )
-    # Prefer ElevenLabs' own message when present in the SDK exception text.
-    message = ""
-    for marker in ("'message': '", '"message": "'):
-        start = text.find(marker)
-        if start >= 0:
-            start += len(marker)
-            end = text.find("'", start) if marker.endswith("'") else text.find('"', start)
-            if end > start:
-                message = text[start:end]
-                break
-    if not message:
-        for marker in ("'code': '", '"code": "'):
-            start = text.find(marker)
-            if start >= 0:
-                start += len(marker)
-                end = text.find("'", start) if marker.endswith("'") else text.find('"', start)
-                if end > start:
-                    message = text[start:end]
-                    break
+    if "voice_limit_reached" in lower or "maximum amount of custom voices" in lower:
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                f"{action} failed: the voice library is full. "
+                "Delete an old cloned voice and try again."
+            ),
+        )
+    message = elevenlabs_failure_message(text)
     logger.error("ElevenLabs upstream error", action=action, error=text[:500])
     if message:
         return HTTPException(status_code=502, detail=f"{action} failed: {message[:180]}")
-    return HTTPException(status_code=502, detail=f"{action} failed: upstream error")
+    code = ""
+    matched = re.search(r"status_code:\s*(\d{3})", text)
+    if matched:
+        code = f" (HTTP {matched.group(1)})"
+    return HTTPException(status_code=502, detail=f"{action} failed: upstream error{code}")
 
 
 def _quota_error(exc: QuotaExceededError) -> HTTPException:
@@ -609,19 +605,23 @@ async def rename_voice(
     return CloneVoiceResponse(voice_id=voice_id, name=new_name)
 
 
-async def _drop_orphan_clones(api_key: str) -> int:
-    """Delete cloned voices that are not recorded in user_voices. Returns how many were removed."""
+async def _free_voice_library_slots(api_key: str, user_id: str) -> int:
+    """Delete old app clones so Instant Voice Clone can add one. Returns how many were removed."""
     try:
         sb = await get_supabase()
-        owned_rows = await sb.table("user_voices").select("voice_id").execute()
+        owned_rows = await sb.table("user_voices").select("voice_id,user_id").execute()
     except Exception as exc:
         logger.warning("Could not load owned voices before cleanup", error=str(exc)[:200])
         return 0
-    owned = {
-        str(row.get("voice_id") or "").strip()
-        for row in (owned_rows.data or [])
-        if str(row.get("voice_id") or "").strip()
-    }
+    owned: set[str] = set()
+    user_owned: set[str] = set()
+    for row in owned_rows.data or []:
+        voice_id = str(row.get("voice_id") or "").strip()
+        if not voice_id:
+            continue
+        owned.add(voice_id)
+        if str(row.get("user_id") or "") == user_id:
+            user_owned.add(voice_id)
     async with httpx.AsyncClient(timeout=30.0) as http:
         listed = await http.get(
             "https://api.elevenlabs.io/v1/voices",
@@ -634,17 +634,29 @@ async def _drop_orphan_clones(api_key: str) -> int:
         voices = payload.get("voices") if isinstance(payload, dict) else None
         if not isinstance(voices, list):
             return 0
-        targets = orphan_cloned_voice_ids(voices, owned)
+        targets = clone_ids_to_free(voices, owned, user_owned)
         removed = 0
         for voice_id in targets:
             resp = await http.delete(
                 f"https://api.elevenlabs.io/v1/voices/{voice_id}",
                 headers={"xi-api-key": api_key},
             )
-            if resp.status_code < 400:
-                removed += 1
+            if resp.status_code >= 400 and resp.status_code != 404:
+                continue
+            removed += 1
+            if voice_id in user_owned:
+                try:
+                    await sb.table("user_voices").delete().eq("voice_id", voice_id).eq(
+                        "user_id", user_id
+                    ).execute()
+                except Exception as exc:
+                    logger.warning(
+                        "Removed ElevenLabs voice but not the ownership row",
+                        voice_id=voice_id,
+                        error=str(exc)[:200],
+                    )
         if removed:
-            logger.info("Removed orphaned cloned voices", removed=removed, candidates=len(targets))
+            logger.info("Freed voice-library slots", removed=removed, candidates=len(targets))
         return removed
 
 
@@ -713,7 +725,7 @@ async def clone_voice(
     try:
         resp = await _post_instant_clone(key, form_data, filename, audio_bytes)
         if resp.status_code >= 400 and voice_limit_reached(resp.text):
-            removed = await _drop_orphan_clones(key)
+            removed = await _free_voice_library_slots(key, str(user["id"]))
             if removed:
                 resp = await _post_instant_clone(key, form_data, filename, audio_bytes)
         if resp.status_code >= 400:
@@ -728,6 +740,12 @@ async def clone_voice(
             raise HTTPException(status_code=502, detail="Voice cloning failed: no voice_id returned")
     except HTTPException:
         raise
+    except httpx.TimeoutException as exc:
+        logger.warning("Voice clone timed out", error=str(exc)[:200])
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Voice cloning failed: ElevenLabs took too long. Try again.",
+        ) from exc
     except Exception as exc:
         raise _elevenlabs_upstream_error("Voice cloning", exc) from exc
 
