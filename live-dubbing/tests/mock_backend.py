@@ -258,23 +258,26 @@ async def clone_voice(
 # ── App update endpoint ─────────────────────────────────────────────────────
 
 @app.get("/api/v1/app/update")
-async def check_update(current: str = "0.2.3") -> JSONResponse:
+async def check_update(current: str = "0.2.4") -> JSONResponse:
     """Check for app updates."""
     simulate_failure("update", 404, "No update available")
-    
-    # Mock: if current < 0.2.3, return update available
-    if current < "0.2.3":
+
+    # Mock: if current < 0.2.4, return update available
+    if current < "0.2.4":
         return JSONResponse({
             "update_available": True,
-            "latest_version": "0.2.3",
-            "download_url": "https://github.com/ESSSoWhat/live-translate-realtime-dubbing/releases/download/v0.2.3/LiveTranslate-Setup.exe",
-            "release_notes": "Bug fixes and performance improvements",
+            "latest_version": "0.2.4",
+            "download_url": (
+                "https://github.com/ESSSoWhat/live-translate-realtime-dubbing"
+                "/releases/download/v0.2.4/LiveTranslate-0.2.4-Setup.exe"
+            ),
+            "release_notes": "Logo theme and the current desktop build",
         })
-    
+
     # Current version is latest
     return JSONResponse({
         "update_available": False,
-        "latest_version": "0.2.3",
+        "latest_version": "0.2.4",
     })
 
 
