@@ -2,6 +2,8 @@
 Audio session enumeration and control using pycaw.
 """
 
+from __future__ import annotations
+
 import contextlib
 from dataclasses import dataclass
 from typing import Any
@@ -47,10 +49,11 @@ SYSTEM_PROCESS_NAMES: set[str] = {
     "LockApp.exe",
     "WidgetService.exe",
     "Widgets.exe",
-    # Python (filter out ourselves)
+    # This app and the interpreter it runs under
     "python.exe",
     "pythonw.exe",
     "python3.exe",
+    "LiveTranslate.exe",
     # Common background services
     "OneDrive.exe",
     "SearchApp.exe",
@@ -62,6 +65,55 @@ SYSTEM_PROCESS_NAMES: set[str] = {
     "SettingSyncHost.exe",
     "UserOOBEBroker.exe",
 }
+
+
+# IAudioSessionControl::GetState — the client is streaming audio.
+_AUDIO_SESSION_ACTIVE = 1
+
+
+def audio_session_state_is_active(state: object) -> bool:
+    """True when a Windows audio session is currently streaming output."""
+    value = getattr(state, "value", state)
+    try:
+        return int(value) == _AUDIO_SESSION_ACTIVE
+    except (TypeError, ValueError):
+        return str(state).rsplit(".", 1)[-1].lower() == "active"
+
+
+def select_current_audio_outputs(
+    sessions: list[AudioSessionInfo],
+    *,
+    exclude_pids: set[int] | None = None,
+) -> list[AudioSessionInfo]:
+    """Keep apps that are outputting audio now, one row per process name.
+
+    Inactive, expired, system, and this app's own processes are left out.
+    When one program has several sessions, the unmuted session is kept.
+    """
+    excluded = exclude_pids or set()
+    chosen: dict[str, AudioSessionInfo] = {}
+    for session in sessions:
+        if session.pid in excluded or session.pid <= 0 or not session.name:
+            continue
+        if not session.is_active or session.name in SYSTEM_PROCESS_NAMES:
+            continue
+        key = session.name.lower()
+        current = chosen.get(key)
+        if current is None or _prefer_audio_session(session, current):
+            chosen[key] = session
+    return sorted(chosen.values(), key=lambda item: item.name.lower())
+
+
+def _prefer_audio_session(
+    candidate: AudioSessionInfo,
+    current: AudioSessionInfo,
+) -> bool:
+    """True when *candidate* is the better row for the same program."""
+    if current.is_muted and not candidate.is_muted:
+        return True
+    if candidate.is_muted and not current.is_muted:
+        return False
+    return candidate.volume > current.volume
 
 
 @dataclass
@@ -98,11 +150,11 @@ class AudioSessionEnumerator:
         self._sessions: list[AudioSessionInfo] = []
 
     def get_active_sessions(self) -> list[AudioSessionInfo]:
-        """
-        Get all active audio sessions.
+        """Windows audio sessions.
 
-        Returns:
-            List of AudioSessionInfo objects for active sessions
+        ``is_active`` is true only while that session is streaming audio.
+        Inactive and expired sessions are included so callers can tell them
+        apart; the app list uses :meth:`get_current_audio_outputs`.
         """
         try:
             from pycaw.pycaw import AudioUtilities
@@ -136,11 +188,16 @@ class AudioSessionEnumerator:
                             if session.Process:
                                 icon_path = session.Process.exe()
 
+                        try:
+                            is_active = audio_session_state_is_active(session.State)
+                        except Exception:
+                            is_active = False
+
                         session_info = AudioSessionInfo(
                             pid=pid,
                             name=name,
                             icon_path=icon_path,
-                            is_active=True,
+                            is_active=is_active,
                             volume=current_volume,
                             is_muted=bool(is_muted),
                         )
@@ -185,7 +242,18 @@ class AudioSessionEnumerator:
 
     def refresh(self) -> list[AudioSessionInfo]:
         """Refresh the session list."""
-        return self.get_active_sessions()
+        return self.get_current_audio_outputs()
+
+    def get_current_audio_outputs(
+        self,
+        *,
+        exclude_pids: set[int] | None = None,
+    ) -> list[AudioSessionInfo]:
+        """Applications that are streaming audio right now."""
+        return select_current_audio_outputs(
+            self.get_active_sessions(),
+            exclude_pids=exclude_pids,
+        )
 
     def _is_system_process(self, name: str) -> bool:
         """

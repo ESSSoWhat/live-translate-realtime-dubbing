@@ -156,7 +156,7 @@ class AppSelectorWidget(QWidget):
         """Update the info label based on current state."""
         if not self._sessions:
             self._info_label.setText(
-                "No applications with audio detected. Click Refresh to scan."
+                "No applications are outputting audio. Click Refresh to scan again."
             )
         elif self._selected_session:
             self._info_label.setText(
@@ -164,7 +164,7 @@ class AppSelectorWidget(QWidget):
             )
         else:
             self._info_label.setText(
-                f"{len(self._sessions)} application(s) with audio available."
+                f"{len(self._sessions)} application(s) currently outputting audio."
             )
 
     def set_enabled(self, enabled: bool) -> None:
