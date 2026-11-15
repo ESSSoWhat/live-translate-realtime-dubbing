@@ -257,7 +257,6 @@ async def clone_voice(
 
 # ── App update endpoint ─────────────────────────────────────────────────────
 
-@app.get("/api/v1/app/update")
 def _version_tuple(value: str) -> tuple[int, ...]:
     """Compare versions numerically so 0.2.9 is older than 0.2.10."""
     parts: list[int] = []
@@ -267,26 +266,25 @@ def _version_tuple(value: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
-async def check_update(current: str = "0.2.10") -> JSONResponse:
+@app.get("/api/v1/app/update")
+async def check_update(current: str = "0.2.11") -> JSONResponse:
     """Check for app updates."""
     simulate_failure("update", 404, "No update available")
 
-    # Mock: if current < 0.2.10, return update available
-    if _version_tuple(current) < (0, 2, 10):
+    if _version_tuple(current) < (0, 2, 11):
         return JSONResponse({
             "update_available": True,
-            "latest_version": "0.2.10",
+            "latest_version": "0.2.11",
             "download_url": (
                 "https://github.com/ESSSoWhat/live-translate-realtime-dubbing"
-                "/releases/download/v0.2.10/LiveTranslate-0.2.10-Setup.exe"
+                "/releases/download/v0.2.11/LiveTranslate-0.2.11-Setup.exe"
             ),
-            "release_notes": "Each translated line is spoken in a clone of that line",
+            "release_notes": "Selected apps such as Firefox are captured on their own",
         })
 
-    # Current version is latest
     return JSONResponse({
         "update_available": False,
-        "latest_version": "0.2.10",
+        "latest_version": "0.2.11",
     })
 
 
