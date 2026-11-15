@@ -7,6 +7,7 @@ from pathlib import Path
 from live_dubbing.services.app_update import (
     choose_setup_asset,
     install_command,
+    is_inno_install,
     is_newer,
     parse_version,
     stage_update,
@@ -76,6 +77,19 @@ def test_the_current_release_is_left_alone() -> None:
         )
         is None
     )
+
+
+def test_only_the_setup_install_is_updated(tmp_path: Path) -> None:
+    installed = tmp_path / "Live Translate"
+    unpacked = tmp_path / "zip"
+    installed.mkdir()
+    unpacked.mkdir()
+    (installed / "LiveTranslate.exe").write_bytes(b"")
+    (installed / "unins000.exe").write_bytes(b"")
+    (unpacked / "LiveTranslate.exe").write_bytes(b"")
+
+    assert is_inno_install(installed / "LiveTranslate.exe") is True
+    assert is_inno_install(unpacked / "LiveTranslate.exe") is False
 
 
 def test_install_waits_for_this_process_then_reopens_the_app() -> None:
