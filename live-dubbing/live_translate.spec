@@ -17,10 +17,28 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files, coll
 
 block_cipher = None
 
-# FFmpeg path: set FFMPEG_DIR (e.g. to CI runner path) or defaults for local Windows build
+# FFmpeg path: set FFMPEG_DIR to the real bin folder, not a Chocolatey shim.
 _ffmpeg_dir = Path(os.environ.get("FFMPEG_DIR", r"S:\Codingproject\ffmpeg\bin"))
-_ffmpeg_exe = _ffmpeg_dir / "ffmpeg.exe"
-_ffmpeg_probe = _ffmpeg_dir / "ffprobe.exe"
+
+
+def _bundle_ffmpeg(directory: Path) -> list[tuple[str, str]]:
+    """Copy ffmpeg, ffprobe, and the DLLs they load. Skip package shims."""
+    if not directory.is_dir():
+        print(f"WARNING: FFMPEG_DIR does not exist: {directory}")
+        return []
+    bundled: list[tuple[str, str]] = []
+    for path in sorted(directory.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in {".exe", ".dll"}:
+            continue
+        if path.stat().st_size < 1_000_000 and path.suffix.lower() == ".exe":
+            blob = path.read_bytes()[:8192].lower()
+            if b"chocolatey" in blob or b"shimgen" in blob:
+                print(f"WARNING: skipping ffmpeg shim {path}")
+                continue
+        bundled.append((str(path), "."))
+    if not any(Path(src).name.lower() == "ffmpeg.exe" for src, _dest in bundled):
+        print(f"WARNING: no ffmpeg.exe bundled from {directory}")
+    return bundled
 
 # Project paths
 PROJECT_ROOT = Path(SPECPATH)
@@ -46,9 +64,8 @@ a = Analysis(
     [str(SRC_DIR / "live_dubbing" / "__main__.py")],
     pathex=[str(SRC_DIR)],
     binaries=[
-        # ffmpeg for pydub MP3 decoding (TTS audio conversion)
-        (str(_ffmpeg_exe), "."),
-        (str(_ffmpeg_probe), "."),
+        # ffmpeg for pydub MP3 decoding (TTS audio conversion), plus its DLLs
+        *_bundle_ffmpeg(_ffmpeg_dir),
         # numpy C-extension .pyd binaries (e.g. _multiarray_umath, _umath_doc_generated)
         *_numpy_binaries,
     ],
