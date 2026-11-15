@@ -1,11 +1,17 @@
 """Voice-library cleanup and ElevenLabs error text for clone failures."""
 
 from app.services.voice_library import (
+    CLONE_LABELS,
     clone_ids_to_free,
     elevenlabs_failure_message,
     orphan_cloned_voice_ids,
     voice_limit_reached,
 )
+
+
+def test_clone_labels_stay_empty_so_elevenlabs_accepts_them() -> None:
+    assert CLONE_LABELS == "{}"
+    assert "app" not in CLONE_LABELS
 
 
 def test_voice_limit_detected_from_upstream_body() -> None:

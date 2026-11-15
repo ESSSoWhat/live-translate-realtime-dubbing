@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import re
 
-# Written onto voices this backend creates. Cleanup may remove only these.
+# Older builds tried to stamp this label. ElevenLabs only accepts language,
+# accent, gender, and age, so a custom key makes every clone fail.
 APP_VOICE_LABEL = "live-translate"
+# Empty object. This is the payload that last created voices successfully.
+CLONE_LABELS = "{}"
 # Auto clones used this name before the app label existed.
 LEGACY_CLONE_PREFIX = "dynamic_clone_"
 _SECRET_RE = re.compile(r"sk_[A-Za-z0-9_]+")

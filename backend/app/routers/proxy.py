@@ -30,7 +30,7 @@ from app.services.supabase_client import get_supabase
 from app.services.text_filter import strip_non_verbal
 from app.services.usage import QuotaExceededError, check_and_record_quota, check_quota
 from app.services.voice_library import (
-    APP_VOICE_LABEL,
+    CLONE_LABELS,
     clone_ids_to_free,
     elevenlabs_failure_message,
     voice_limit_reached,
@@ -711,11 +711,12 @@ async def clone_voice(
             ),
         )
 
-    # Use raw multipart — the SDK has sent labels incorrectly on some builds
-    # ("Labels must be serialized dictionary object").
+    # Labels must be a JSON object string. ElevenLabs only accepts the keys
+    # language, accent, gender, and age. A custom key such as "app" is rejected
+    # and the desktop then only sees "upstream error".
     form_data: dict[str, str] = {
         "name": name.strip() or "cloned_voice",
-        "labels": json.dumps({"app": APP_VOICE_LABEL}),
+        "labels": CLONE_LABELS,
     }
     desc = (description or "").strip()
     if desc:
