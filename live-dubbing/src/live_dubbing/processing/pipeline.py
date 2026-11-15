@@ -801,11 +801,11 @@ class ProcessingPipeline:
             cloned = await self._voice_manager.create_dynamic_clone()
             self._cloned_voice = cloned
             self._stats.voice_clone_ready = True
-            if self._config.usage_reporter:
+            if self._config.usage_reporter and not cloned.reused_existing:
                 self._config.usage_reporter.report("clone", 1)
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
-                {"voice_id": cloned.voice_id},
+                self._voice_manager.clone_event_data(cloned),
             )
             logger.info(
                 "Voice clone ready, swapped from fallback",
@@ -852,12 +852,12 @@ class ProcessingPipeline:
             if not self._voice_manager:
                 return
             cloned = await self._voice_manager.create_dynamic_clone()
-            if self._config.usage_reporter:
+            if self._config.usage_reporter and not cloned.reused_existing:
                 self._config.usage_reporter.report("clone", 1)
             # Don't swap active voice — let the user activate it from the list
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
-                {"voice_id": cloned.voice_id, "name": cloned.name},
+                self._voice_manager.clone_event_data(cloned),
             )
             logger.info(
                 "Manual voice clone created",
