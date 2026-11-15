@@ -55,7 +55,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=no-name-in-module
 
 from live_dubbing import __version__
 from live_dubbing.audio.playback import get_output_devices
-from live_dubbing.audio.session import AudioSessionInfo
+from live_dubbing.audio.session import AudioSessionInfo, audio_output_menu_labels
 from live_dubbing.config.settings import AppSettings, ConfigManager
 from live_dubbing.core.events import Event, EventBus, EventType
 from live_dubbing.core.mic_translator import MicTranslator
@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
 
         # App selector (left)
         self._app_selector = AppSelectorWidget()
-        self._app_selector.refresh_requested.connect(self._refresh_sessions)
+        self._app_selector.refresh_requested.connect(self._rescan_audio_sessions)
         config_layout.addWidget(self._app_selector, 1)
 
         # Language panel (right)
@@ -1266,9 +1266,22 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def _refresh_sessions(self) -> None:
-        """Refresh audio sessions list."""
+        """Show apps that currently have an audio output."""
         sessions = self._orchestrator.get_audio_sessions()
         self._app_selector.set_sessions(sessions)
+        if hasattr(self, "_capture_channel_combo"):
+            self._populate_capture_channels()
+
+    def _rescan_audio_sessions(self) -> None:
+        """Ask Windows again which apps are outputting audio."""
+        if self._async_worker:
+            self._async_worker.run_coroutine(
+                self._orchestrator.refresh_audio_sessions(),
+                on_success=lambda _result: self._refresh_sessions(),
+                on_error=lambda _msg: self._refresh_sessions(),
+            )
+            return
+        self._refresh_sessions()
 
     def _populate_output_devices(self) -> None:
         """Fill output device combo from sounddevice and restore selection."""
@@ -1309,10 +1322,8 @@ class MainWindow(QMainWindow):
             self._capture_channel_combo.addItem("All system audio", None)
             if self._orchestrator.is_process_loopback_supported:
                 sessions = self._orchestrator.get_audio_sessions()
-                for session in sessions:
-                    label = session.name
-                    if session.is_muted:
-                        label += " (Muted)"
+                labels = audio_output_menu_labels(sessions)
+                for session, label in zip(sessions, labels):
                     self._capture_channel_combo.addItem(label, session)
             saved_pid = self._settings.audio.capture_device_id
             if saved_pid and self._capture_channel_combo.count() > 1:
@@ -1327,7 +1338,7 @@ class MainWindow(QMainWindow):
                     pass
             plb = self._orchestrator.is_process_loopback_supported
             self._capture_channel_combo.setToolTip(
-                "Process from Windows volume mixer to capture. "
+                "Apps that are outputting audio right now. "
                 + (
                     "Select an app to capture only that app, or All for system audio."
                     if plb
@@ -1622,7 +1633,6 @@ class MainWindow(QMainWindow):
     def _on_app_initialized(self, event: Event) -> None:
         """Handle app initialized event."""
         self._update_capture_mode_combo()
-        self._populate_capture_channels()
         self._update_play_as_mic_ui()
         self._refresh_sessions()
         self._status_bar.set_app_state(AppState.READY)

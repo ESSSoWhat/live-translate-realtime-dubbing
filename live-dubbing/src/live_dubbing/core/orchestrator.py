@@ -280,11 +280,11 @@ class Orchestrator:
         from live_dubbing.audio.session import AudioSessionEnumerator
 
         enumerator = AudioSessionEnumerator()
-        # Use combined method to get all processes, not just active audio sessions
-        all_sessions = enumerator.get_sessions_combined()
-        self_pid = os.getpid()
-        # Never include our own process — app must not capture its own audio
-        self._audio_sessions = [s for s in all_sessions if s.pid != self_pid]
+        # Only programs Windows reports as streaming audio. Other running
+        # processes stay out of the capture list.
+        self._audio_sessions = enumerator.get_current_audio_outputs(
+            exclude_pids={os.getpid()},
+        )
 
         for session in self._audio_sessions:
             self._event_bus.emit(

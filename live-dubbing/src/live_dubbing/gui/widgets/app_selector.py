@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from live_dubbing.audio.session import AudioSessionInfo
+from live_dubbing.audio.session import AudioSessionInfo, audio_output_menu_labels
 
 logger = structlog.get_logger(__name__)
 
@@ -91,10 +91,7 @@ class AppSelectorWidget(QWidget):
         self._combo.blockSignals(True)
         self._combo.clear()
 
-        for session in sessions:
-            display_name = session.name
-            if session.is_muted:
-                display_name += " (Muted)"
+        for session, display_name in zip(sessions, audio_output_menu_labels(sessions)):
             self._combo.addItem(display_name, session)
 
         # Restore selection if possible
@@ -156,7 +153,7 @@ class AppSelectorWidget(QWidget):
         """Update the info label based on current state."""
         if not self._sessions:
             self._info_label.setText(
-                "No applications with audio detected. Click Refresh to scan."
+                "No applications are outputting audio. Click Refresh to scan again."
             )
         elif self._selected_session:
             self._info_label.setText(
@@ -164,7 +161,7 @@ class AppSelectorWidget(QWidget):
             )
         else:
             self._info_label.setText(
-                f"{len(self._sessions)} application(s) with audio available."
+                f"{len(self._sessions)} application(s) currently outputting audio."
             )
 
     def set_enabled(self, enabled: bool) -> None:
