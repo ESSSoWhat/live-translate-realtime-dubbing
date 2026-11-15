@@ -851,7 +851,7 @@ class Orchestrator:
             voice = await vm.create_dynamic_clone()
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
-                {"voice_id": voice.voice_id, "name": voice.name},
+                vm.clone_event_data(voice),
             )
             return voice
         except Exception as e:
@@ -884,7 +884,7 @@ class Orchestrator:
             )
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
-                {"voice_id": voice.voice_id, "name": voice.name},
+                vm.clone_event_data(voice),
             )
             return voice
         except Exception as e:

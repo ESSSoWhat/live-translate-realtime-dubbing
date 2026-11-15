@@ -1693,7 +1693,13 @@ class MainWindow(QMainWindow):
         """Handle voice clone completed."""
         self._clone_progress.setValue(100)
         voice_name = event.data.get("name", "")
-        done_label = f"Voice cloned: {voice_name}" if voice_name else "Voice cloned!"
+        if event.data.get("reused"):
+            profile_name = event.data.get("profile_name") or voice_name or "existing profile"
+            done_label = f"Using {profile_name}"
+            status = f"Using existing profile: {profile_name}"
+        else:
+            done_label = f"Voice cloned: {voice_name}" if voice_name else "Voice cloned!"
+            status = f"Voice cloned: {voice_name}" if voice_name else ""
         self._clone_progress.setFormat(done_label)
         self._clone_progress.setStyleSheet(progress_css(OK))
         # Re-enable capture/import buttons
@@ -1707,8 +1713,8 @@ class MainWindow(QMainWindow):
         if self._dubbed_window is not None:
             self._dubbed_window.set_cloning(False)
             self._sync_overlay_state()
-            if voice_name:
-                self._dubbed_window.set_status(f"Voice cloned: {voice_name}")
+            if status:
+                self._dubbed_window.set_status(status)
 
     @pyqtSlot(object)
     def _on_clone_failed(self, event: Event) -> None:

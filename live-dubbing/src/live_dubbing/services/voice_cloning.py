@@ -42,6 +42,7 @@ class ClonedVoice:
     sample_duration_sec: float = 0.0
     is_dynamic: bool = False
     speaker_id: str | None = None
+    reused_existing: bool = False
 
 
 class VoiceCloneManager:
@@ -235,6 +236,14 @@ class VoiceCloneManager:
             self._capture_speaker_label = None
             self._capture_profile_id = None
 
+        matched, _score = self._similar_profile(combined_audio)
+        if matched is not None:
+            reused = self._reuse_assigned_voice(matched, combined_audio)
+            if reused is not None:
+                return reused
+            link_profile_id = matched.id
+            label = label or matched.name
+
         # Convert to bytes (WAV format)
         audio_bytes = self._audio_to_wav(combined_audio)
 
@@ -306,6 +315,17 @@ class VoiceCloneManager:
         if not name:
             name = os.path.splitext(os.path.basename(file_path))[0]
 
+        file_audio = self._read_mono_audio(file_path)
+        link_profile_id: str | None = None
+        if file_audio is not None:
+            matched, _score = self._similar_profile(file_audio)
+            if matched is not None:
+                reused = self._reuse_assigned_voice(matched, file_audio)
+                if reused is not None:
+                    return reused
+                link_profile_id = matched.id
+                speaker_label = speaker_label or matched.name
+
         voice_id = await self._service.clone_voice_from_file(
             file_path=file_path,
             name=name,
@@ -320,26 +340,13 @@ class VoiceCloneManager:
 
         self._voice_cache[voice_id] = cloned_voice
 
-        # Register speaker embedding on a profile and assign this clone
-        try:
-            import soundfile as sf
-
-            file_audio, sr = sf.read(file_path, dtype="float32")
-            if file_audio.ndim > 1:
-                file_audio = file_audio.mean(axis=1)
-            if sr != self._sample_rate:
-                from scipy import signal
-
-                num = int(len(file_audio) * self._sample_rate / sr)
-                file_audio = np.asarray(signal.resample(file_audio, num), dtype=np.float32)
+        if file_audio is not None:
             self._link_clone_to_profile(
                 audio=file_audio,
                 voice_id=voice_id,
                 label=speaker_label or name,
-                profile_id=None,
+                profile_id=link_profile_id,
             )
-        except Exception as e:
-            logger.warning("Could not register speaker embedding from file", error=str(e))
 
         # Persist to store
         if self._voice_store:
@@ -688,6 +695,93 @@ class VoiceCloneManager:
             n += 1
         return n
 
+    def clone_event_data(self, voice: ClonedVoice) -> dict[str, str | bool]:
+        """Event payload for a finished clone, including a reused profile."""
+        data: dict[str, str | bool] = {
+            "voice_id": voice.voice_id,
+            "name": voice.name,
+            "reused": voice.reused_existing,
+        }
+        if not voice.reused_existing or not self._active_profile_id:
+            return data
+        profile = self._profiles.get(self._active_profile_id)
+        if profile is None:
+            return data
+        data["profile_id"] = profile.id
+        data["profile_name"] = profile.name
+        data["name"] = profile.name
+        return data
+
+    def _similar_profile(self, audio: np.ndarray) -> tuple[VoiceProfile | None, float]:
+        """Return the existing profile this clip already sounds like."""
+        if len(audio) < int(self._sample_rate * 0.5):
+            return None, 0.0
+        profile_id, score = self._speaker_id.identify(audio)
+        if profile_id and profile_id in self._profiles:
+            return self._profiles[profile_id], score
+        return None, score
+
+    def _reuse_assigned_voice(
+        self,
+        profile: VoiceProfile,
+        audio: np.ndarray,
+    ) -> ClonedVoice | None:
+        """Blend *audio* into *profile* and return its voice when one is assigned."""
+        voice_id = profile.assigned_voice_id
+        if not voice_id:
+            return None
+        voice = self._voice_cache.get(voice_id)
+        if voice is None:
+            return None
+        self._combine_profile_embedding(profile, audio)
+        self._profiles[profile.id] = profile
+        self._active_profile_id = profile.id
+        try:
+            self._profile_store.save(profile)
+        except Exception as e:
+            logger.warning("Could not persist combined profile", error=str(e))
+        logger.info(
+            "Combined sample into existing profile",
+            profile_id=profile.id,
+            profile_name=profile.name,
+            voice_id=voice_id,
+            samples=profile.embedding_samples,
+        )
+        return replace(voice, reused_existing=True)
+
+    def _combine_profile_embedding(self, profile: VoiceProfile, audio: np.ndarray) -> None:
+        """Running-mean the new clip into the profile voiceprint."""
+        if len(audio) < int(self._sample_rate * 0.5):
+            return
+        prior = profile.embedding_samples if profile.embedding else 0
+        blended = self._speaker_id.blend_speaker(
+            profile.id,
+            audio,
+            prior_count=max(prior, 1),
+        )
+        if blended is None:
+            return
+        profile.embedding = [float(value) for value in blended.tolist()]
+        profile.embedding_samples = prior + 1 if prior > 0 else 1
+
+    def _read_mono_audio(self, file_path: str) -> np.ndarray | None:
+        """Load a file as mono float32 at the profile sample rate."""
+        try:
+            import soundfile as sf
+
+            audio, sample_rate = sf.read(file_path, dtype="float32")
+            if getattr(audio, "ndim", 1) > 1:
+                audio = audio.mean(axis=1)
+            if sample_rate != self._sample_rate and len(audio) > 0:
+                from scipy import signal
+
+                count = int(len(audio) * self._sample_rate / sample_rate)
+                audio = np.asarray(signal.resample(audio, count), dtype=np.float32)
+            return np.asarray(audio, dtype=np.float32)
+        except Exception as e:
+            logger.warning("Could not read audio for profile match", error=str(e))
+            return None
+
     def _link_clone_to_profile(
         self,
         audio: np.ndarray,
@@ -699,11 +793,12 @@ class VoiceCloneManager:
         profile: VoiceProfile | None = None
         if profile_id and profile_id in self._profiles:
             profile = self._profiles[profile_id]
-        else:
-            # Prefer matching by name / label
-            for p in self._profiles.values():
-                if p.name == label:
-                    profile = p
+        if profile is None:
+            profile, _score = self._similar_profile(audio)
+        if profile is None:
+            for existing in self._profiles.values():
+                if existing.name == label:
+                    profile = existing
                     break
 
         if profile is None:
@@ -711,10 +806,13 @@ class VoiceCloneManager:
                 id=VoiceProfileStore.new_id(),
                 name=label or f"Speaker {self._next_speaker_number()}",
             )
+            emb = self._speaker_id.register_speaker(profile.id, audio)
+            if emb is not None:
+                profile.embedding = [float(value) for value in emb.tolist()]
+                profile.embedding_samples = 1
+        else:
+            self._combine_profile_embedding(profile, audio)
 
-        emb = self._speaker_id.register_speaker(profile.id, audio)
-        if emb is not None:
-            profile.embedding = emb.tolist()
         profile.assigned_voice_id = voice_id
         self._profiles[profile.id] = profile
         if self._default_profile_id is None:
