@@ -20,6 +20,9 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+# Callbacks Windows may still invoke after a timed-out activation.
+_PENDING_ACTIVATIONS: list[object] = []
+
 # Windows build 20348 = 21H2 Server / Windows 11
 PROCESS_LOOPBACK_MIN_BUILD = 20348
 
@@ -294,8 +297,21 @@ def _activate_process_loopback(mmdevapi: Any, pid: int) -> ctypes.c_void_p:
         ctypes.cast(act_fn, ctypes.c_void_p),
     )
     completion_obj = (ctypes.c_void_p * 2)(ctypes.addressof(vtbl), 0)
-    # Keep the callback objects alive until activation returns.
-    _keepalive = (qi_fn, addref_fn, release_fn, act_fn, vtbl, completion_obj, propvar)
+    # The blob points at this buffer. Keep both until Windows finishes the call,
+    # including when the wait times out and this function has already returned.
+    keepalive = (
+        qi_fn,
+        addref_fn,
+        release_fn,
+        act_fn,
+        vtbl,
+        completion_obj,
+        propvar,
+        activation_params,
+        activation_params_buffer,
+        iid_audio_client,
+    )
+    _PENDING_ACTIVATIONS.append(keepalive)
 
     activate = mmdevapi.ActivateAudioInterfaceAsync
     activate.argtypes = [
@@ -325,7 +341,10 @@ def _activate_process_loopback(mmdevapi: Any, pid: int) -> ctypes.c_void_p:
     audio_client = result_holder.get("audio_client")
     if not audio_client:
         raise RuntimeError("Activation did not return IAudioClient")
-    del _keepalive
+    try:
+        _PENDING_ACTIVATIONS.remove(keepalive)
+    except ValueError:
+        pass
     return audio_client
 
 
