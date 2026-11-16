@@ -10,6 +10,7 @@ import asyncio
 import io
 import json
 import re
+import time
 
 import httpx
 import structlog
@@ -28,7 +29,12 @@ from app.models.responses import (
 )
 from app.services.supabase_client import get_supabase
 from app.services.text_filter import strip_non_verbal
-from app.services.usage import QuotaExceededError, check_and_record_quota, check_quota
+from app.services.usage import (
+    QuotaExceededError,
+    check_and_record_quota,
+    check_quota,
+    refund_usage,
+)
 from app.services.voice_library import (
     CLONE_LABELS,
     clone_ids_to_free,
@@ -53,6 +59,68 @@ def _require_voice_id(voice_id: str) -> str:
     if not _VOICE_ID_RE.match(voice_id or ""):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid voice id")
     return voice_id
+
+
+# voice_id -> (expires_at, owner user ids). Speech requests are frequent (one per
+# dubbed line), so the ownership row is cached briefly instead of queried every time.
+_VOICE_OWNER_TTL_SECONDS = 300.0
+_VOICE_OWNER_CACHE_MAX = 4096
+_voice_owner_cache: dict[str, tuple[float, frozenset[str]]] = {}
+
+
+def _forget_voice_owner(voice_id: str) -> None:
+    _voice_owner_cache.pop(voice_id, None)
+
+
+async def _voice_owner_ids(voice_id: str) -> frozenset[str]:
+    """User IDs recorded as owning ``voice_id`` (empty for premade/library voices)."""
+    now = time.monotonic()
+    hit = _voice_owner_cache.get(voice_id)
+    if hit is not None and hit[0] > now:
+        return hit[1]
+    sb = await get_supabase()
+    rows = await sb.table("user_voices").select("user_id").eq("voice_id", voice_id).execute()
+    owners = frozenset(
+        str(r.get("user_id") or "") for r in (rows.data or []) if r.get("user_id")
+    )
+    if len(_voice_owner_cache) >= _VOICE_OWNER_CACHE_MAX:
+        _voice_owner_cache.clear()
+    _voice_owner_cache[voice_id] = (now + _VOICE_OWNER_TTL_SECONDS, owners)
+    return owners
+
+
+async def _require_voice_access(voice_id: str, user_id: str) -> None:
+    """Refuse speech in a cloned voice that belongs to a different account.
+
+    Voices with no ownership row are the shared server voices (premade/library) and
+    stay usable by everyone. Fails closed when the lookup itself fails.
+    """
+    try:
+        owners = await _voice_owner_ids(voice_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Voice ownership lookup failed", error=str(exc)[:200])
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Voice ownership check unavailable; try again shortly.",
+        ) from exc
+    if owners and str(user_id) not in owners:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This cloned voice belongs to another account.",
+        )
+
+
+async def _refund(user_id: str, charges: list[tuple[str, int]]) -> None:
+    """Return reserved quota after a failed upstream call (best effort)."""
+    for event_type, quantity in charges:
+        await refund_usage(user_id, event_type, quantity)
+
+
+def _is_not_found(exc: Exception) -> bool:
+    if getattr(exc, "status_code", None) == 404:
+        return True
+    lower = str(exc).lower()
+    return "voice_not_found" in lower or "status_code: 404" in lower
 
 
 async def _read_audio_upload(audio: UploadFile) -> bytes:
@@ -239,9 +307,10 @@ async def transcribe(
     rate = max(8000, min(48000, rate))
 
     duration_seconds = _audio_duration_seconds(audio_bytes, audio.content_type, rate)
+    stt_seconds = int(round(duration_seconds))
 
     try:
-        await check_and_record_quota(user["id"], "stt", int(round(duration_seconds)))
+        await check_and_record_quota(user["id"], "stt", stt_seconds)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
     except LookupError as exc:
@@ -250,8 +319,8 @@ async def transcribe(
         logger.exception("STT quota check failed", user_id=user["id"])
         raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
-    client = _elevenlabs()
     try:
+        client = _elevenlabs()
         # Named tuple so ElevenLabs multipart includes a filename (bare BytesIO can 500 upstream).
         audio_file = ("audio.wav", audio_bytes, "audio/wav")
         result = await client.speech_to_text.convert(
@@ -259,9 +328,11 @@ async def transcribe(
             model_id="scribe_v1",
             language_code=None if language == "auto" else language,
         )
-    except HTTPException:
-        raise
     except Exception as exc:
+        # Quota is reserved up front; give it back when the transcription did not happen.
+        await _refund(user["id"], [("stt", stt_seconds)])
+        if isinstance(exc, HTTPException):
+            raise
         raise _elevenlabs_upstream_error("Transcription", exc) from exc
 
     lang = getattr(result, "language_code", None) or language or "auto"
@@ -286,6 +357,7 @@ async def synthesize(
     char_count = len(text)
     # ~14 chars/sec spoken English — aligns sold dubbing minutes with TTS output.
     estimated_dub_sec = max(1, int(round(char_count / 14.0)))
+    await _require_voice_access(body.voice_id, user["id"])
 
     try:
         await check_and_record_quota(user["id"], "tts", char_count)
@@ -297,18 +369,11 @@ async def synthesize(
         logger.exception("TTS quota check failed", user_id=user["id"])
         raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
-    try:
-        await check_and_record_quota(user["id"], "dub", estimated_dub_sec)
-    except QuotaExceededError as exc:
-        raise _quota_error(exc) from exc
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Dubbing quota check failed", user_id=user["id"])
-        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
+    await _reserve_dub_after_tts(user["id"], char_count, estimated_dub_sec, "Dubbing quota check failed")
 
-    client = _elevenlabs()
+    charges = [("tts", char_count), ("dub", estimated_dub_sec)]
     try:
+        client = _elevenlabs()
         audio_stream = client.text_to_speech.convert(
             body.voice_id,
             text=text,
@@ -319,9 +384,10 @@ async def synthesize(
             ),
         )
         audio_data = b"".join([chunk async for chunk in audio_stream])
-    except HTTPException:
-        raise
     except Exception as exc:
+        await _refund(user["id"], charges)
+        if isinstance(exc, HTTPException):
+            raise
         raise _elevenlabs_upstream_error("Synthesis", exc) from exc
 
     # Reconcile dubbing seconds if actual audio is longer than the estimate.
@@ -343,11 +409,31 @@ async def synthesize(
     return StreamingResponse(io.BytesIO(audio_data), media_type="audio/mpeg")
 
 
-async def _stream_tts_chunks(voice_id: str, text: str, model_id: str, stability: float, similarity_boost: float):
-    """Yield TTS audio chunks from ElevenLabs stream API."""
+async def _reserve_dub_after_tts(user_id: str, char_count: int, dub_sec: int, log_msg: str) -> None:
+    """Reserve dubbing seconds; if that fails, give back the TTS chars already reserved."""
+    try:
+        await check_and_record_quota(user_id, "dub", dub_sec)
+    except Exception as exc:
+        await _refund(user_id, [("tts", char_count)])
+        if isinstance(exc, QuotaExceededError):
+            raise _quota_error(exc) from exc
+        if isinstance(exc, LookupError):
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        logger.exception(log_msg, user_id=user_id)
+        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
+
+
+async def _open_tts_stream(
+    voice_id: str, text: str, model_id: str, stability: float, similarity_boost: float
+) -> tuple[httpx.AsyncClient, httpx.Response]:
+    """Open the ElevenLabs stream and check its status before the client sees a 200.
+
+    Upstream errors become a proper HTTP error response instead of a broken 200 stream.
+    """
     cfg = get_settings()
-    async with httpx.AsyncClient(timeout=60.0) as http:
-        async with http.stream(
+    http = httpx.AsyncClient(timeout=60.0)
+    try:
+        request = http.build_request(
             "POST",
             f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
             headers={"xi-api-key": cfg.elevenlabs_api_key, "Content-Type": "application/json"},
@@ -357,20 +443,33 @@ async def _stream_tts_chunks(voice_id: str, text: str, model_id: str, stability:
                 "voice_settings": {"stability": stability, "similarity_boost": similarity_boost},
                 "output_format": "mp3_44100_128",
             },
-        ) as response:
-            if response.status_code != 200:
-                err_body = await response.aread()
-                logger.error(
-                    "ElevenLabs stream error",
-                    status=response.status_code,
-                    body=err_body[:500],
-                )
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=err_body.decode("utf-8", errors="replace") if err_body else "Stream failed",
-                )
-            async for chunk in response.aiter_bytes(chunk_size=4096):
-                yield chunk
+        )
+        response = await http.send(request, stream=True)
+    except Exception:
+        await http.aclose()
+        raise
+    if response.status_code != 200:
+        err_body = await response.aread()
+        await response.aclose()
+        await http.aclose()
+        raise _elevenlabs_upstream_error(
+            "Synthesis",
+            Exception(
+                f"status_code: {response.status_code}, "
+                f"body: {err_body[:800].decode('utf-8', errors='replace')}"
+            ),
+        )
+    return http, response
+
+
+async def _relay_tts_stream(http: httpx.AsyncClient, response: httpx.Response):
+    """Yield audio chunks from an opened ElevenLabs stream, closing it afterwards."""
+    try:
+        async for chunk in response.aiter_bytes(chunk_size=4096):
+            yield chunk
+    finally:
+        await response.aclose()
+        await http.aclose()
 
 
 @router.post("/synthesize/stream")
@@ -383,9 +482,11 @@ async def synthesize_stream(
     text = strip_non_verbal(body.text or "")
     if not text:
         raise HTTPException(status_code=400, detail="Text must not be empty")
-    estimated_dub_sec = max(1, int(round(len(text) / 14.0)))
+    char_count = len(text)
+    estimated_dub_sec = max(1, int(round(char_count / 14.0)))
+    await _require_voice_access(body.voice_id, user["id"])
     try:
-        await check_and_record_quota(user["id"], "tts", len(text))
+        await check_and_record_quota(user["id"], "tts", char_count)
     except QuotaExceededError as exc:
         raise _quota_error(exc) from exc
     except LookupError as exc:
@@ -393,25 +494,23 @@ async def synthesize_stream(
     except Exception as exc:
         logger.exception("TTS stream quota check failed", user_id=user["id"])
         raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
+    await _reserve_dub_after_tts(
+        user["id"], char_count, estimated_dub_sec, "Dubbing stream quota check failed"
+    )
     try:
-        await check_and_record_quota(user["id"], "dub", estimated_dub_sec)
-    except QuotaExceededError as exc:
-        raise _quota_error(exc) from exc
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Dubbing stream quota check failed", user_id=user["id"])
-        raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
-    return StreamingResponse(
-        _stream_tts_chunks(
+        http, response = await _open_tts_stream(
             body.voice_id,
             text,
             body.model_id,
             body.stability,
             body.similarity_boost,
-        ),
-        media_type="audio/mpeg",
-    )
+        )
+    except Exception as exc:
+        await _refund(user["id"], [("tts", char_count), ("dub", estimated_dub_sec)])
+        if isinstance(exc, HTTPException):
+            raise
+        raise _elevenlabs_upstream_error("Synthesis", exc) from exc
+    return StreamingResponse(_relay_tts_stream(http, response), media_type="audio/mpeg")
 
 
 # ── Translation ──────────────────────────────────────────────────────────────
@@ -638,31 +737,44 @@ async def list_voices(user: dict = Depends(get_current_user)) -> list[VoiceItem]
 
 @router.delete("/voices/{voice_id}")
 async def delete_voice(voice_id: str, user: dict = Depends(get_current_user)) -> Response:  # noqa: B008
-    """Delete a cloned voice from ElevenLabs and ownership record if owned by user."""
+    """Delete a cloned voice the user owns: ElevenLabs first, then the ownership record.
+
+    Removing the record first would leave an untracked clone (still taking a library
+    slot and usable by ID) whenever the ElevenLabs delete failed.
+    """
     _require_voice_id(voice_id)
     client = _elevenlabs()
     try:
-        all_voices = await client.voices.get_all()
-        voice_meta = next((v for v in all_voices.voices if v.voice_id == voice_id), None)
-        if voice_meta is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice not found")
-        if getattr(voice_meta, "category", None) == "premade":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot delete premium or system voices")
         sb = await get_supabase()
-        delete_result = (
+        owned = (
             await sb.table("user_voices")
-            .delete()
+            .select("voice_id")
             .eq("voice_id", voice_id)
             .eq("user_id", user["id"])
+            .maybe_single()
             .execute()
         )
-        if not delete_result.data or len(delete_result.data) == 0:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to delete this voice")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Voice ownership lookup failed", error=str(exc)[:200])
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Voice ownership check unavailable; try again shortly.",
+        ) from exc
+    if owned is None or not owned.data:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to delete this voice")
+
+    try:
         await client.voices.delete(voice_id)
-    except HTTPException:
-        raise
     except Exception as exc:
-        raise _elevenlabs_upstream_error("Delete voice", exc) from exc
+        # Already gone upstream: still clear the record so the user is not stuck.
+        if not _is_not_found(exc):
+            raise _elevenlabs_upstream_error("Delete voice", exc) from exc
+
+    try:
+        await sb.table("user_voices").delete().eq("voice_id", voice_id).eq("user_id", user["id"]).execute()
+    except Exception as exc:  # noqa: BLE001 - the voice itself is gone; a stale row is harmless
+        logger.warning("Deleted ElevenLabs voice but not the ownership row", voice_id=voice_id, error=str(exc)[:200])
+    _forget_voice_owner(voice_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -759,6 +871,7 @@ async def _free_voice_library_slots(api_key: str, user_id: str) -> int:
             if resp.status_code >= 400 and resp.status_code != 404:
                 continue
             removed += 1
+            _forget_voice_owner(voice_id)
             if voice_id in user_owned:
                 try:
                     await sb.table("user_voices").delete().eq("voice_id", voice_id).eq(
@@ -886,17 +999,20 @@ async def clone_voice(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Voice created but failed to record ownership; please try again or contact support.",
         ) from exc
+    _forget_voice_owner(voice_id)
 
     try:
         await check_and_record_quota(user["id"], "clone", 1)
     except QuotaExceededError as exc:
         # Race: another clone consumed the slot after our pre-check.
         try:
+            # ElevenLabs first, so a failure never leaves an untracked clone behind.
+            client = _elevenlabs()
+            await client.voices.delete(voice_id)
             await sb.table("user_voices").delete().eq("voice_id", voice_id).eq(
                 "user_id", user["id"]
             ).execute()
-            client = _elevenlabs()
-            await client.voices.delete(voice_id)
+            _forget_voice_owner(voice_id)
         except Exception as cleanup_exc:
             logger.warning(
                 "Clone quota race cleanup failed",
