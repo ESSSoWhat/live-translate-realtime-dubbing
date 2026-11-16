@@ -30,6 +30,8 @@ logger = structlog.get_logger(__name__)
 
 # Premade Rachel voice used when no profile has an assigned clone.
 _FALLBACK_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
+# Temporary speaker key for speech held until Instant Voice Clone runs.
+_LINE_CLONE_BUFFER_KEY = "__line_clone_buffer__"
 
 
 @dataclass
@@ -256,6 +258,7 @@ class VoiceCloneManager:
         """Clear speech held for the next Instant Voice Clone."""
         self._line_clone_parts = []
         self._line_clone_duration_sec = 0.0
+        self._speaker_id.unregister_speaker(_LINE_CLONE_BUFFER_KEY)
 
     def _min_line_clone_sec(self) -> float:
         """Seconds of speech required before creating a new Instant clone."""
@@ -264,6 +267,30 @@ class VoiceCloneManager:
         if configured < 3.0:
             return max(0.5, configured)
         return min(configured, 8.0)
+
+    def _append_line_clone_speech(self, speech: np.ndarray) -> None:
+        """Keep buffered clone audio on one speaker; reset when the speaker changes."""
+        if self._line_clone_parts:
+            same_score = self._speaker_id.score_speaker(_LINE_CLONE_BUFFER_KEY, speech)
+            if same_score < 0.55:
+                logger.info(
+                    "Starting a new clone buffer for a different speaker",
+                    similarity=round(same_score, 3),
+                    dropped_sec=round(self._line_clone_duration_sec, 2),
+                )
+                self.reset_line_clone_buffer()
+
+        duration = float(speech.size) / self._sample_rate
+        self._line_clone_parts.append(speech)
+        self._line_clone_duration_sec += duration
+        if self._speaker_id.get_embedding(_LINE_CLONE_BUFFER_KEY) is None:
+            self._speaker_id.register_speaker(_LINE_CLONE_BUFFER_KEY, speech)
+        else:
+            self._speaker_id.blend_speaker(
+                _LINE_CLONE_BUFFER_KEY,
+                speech,
+                prior_count=max(1, len(self._line_clone_parts) - 1),
+            )
 
     async def voice_for_utterance(self, audio: np.ndarray) -> ClonedVoice | None:
         """Reuse a matching profile voice, or clone after enough speech.
@@ -283,9 +310,7 @@ class VoiceCloneManager:
                 self.reset_line_clone_buffer()
                 return reused
 
-        duration = float(speech.size) / self._sample_rate
-        self._line_clone_parts.append(speech)
-        self._line_clone_duration_sec += duration
+        self._append_line_clone_speech(speech)
 
         if self._line_clone_duration_sec < self._min_line_clone_sec():
             logger.info(

@@ -157,6 +157,25 @@ async def test_short_lines_wait_for_enough_speech_before_cloning(tmp_path) -> No
 
 
 @pytest.mark.asyncio
+async def test_clone_buffer_resets_when_the_speaker_changes(tmp_path) -> None:
+    service = Mock()
+    service.clone_voice = AsyncMock(return_value="voice-new")
+    manager = VoiceCloneManager(
+        service,
+        min_sample_duration_sec=5.0,
+        profile_store=VoiceProfileStore(str(tmp_path / "profiles.json")),
+    )
+    await manager.voice_for_utterance(_tone(180, seconds=2.0))
+    assert manager._line_clone_duration_sec == pytest.approx(2.0, abs=0.05)
+
+    noise = np.random.default_rng(7).uniform(-0.6, 0.6, 32000).astype(np.float32)
+    await manager.voice_for_utterance(noise)
+    # A clearly different clip should drop the previous speaker's buffer.
+    assert manager._line_clone_duration_sec == pytest.approx(2.0, abs=0.05)
+    assert service.clone_voice.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_translated_line_keeps_its_voice_after_the_next_line(tmp_path) -> None:
     from live_dubbing.core.events import EventBus
     from live_dubbing.processing.pipeline import PipelineConfig, ProcessingPipeline
