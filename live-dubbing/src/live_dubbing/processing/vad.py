@@ -70,6 +70,12 @@ class SileroVAD:
         self._silence_start_ms: int | None = None
         self._current_time_ms = 0
 
+        # Samples left over after the last full model window. Capture delivers 100 ms
+        # chunks (1600 samples) but Silero takes 512-sample windows, so without this
+        # 64 samples of every chunk were never seen by the (stateful) model.
+        self._carry = np.zeros(0, dtype=np.float32)
+        self._last_prob = 0.0
+
     def load_model(self) -> None:
         """Load the Silero VAD model.
 
@@ -123,32 +129,35 @@ class SileroVAD:
             # Process larger chunks by splitting into 512-sample windows
             chunk_size = 512 if self._sample_rate == 16000 else 256
 
-            # If audio is smaller than chunk_size, pad it
-            if len(audio) < chunk_size:
-                audio = np.pad(audio, (0, chunk_size - len(audio)))
+            samples = np.asarray(audio, dtype=np.float32).reshape(-1)
+            if self._carry.size:
+                samples = np.concatenate((self._carry, samples))
+            if len(samples) < chunk_size and not self._carry.size and len(audio) > 0:
+                # A lone short chunk: pad it so it still gets a score (old behaviour).
+                samples = np.pad(samples, (0, chunk_size - len(samples)))
+
+            n_windows = len(samples) // chunk_size
+            usable = n_windows * chunk_size
+            # Keep the tail for the next call so the stateful model sees continuous audio.
+            self._carry = samples[usable:].copy()
 
             # Process in 512-sample chunks and take max speech probability
             speech_probs: list[float] = []
-            for i in range(0, len(audio) - chunk_size + 1, chunk_size):
-                chunk = audio[i:i + chunk_size]
-
-                # Convert to torch tensor
-                audio_copy = np.array(chunk, dtype=np.float32, copy=True)
-                audio_tensor = torch.from_numpy(audio_copy)
-
-                # Ensure correct shape [1, num_samples]
-                if audio_tensor.dim() == 1:
-                    audio_tensor = audio_tensor.unsqueeze(0)
-
-                # Run VAD on this chunk
+            if n_windows:
+                if self._model is None:
+                    raise RuntimeError("VAD model not loaded")
+                windows = torch.from_numpy(np.ascontiguousarray(samples[:usable])).view(
+                    n_windows, chunk_size
+                )
                 with torch.no_grad():
-                    if self._model is None:
-                        raise RuntimeError("VAD model not loaded")
-                    prob = self._model(audio_tensor, self._sample_rate).item()
-                    speech_probs.append(prob)
+                    for row in range(n_windows):
+                        out = self._model(windows[row : row + 1], self._sample_rate)
+                        speech_probs.append(float(out.item() if hasattr(out, "item") else out))
 
-            # Use max probability across all chunks (if any chunk has speech, consider it speech)
-            speech_prob = max(speech_probs) if speech_probs else 0.0
+            # Use max probability across all chunks (if any chunk has speech, consider it speech).
+            # With no complete window yet, reuse the last score instead of reporting silence.
+            speech_prob = max(speech_probs) if speech_probs else self._last_prob
+            self._last_prob = speech_prob
             is_speech = speech_prob >= self._threshold
 
             # Debug logging for first few chunks and periodically (use info for visibility)
@@ -284,6 +293,8 @@ class SileroVAD:
         self._speech_start_ms = None
         self._silence_start_ms = None
         self._current_time_ms = 0
+        self._carry = np.zeros(0, dtype=np.float32)
+        self._last_prob = 0.0
 
         # Reset model state if needed
         if self._model is not None:

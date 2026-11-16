@@ -5,8 +5,13 @@ name: MLOps CI/CD
 
 on:
   workflow_dispatch:
+  # Only run when MLOps files change. It used to run on every push to main, freeing
+  # runner disk and installing Terraform/docker/kubernetes without testing anything.
   push:
     branches: [main, master]
+    paths:
+      - "mlops/**"
+      - ".github/workflows/mlops-ci-cd.yml"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

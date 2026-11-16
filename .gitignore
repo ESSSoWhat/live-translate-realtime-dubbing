@@ -80,3 +80,12 @@ credentials.json
 *.pem
 *.key
 .credentials
+
+# Gradle daemon state created when HOME resolves to a literal "~" folder
+**/~/
+
+# Local tool state and generated reports (never commit)
+.emergent/
+test_reports/
+wix-error.log
+debug.log

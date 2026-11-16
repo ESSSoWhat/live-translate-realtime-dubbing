@@ -11,7 +11,7 @@
   "devDependencies": {
     "@types/react": "^16.0.0",
     "@types/react-dom": "^16.0.0",
-    "@wix/astro": "^2.0.0",
+    "@wix/astro": "^2.75.5",
     "@wix/cli": "^1.1.172",
     "@wix/cli-app": "^1.1.172",
     "@wix/sdk-types": "^1.0.0",
@@ -28,5 +28,8 @@
     "generate": "wix app generate",
     "logs": "wix app logs",
     "typecheck": "tsc --noEmit"
+  },
+  "overrides": {
+    "vite": "^6.4.4"
   }
 }
