@@ -190,8 +190,10 @@ class PipelineConfig:
     voice_similarity: float = 0.75
     min_voice_capture_sec: float = 30.0
     use_premade_voice_id: str | None = None  # Skip cloning; use this voice
+    preferred_voice_id: str | None = None  # Last saved clone / profile voice
     use_dubbing_api: bool = False  # Dubbing API is batch (~30s latency); use STT+translate+TTS for real-time
     auto_clone_voice: bool = True  # Auto-clone speaker voice on start
+    preserve_context: bool = True  # Send recent lines to the translator
     usage_reporter: "UsageReporter | None" = None  # Report usage when using direct ElevenLabs
 
 
@@ -296,6 +298,7 @@ class ProcessingPipeline:
         self._stt_queue: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=30)
         self._tts_queue: asyncio.Queue[TtsItem] = asyncio.Queue(maxsize=20)
         self._line_clone_warned = False
+        self._translation_context: list[str] = []
         self._output_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=50)
 
         # Tasks
@@ -368,22 +371,14 @@ class ProcessingPipeline:
                 {},
             )
 
-        # Default fallback voice ID (ElevenLabs "Rachel")
-        _FALLBACK_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
-
-        # Always start in PROCESSING state so STT/translate/TTS work immediately.
-        # Use a premade voice for TTS right away; swap to cloned voice when ready.
-        premade_id = (self._config.use_premade_voice_id or "").strip()
-        initial_voice_id = premade_id or _FALLBACK_VOICE_ID
-        self._cloned_voice = ClonedVoice(
-            voice_id=initial_voice_id,
-            name="Premade (temporary)" if not premade_id else "Premade",
-            is_dynamic=False,
-        )
+        # Prefer a saved/premade clone so early lines are not Rachel.
+        self._cloned_voice = self._initial_session_voice()
+        self._translation_context = []
         self._state = PipelineState.PROCESSING
         self._processing_start_time = time.time()
         self._last_stt_flush_time = time.time()
 
+        premade_id = (self._config.use_premade_voice_id or "").strip()
         if premade_id:
             # User explicitly chose a premade voice — no cloning needed
             self._stats.voice_clone_ready = True
@@ -393,15 +388,22 @@ class ProcessingPipeline:
             )
             logger.info("Using premade voice, skipping clone", voice_id=premade_id)
         elif self._voice_manager and self._config.auto_clone_voice:
-            # Each translated line is cloned from that line. Speak with the
-            # fallback voice only until the first line's clone is ready.
+            seeded = bool((self._config.preferred_voice_id or "").strip())
+            temporary = self._cloned_voice.voice_id == "21m00Tcm4TlvDq8ikWAM" and not seeded
+            if not temporary:
+                self._stats.voice_clone_ready = True
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
-                {"voice_id": self._cloned_voice.voice_id, "is_temporary": True},
+                {
+                    "voice_id": self._cloned_voice.voice_id,
+                    "is_temporary": temporary,
+                    "name": self._cloned_voice.name,
+                },
             )
             logger.info(
-                "Each translated line will use a clone of that line",
-                fallback_voice=initial_voice_id,
+                "Lines reuse a matching profile or clone after enough speech",
+                session_voice=self._cloned_voice.voice_id,
+                session_voice_name=self._cloned_voice.name,
             )
         else:
             self._stats.voice_clone_ready = True
@@ -449,9 +451,12 @@ class ProcessingPipeline:
         # Reset state
         self._speech_buffer = []
         self._speech_buffer_duration_sec = 0.0
+        self._translation_context = []
         self._output_suppress_until = 0.0
         self._output_playing = False
         self._is_cloning_in_background = False
+        if self._voice_manager:
+            self._voice_manager.reset_line_clone_buffer()
         self._vad.reset_state()
 
         # Shutdown VAD executor (don't wait for pending tasks)
@@ -502,28 +507,106 @@ class ProcessingPipeline:
             "output": self._output_queue.qsize(),
         }
 
+    def _initial_session_voice(self) -> ClonedVoice:
+        """Pick the first TTS voice: premade, saved clone/profile, then Rachel."""
+        _FALLBACK_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
+        premade_id = (self._config.use_premade_voice_id or "").strip()
+        if premade_id:
+            return ClonedVoice(voice_id=premade_id, name="Premade", is_dynamic=False)
+
+        preferred = (self._config.preferred_voice_id or "").strip()
+        if preferred and self._voice_manager:
+            cached = self._voice_manager.get_voice(preferred)
+            if cached is not None:
+                return cached
+            return ClonedVoice(
+                voice_id=preferred,
+                name="Saved voice",
+                is_dynamic=True,
+            )
+
+        if self._voice_manager:
+            profile = self._voice_manager.get_default_profile()
+            resolved = self._voice_manager.resolve_tts_voice(profile)
+            if resolved is not None and resolved.voice_id != _FALLBACK_VOICE_ID:
+                return resolved
+
+        return ClonedVoice(
+            voice_id=_FALLBACK_VOICE_ID,
+            name="Rachel",
+            is_dynamic=False,
+        )
+
+    def _translation_context_text(self) -> str:
+        """Recent source lines for the translator, when context is enabled."""
+        if not self._config.preserve_context or not self._translation_context:
+            return ""
+        return "\n".join(self._translation_context[-4:])
+
+    def _remember_translation_context(self, source_text: str) -> None:
+        cleaned = (source_text or "").strip()
+        if not cleaned:
+            return
+        self._translation_context.append(cleaned)
+        if len(self._translation_context) > 8:
+            self._translation_context = self._translation_context[-8:]
+
     async def _translate_for_tts(self, text: str, source_language: str) -> str:
         """Translate text to target language for TTS. Passthrough if same or no translator."""
+        from live_dubbing.processing.languages import normalize_language_code, same_language
+
         if not text.strip():
             return text
-        target = (self._config.target_language or "en").strip().lower()
+        target = normalize_language_code(self._config.target_language or "en")
+        source = normalize_language_code(source_language)
         if target == "auto":
             logger.debug("Translation skipped - target is 'auto'")
             return text
-        if target == source_language:
-            logger.debug("No translation: target equals source", target=target)
+        if same_language(target, source):
+            logger.debug(
+                "No translation: target equals source",
+                target=target,
+                source=source,
+            )
             return text
         if self._service and hasattr(self._service, "translate_text"):
             try:
+                context = self._translation_context_text()
                 logger.info(
                     "Translating for TTS",
-                    source=source_language,
+                    source=source,
                     target=target,
                     len=len(text),
+                    context_lines=len(self._translation_context),
                 )
-                return await self._service.translate_text(text, target)
+                translated = await self._service.translate_text(
+                    text,
+                    target,
+                    source_language=source if source != "auto" else "auto",
+                    context=context,
+                )
+                cleaned = (translated or "").strip()
+                if not cleaned:
+                    raise RuntimeError("Translator returned empty text")
+                if cleaned == text.strip():
+                    logger.warning(
+                        "Translator returned the source text unchanged",
+                        source=source,
+                        target=target,
+                    )
+                    self._event_bus.emit_warning(
+                        "Translation may be inaccurate for this line. "
+                        "The spoken text may still be the original language.",
+                        {"source": source, "target": target},
+                    )
+                self._remember_translation_context(text)
+                return cleaned
             except Exception as e:
                 logger.warning("Translation failed, using original", error=str(e))
+                self._event_bus.emit_warning(
+                    "Translation failed for this line. Playing the original text.",
+                    {"error": redact_secrets(str(e))[:100]},
+                )
                 return text
         logger.warning("Translation skipped - no translate_text on service")
         return text

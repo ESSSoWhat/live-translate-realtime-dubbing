@@ -387,14 +387,25 @@ _LANGUAGE_NAMES = {
 }
 
 
-async def _google_translate(text: str, target: str) -> str | None:
+async def _google_translate(
+    text: str,
+    target: str,
+    *,
+    source: str = "auto",
+) -> str | None:
     """Translate with Google's public JSON endpoints; each is rate limited separately, so try both."""
+    source_lang = (source or "auto").strip() or "auto"
     errors: list[str] = []
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             response = await client.get(
                 "https://clients5.google.com/translate_a/t",
-                params={"client": "dict-chrome-ex", "sl": "auto", "tl": target, "q": text},
+                params={
+                    "client": "dict-chrome-ex",
+                    "sl": source_lang,
+                    "tl": target,
+                    "q": text,
+                },
             )
             response.raise_for_status()
             first = (response.json() or [None])[0]
@@ -406,7 +417,13 @@ async def _google_translate(text: str, target: str) -> str | None:
         try:
             response = await client.get(
                 "https://translate.googleapis.com/translate_a/single",
-                params={"client": "gtx", "sl": "auto", "tl": target, "dt": "t", "q": text},
+                params={
+                    "client": "gtx",
+                    "sl": source_lang,
+                    "tl": target,
+                    "dt": "t",
+                    "q": text,
+                },
             )
             response.raise_for_status()
             sentences = response.json()[0] or []
@@ -445,20 +462,41 @@ async def translate(
     target = body.target_language.strip().lower()
     target_name = _LANGUAGE_NAMES.get(target, body.target_language)
 
+    source_name = _LANGUAGE_NAMES.get(
+        (source_lang or "auto").strip().lower(),
+        source_lang or "auto",
+    )
+    source_hint = (
+        f" The source language is {source_name}."
+        if source_lang and source_lang.strip().lower() not in {"", "auto"}
+        else ""
+    )
     if cfg.openai_api_key:
         try:
             from openai import AsyncOpenAI
             client = AsyncOpenAI(api_key=cfg.openai_api_key)
+            system = (
+                f"Translate the following text to {target_name}.{source_hint} "
+                "Return only the translated text, no explanations. "
+                "Preserve tone and keep spoken dialogue meaning accurate. "
+                "Remove non-verbal markers like [MUSIC], (laughter), [PAUSE]."
+            )
+            if (body.context or "").strip():
+                user_content = (
+                    "Recent conversation for context (do not translate this block):\n"
+                    f"{body.context.strip()}\n\n"
+                    f"Translate this line:\n{body.text}"
+                )
+            else:
+                user_content = body.text
             response = await asyncio.wait_for(
                 client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": (
-                            f"Translate the following text to {target_name}. "
-                            "Return only the translated text, no explanations."
-                        )},
-                        {"role": "user", "content": body.text},
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_content},
                     ],
+                    temperature=0.2,
                     max_tokens=2000,
                 ),
                 timeout=10.0,
@@ -468,10 +506,19 @@ async def translate(
             logger.warning("OpenAI translation failed, falling back", error=str(exc))
 
     google_target = _GOOGLE_LANGUAGE_IDS.get(target, target)
+    google_source = "auto"
+    if source_lang:
+        source_code = source_lang.strip().lower()
+        if source_code and source_code != "auto":
+            google_source = _GOOGLE_LANGUAGE_IDS.get(source_code, source_code)
     if translated == body.text:
         try:
-            translated = await _google_translate(body.text, google_target) or body.text
-        except (httpx.HTTPError, RuntimeError) as exc:
+            translated = await _google_translate(
+                body.text,
+                google_target,
+                source=google_source,
+            ) or body.text
+        except (httpx.HTTPError, RuntimeError, TypeError) as exc:
             logger.warning("Google translate endpoint failed, falling back", error=str(exc))
 
     if translated == body.text:
@@ -479,7 +526,7 @@ async def translate(
             from deep_translator import GoogleTranslator
 
             translated = await asyncio.to_thread(
-                GoogleTranslator(source="auto", target=google_target).translate,
+                GoogleTranslator(source=google_source, target=google_target).translate,
                 body.text,
             )
         except Exception as exc:

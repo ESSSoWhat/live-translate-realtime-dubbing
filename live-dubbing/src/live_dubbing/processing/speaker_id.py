@@ -133,6 +133,14 @@ class SpeakerIdentifier:
 
         return None, best_score
 
+    def score_speaker(self, speaker_key: str, audio: np.ndarray) -> float:
+        """Cosine similarity of *audio* against one stored embedding."""
+        stored = self._embeddings.get(speaker_key)
+        if stored is None or len(audio) < self._sample_rate * 0.3:
+            return 0.0
+        emb = self._compute_embedding(audio)
+        return float(np.dot(emb, stored))
+
     @property
     def has_multiple_speakers(self) -> bool:
         """True when ≥2 speakers are registered (speaker-switching is useful)."""
