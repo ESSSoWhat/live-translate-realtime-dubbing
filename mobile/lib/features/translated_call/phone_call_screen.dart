@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 
 import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
+import '../../services/phone_number_hint.dart';
 
 /// Screen for placing a translated phone call via Twilio (PSTN).
 /// Your side rings your verified number; you only enter the number to call.
+/// On Android the number comes from the phone's SIM (Phone Number Hint) and the
+/// SMS code is read with the user's consent; typing is the fallback.
 class PhoneCallScreen extends StatefulWidget {
   const PhoneCallScreen({super.key});
 
@@ -34,6 +37,7 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
 
   @override
   void dispose() {
+    PhoneNumberHint.cancelCodeListener();
     _myPhoneController.dispose();
     _codeController.dispose();
     _destPhoneController.dispose();
@@ -96,6 +100,22 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
       // Leave unverified; the call endpoint explains what is missing.
     }
     if (mounted) setState(() => _checkingPhone = false);
+    if (_verifiedPhone == null) await _useSimNumber();
+  }
+
+  /// Offer the SIM's number (Android picker). Picking one sends the code right
+  /// away; dismissing it leaves the typed-number form.
+  Future<void> _useSimNumber() async {
+    if (!PhoneNumberHint.isSupported || _loading || !mounted) return;
+    final picked = await PhoneNumberHint.requestPhoneNumber();
+    if (picked == null || !mounted) return;
+    final e164 = PhoneNumberHint.toE164(picked);
+    _myPhoneController.text = e164 ?? picked;
+    if (e164 == null) {
+      _show(error: 'Check your number is in international format, e.g. +61412345678');
+      return;
+    }
+    await _sendCode();
   }
 
   Future<void> _sendCode() => _run(() async {
@@ -109,7 +129,16 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
         _codeSentTo = sentTo is String ? sentTo : phone;
         _codeController.clear();
         _show(status: 'We texted a 6-digit code to $_codeSentTo.');
+        _autoReadCode();
       });
+
+  /// Android: read the code from the text (after the user taps Allow) and verify.
+  Future<void> _autoReadCode() async {
+    final code = await PhoneNumberHint.listenForCode();
+    if (code == null || !mounted || _codeSentTo == null) return;
+    _codeController.text = code;
+    await _confirmCode();
+  }
 
   Future<void> _confirmCode() => _run(() async {
         final sentTo = _codeSentTo;
@@ -122,6 +151,7 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
         final phone = r['phone'];
         _verifiedPhone = phone is String ? phone : sentTo;
         _codeSentTo = null;
+        PhoneNumberHint.cancelCodeListener();
         _show(status: 'Your number is verified.');
       });
 
@@ -159,6 +189,7 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
           controller: _codeController,
           decoration: const InputDecoration(labelText: 'Code'),
           keyboardType: TextInputType.number,
+          autofillHints: const [AutofillHints.oneTimeCode],
           maxLength: 6,
         ),
         const SizedBox(height: 8),
@@ -167,7 +198,12 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
           child: _spinnerOr('Verify'),
         ),
         TextButton(
-          onPressed: _loading ? null : () => setState(() => _codeSentTo = null),
+          onPressed: _loading
+              ? null
+              : () {
+                  PhoneNumberHint.cancelCodeListener();
+                  setState(() => _codeSentTo = null);
+                },
           child: const Text('Use a different number'),
         ),
       ];
@@ -186,12 +222,18 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
           hintText: '+61412345678',
         ),
         keyboardType: TextInputType.phone,
+        autofillHints: const [AutofillHints.telephoneNumber],
       ),
       const SizedBox(height: 8),
       FilledButton(
         onPressed: _loading ? null : _sendCode,
         child: _spinnerOr('Text me a code'),
       ),
+      if (PhoneNumberHint.isSupported)
+        TextButton(
+          onPressed: _loading ? null : _useSimNumber,
+          child: const Text("Use this phone's number"),
+        ),
     ];
   }
 
