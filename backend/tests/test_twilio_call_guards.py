@@ -60,7 +60,13 @@ def _app_client(user: dict, cfg: Settings):
     return TestClient(app), twilio_client, patches
 
 
-PAID = {"id": "u1", "tier": "pro", "subscription_status": "active"}
+PAID = {
+    "id": "u1",
+    "tier": "pro",
+    "subscription_status": "active",
+    "phone_e164": "+61412345678",
+    "phone_verified_at": "2026-11-17T00:00:00+00:00",
+}
 BODY = {"user_phone": "+61 412 345 678", "dest_phone": "+14155550123", "target_lang": "es"}
 
 
@@ -115,7 +121,7 @@ def test_bad_or_premium_destinations_are_rejected(number: str, error: str) -> No
 def test_allowed_prefixes_and_same_number() -> None:
     r, _ = _start(cfg=_cfg(twilio_allowed_prefixes="+61"))
     assert r.json()["detail"]["error"] == "destination_not_allowed"
-    r, _ = _start(body={**BODY, "dest_phone": BODY["user_phone"]})
+    r, _ = _start(body={**BODY, "dest_phone": "+61412345678"})
     assert r.status_code == 422
     r, _ = _start(body={**BODY, "dest_phone": "+61290000000"})  # our own Twilio number
     assert r.status_code == 422

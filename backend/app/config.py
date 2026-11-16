@@ -56,6 +56,9 @@ class Settings(BaseSettings):  # pylint: disable=too-few-public-methods
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
+    # Optional Twilio Verify service (VA...) for caller-number SMS codes. When empty the
+    # backend sends its own hashed one-time code by SMS from TWILIO_PHONE_NUMBER.
+    twilio_verify_service_sid: str = ""
     # Translated calls: abuse limits (per user, per backend process).
     twilio_call_tiers: str = "starter,pro,early_adopters"  # tiers allowed to start calls
     twilio_max_concurrent_calls: int = 1

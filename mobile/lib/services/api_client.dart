@@ -401,16 +401,47 @@ class ApiClient {
     );
   }
 
+  Map<String, dynamic> _asMap(Response<dynamic> r) {
+    final data = r.data;
+    if (data is Map<String, dynamic>) return data;
+    throw DioException(
+      requestOptions: r.requestOptions,
+      error: 'Unexpected response format',
+    );
+  }
+
+  /// GET /voice/phone — the caller's verified number (`phone` is null if none).
+  Future<Map<String, dynamic>> getVerifiedPhone() async =>
+      _asMap(await _dio.get('/voice/phone'));
+
+  /// POST /voice/phone/verify/start — text a one-time code to [phone].
+  Future<Map<String, dynamic>> startPhoneVerification(String phone) async =>
+      _asMap(await _dio.post('/voice/phone/verify/start', data: {'phone': phone}));
+
+  /// POST /voice/phone/verify/confirm — link [phone] after checking [code].
+  Future<Map<String, dynamic>> confirmPhoneVerification(
+    String phone,
+    String code,
+  ) async =>
+      _asMap(await _dio.post(
+        '/voice/phone/verify/confirm',
+        data: {'phone': phone, 'code': code},
+      ));
+
+  /// DELETE /voice/phone — unlink the verified number.
+  Future<void> removeVerifiedPhone() async {
+    await _dio.delete('/voice/phone');
+  }
+
   /// POST /voice/translated-call — start a translated phone call (Twilio).
+  /// Your side always rings your verified number.
   Future<Map<String, dynamic>> startTranslatedCall({
-    required String userPhone,
     required String destPhone,
     String targetLang = 'es',
   }) async {
     final r = await _dio.post(
       '/voice/translated-call',
       data: {
-        'user_phone': userPhone,
         'dest_phone': destPhone,
         'target_lang': targetLang,
       },
