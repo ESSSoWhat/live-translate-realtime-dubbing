@@ -55,6 +55,12 @@ flutter {
     source "../.."
 }
 
+dependencies {
+    // Phone Number Hint (the SIM's own number, no phone permissions) and SMS User Consent.
+    implementation "com.google.android.gms:play-services-auth:21.4.0"
+    implementation "com.google.android.gms:play-services-auth-api-phone:18.0.2"
+}
+
 // Flutter CLI expects APK under build/app/outputs/flutter-apk/ (project root = mobile/).
 // AGP + Flutter may write under layout.buildDirectory (not always projectDir/build).
 // flutter/flutter#174620 — sync after package* so APK files exist.

@@ -23,9 +23,13 @@ class MainActivity : FlutterActivity() {
         "app.livetranslate.live_translate_mobile/playback_capture/frames"
 
     private var pendingConsentResult: MethodChannel.Result? = null
+    private val phoneNumber by lazy { PhoneNumberHelper(this) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PhoneNumberHelper.CHANNEL)
+            .setMethodCallHandler { call, result -> phoneNumber.handle(call.method, result) }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, micFgsChannel)
             .setMethodCallHandler { call, result ->
@@ -142,6 +146,7 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (phoneNumber.onActivityResult(requestCode, resultCode, data)) return
         if (requestCode != REQUEST_MEDIA_PROJECTION) return
         val pending = pendingConsentResult
         pendingConsentResult = null
@@ -154,6 +159,11 @@ class MainActivity : FlutterActivity() {
             lastProjectionData = null
             pending?.error("denied", "User denied screen/audio capture", null)
         }
+    }
+
+    override fun onDestroy() {
+        phoneNumber.dispose()
+        super.onDestroy()
     }
 
     private fun ensureNotificationPermission() {
