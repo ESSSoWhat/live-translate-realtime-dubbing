@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
-from PyQt6.QtCore import QEvent, QObject, QPoint, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QCloseEvent,
     QColor,
@@ -77,6 +77,7 @@ class _BubbleButton(QWidget):
     def set_muted(self, muted: bool) -> None:
         """Update the mute badge on the logo bubble."""
         self._muted = muted
+        self.setToolTip("Muted" if muted else "Live Translate")
         self.update()
 
     def paintEvent(self, event: QPaintEvent | None) -> None:  # noqa: ARG002
@@ -114,19 +115,48 @@ class _BubbleButton(QWidget):
         painter.setClipping(False)
 
         if self._muted:
-            painter.setBrush(QColor(0, 0, 0, 140))
+            painter.setBrush(QColor(0, 0, 0, 160))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(oval)
-            painter.setPen(QColor(TEXT))
-            font = QFont()
-            font.setBold(True)
-            font.setPointSize(14)
-            painter.setFont(font)
-            painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), "M")
+            self._paint_muted_speaker(painter, rect)
 
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QPen(QColor(ACCENT), 3.0))
         painter.drawEllipse(oval.adjusted(1.5, 1.5, -1.5, -1.5))
+
+    @staticmethod
+    def _paint_muted_speaker(painter: QPainter, rect: object) -> None:
+        """Draw a speaker icon with a diagonal mute slash."""
+        bounds = QRectF(rect)
+        cx = bounds.center().x()
+        cy = bounds.center().y()
+        scale = min(bounds.width(), bounds.height())
+
+        body_w = scale * 0.12
+        body_h = scale * 0.24
+        body_x = cx - scale * 0.26
+        body_y = cy - body_h / 2
+        speaker = QPainterPath()
+        speaker.addRoundedRect(QRectF(body_x, body_y, body_w, body_h), 2.0, 2.0)
+        cone = QPainterPath()
+        cone.moveTo(body_x + body_w, cy - scale * 0.08)
+        cone.lineTo(cx + scale * 0.06, cy - scale * 0.28)
+        cone.lineTo(cx + scale * 0.06, cy + scale * 0.28)
+        cone.lineTo(body_x + body_w, cy + scale * 0.08)
+        cone.closeSubpath()
+        speaker = speaker.united(cone)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(TEXT))
+        painter.drawPath(speaker)
+
+        slash = QPen(QColor(ACCENT), max(3.5, scale * 0.07))
+        slash.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(slash)
+        painter.drawLine(
+            QPointF(cx - scale * 0.30, cy + scale * 0.30),
+            QPointF(cx + scale * 0.30, cy - scale * 0.30),
+        )
 
 
 def _split_chunks(text: str) -> list[str]:
