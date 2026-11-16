@@ -12,8 +12,8 @@
     "@types/react": "^16.0.0",
     "@types/react-dom": "^16.0.0",
     "@wix/astro": "^2.75.5",
-    "@wix/cli": "^1.1.172",
-    "@wix/cli-app": "^1.1.172",
+    "@wix/cli": "^1.2.13",
+    "@wix/cli-app": "^1.2.13",
     "@wix/sdk-types": "^1.0.0",
     "react": "16.14.0",
     "react-dom": "16.14.0",
@@ -30,6 +30,8 @@
     "typecheck": "tsc --noEmit"
   },
   "overrides": {
-    "vite": "^6.4.4"
+    "vite": "^6.4.4",
+    "undici": "^6.29.1",
+    "glob": "^14.0.6"
   }
 }
