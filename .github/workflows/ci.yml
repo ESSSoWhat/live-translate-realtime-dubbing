@@ -73,6 +73,14 @@ jobs:
       - name: System libraries (PortAudio, Qt offscreen)
         run: sudo apt-get update -q && sudo apt-get install -y -q libportaudio2 libegl1 libxkbcommon0
 
+      # PortAudio fails to initialise (and sounddevice fails to import) when its PulseAudio
+      # backend finds no server. A null-sink daemon satisfies it; nothing is recorded.
+      - name: Start a silent PulseAudio server
+        run: |
+          sudo apt-get install -y -q pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=ci_null || true
+
       - name: Install dependencies (CPU torch; Windows-only audio libs are skipped by markers)
         run: |
           cd live-dubbing
