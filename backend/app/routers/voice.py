@@ -10,7 +10,9 @@ Endpoints:
 from __future__ import annotations
 
 import json
-import uuid
+import re
+import secrets
+from xml.sax.saxutils import quoteattr
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -26,9 +28,13 @@ from app.services.twilio_media_bridge import (
     register_session,
     unregister_leg,
 )
+from app.services.usage import QuotaExceededError, check_quota
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/voice", tags=["voice"])
+
+_LEGS = ("user", "dest")
+_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
 
 class TranslatedCallRequest(BaseModel):
@@ -52,7 +58,19 @@ async def start_translated_call(
             detail="Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.",
         )
 
-    session_id = str(uuid.uuid4())[:8]
+    # The session id is the only thing guarding the media WebSocket, so make it
+    # unguessable (was 8 hex characters of a uuid).
+    session_id = secrets.token_urlsafe(18)
+    try:
+        # Each call is metered per chunk; refuse to dial when nothing is left.
+        await check_quota(user["id"], "stt", 1)
+    except QuotaExceededError as exc:
+        raise HTTPException(
+            status_code=402,
+            detail={"error": "quota_exceeded", "event_type": exc.event_type, "used": exc.used, "limit": exc.limit},
+        ) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     base_url = _get_base_url()
     register_session(session_id, user["id"], body.target_lang)
 
@@ -96,7 +114,7 @@ async def start_translated_call(
 async def ws_media(websocket: WebSocket, leg: str = Query(...), session: str = Query(...)) -> None:
     """WebSocket handler for Twilio bidirectional Media Streams."""
     await websocket.accept()
-    meta = get_session_meta(session)
+    meta = get_session_meta(session) if leg in _LEGS else None
     if not meta:
         await websocket.close(code=4004)
         return
@@ -149,6 +167,9 @@ async def twiml_stream(
     session: str = Query(...),
 ) -> Response:
     """Return TwiML that connects the call to our Media Streams WebSocket."""
+    if leg not in _LEGS or not _SESSION_RE.match(session) or get_session_meta(session) is None:
+        # Query values went straight into the XML; reject anything that is not ours.
+        raise HTTPException(status_code=404, detail="Unknown call session")
     base_url = _get_base_url()
     wss_url = base_url.replace("https://", "wss://").replace("http://", "ws://")
     stream_url = f"{wss_url}/api/v1/voice/ws/media?leg={leg}&session={session}"
@@ -156,7 +177,7 @@ async def twiml_stream(
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="{stream_url}" />
+    <Stream url={quoteattr(stream_url)} />
   </Connect>
 </Response>"""
 
