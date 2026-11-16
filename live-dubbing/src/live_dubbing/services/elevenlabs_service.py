@@ -360,7 +360,13 @@ class ElevenLabsService:
         "kk": "kk",
     }
 
-    async def translate_text(self, text: str, target_language: str) -> str:
+    async def translate_text(
+        self,
+        text: str,
+        target_language: str,
+        source_language: str = "auto",
+        context: str = "",
+    ) -> str:
         """
         Translate text to target language.
 
@@ -370,6 +376,8 @@ class ElevenLabsService:
         Args:
             text: Text to translate
             target_language: Target language code (e.g., "en", "ja", "ko")
+            source_language: Detected or configured source language
+            context: Recent prior lines for continuity
 
         Returns:
             Translated text
@@ -378,7 +386,12 @@ class ElevenLabsService:
             return text
 
         # Try OpenAI first if available
-        translated = await self._translate_with_openai(text, target_language)
+        translated = await self._translate_with_openai(
+            text,
+            target_language,
+            source_language=source_language,
+            context=context,
+        )
         if translated is not None:
             return translated
 
@@ -390,12 +403,21 @@ class ElevenLabsService:
         logger.warning("All translation methods failed, returning original text")
         return text
 
-    async def _translate_with_openai(self, text: str, target_language: str) -> str | None:
+    async def _translate_with_openai(
+        self,
+        text: str,
+        target_language: str,
+        source_language: str = "auto",
+        context: str = "",
+    ) -> str | None:
         """Translate using OpenAI GPT. Returns None if unavailable."""
         try:
             # Get language name from code
             target_lang_name = self.SUPPORTED_LANGUAGES.get(
                 target_language, target_language
+            )
+            source_lang_name = self.SUPPORTED_LANGUAGES.get(
+                source_language, source_language
             )
 
             # Prefer instance key, then global client (env var)
@@ -411,27 +433,40 @@ class ElevenLabsService:
             if client is None:
                 return None  # No OpenAI available, caller should try fallback
 
+            source_hint = (
+                f" The source language is {source_lang_name}."
+                if source_language and source_language != "auto"
+                else ""
+            )
+            system = (
+                f"You are a translator. Translate the following text to {target_lang_name}."
+                f"{source_hint} "
+                "Only output the translated text, nothing else. "
+                "Preserve the tone and style of the original. "
+                "Keep meaning accurate for spoken dialogue. "
+                "Remove any non-verbal markers like [MUSIC], (laughter), [PAUSE], ♪, etc. "
+                "Only output spoken words."
+            )
+            if context.strip():
+                user_content = (
+                    "Recent conversation for context (do not translate this block):\n"
+                    f"{context.strip()}\n\n"
+                    f"Translate this line:\n{text}"
+                )
+            else:
+                user_content = text
+
             # Wrap OpenAI call with retry logic for rate limits
             async def _do_openai_translate():
                 return await asyncio.wait_for(
                     client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=[
-                            {
-                                "role": "system",
-                                "content": f"You are a translator. Translate the following text to {target_lang_name}. "
-                                           f"Only output the translated text, nothing else. "
-                                           f"Preserve the tone and style of the original. "
-                                           f"Remove any non-verbal markers like [MUSIC], (laughter), [PAUSE], ♪, etc. "
-                                           f"Only output spoken words."
-                            },
-                            {
-                                "role": "user",
-                                "content": text
-                            }
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user_content},
                         ],
-                        temperature=0.3,
-                        max_tokens=500,
+                        temperature=0.2,
+                        max_tokens=2000,
                     ),
                     timeout=10.0,
                 )

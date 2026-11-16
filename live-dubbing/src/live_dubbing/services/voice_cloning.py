@@ -106,6 +106,9 @@ class VoiceCloneManager:
         self._sample_rate = 16000
         self._buffer_lock = asyncio.Lock()
         self._clone_lock = asyncio.Lock()
+        # Accumulate short lines until Instant Voice Clone has enough speech.
+        self._line_clone_parts: list[np.ndarray] = []
+        self._line_clone_duration_sec = 0.0
 
         # Load previously saved voices from persistent store
         if self._voice_store:
@@ -245,17 +248,63 @@ class VoiceCloneManager:
             link_profile_id=link_profile_id,
         )
 
-    async def voice_for_utterance(self, audio: np.ndarray) -> ClonedVoice | None:
-        """Clone or reuse a voice from the audio of one translated line.
+    def get_voice(self, voice_id: str) -> ClonedVoice | None:
+        """Return a cached clone by id, if present."""
+        return self._voice_cache.get(voice_id)
 
-        A line that matches a saved profile keeps that profile's voice.
-        A new speaker is cloned from this line, not from a separate recording.
+    def reset_line_clone_buffer(self) -> None:
+        """Clear speech held for the next Instant Voice Clone."""
+        self._line_clone_parts = []
+        self._line_clone_duration_sec = 0.0
+
+    def _min_line_clone_sec(self) -> float:
+        """Seconds of speech required before creating a new Instant clone."""
+        configured = float(self._min_sample_duration)
+        # Production mins are 3s+; honor lower values used by tests.
+        if configured < 3.0:
+            return max(0.5, configured)
+        return min(configured, 8.0)
+
+    async def voice_for_utterance(self, audio: np.ndarray) -> ClonedVoice | None:
+        """Reuse a matching profile voice, or clone after enough speech.
+
+        Short lines alone make poor Instant Voice Clones. Matching profiles
+        still return immediately. New speakers accumulate speech until the
+        capture minimum is reached, then one clone is created from that buffer.
         """
         speech = np.asarray(audio, dtype=np.float32).reshape(-1)
         if speech.size < int(self._sample_rate * 0.5):
             return None
+
+        matched, score = self._similar_profile(speech)
+        if matched is not None:
+            reused = self._reuse_assigned_voice(matched, speech)
+            if reused is not None:
+                self.reset_line_clone_buffer()
+                return reused
+
         duration = float(speech.size) / self._sample_rate
-        return await self._clone_from_samples(speech, duration)
+        self._line_clone_parts.append(speech)
+        self._line_clone_duration_sec += duration
+
+        if self._line_clone_duration_sec < self._min_line_clone_sec():
+            logger.info(
+                "Waiting for more speech before cloning",
+                buffered_sec=round(self._line_clone_duration_sec, 2),
+                needed_sec=round(self._min_line_clone_sec(), 2),
+                last_match_score=round(score, 3),
+            )
+            return None
+
+        combined = np.concatenate(self._line_clone_parts)
+        buffered = self._line_clone_duration_sec
+        self.reset_line_clone_buffer()
+        return await self._clone_from_samples(
+            combined,
+            buffered,
+            link_profile_id=matched.id if matched is not None else None,
+            label=matched.name if matched is not None else None,
+        )
 
     async def _clone_from_samples(
         self,

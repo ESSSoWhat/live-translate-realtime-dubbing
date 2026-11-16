@@ -130,6 +130,33 @@ async def test_each_line_is_cloned_from_its_own_audio(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_short_lines_wait_for_enough_speech_before_cloning(tmp_path) -> None:
+    service = Mock()
+    service.clone_voice = AsyncMock(return_value="voice-buffered")
+    manager = VoiceCloneManager(
+        service,
+        min_sample_duration_sec=5.0,
+        profile_store=VoiceProfileStore(str(tmp_path / "profiles.json")),
+    )
+    first = await manager.voice_for_utterance(_tone(180, seconds=1.2))
+    second = await manager.voice_for_utterance(_tone(190, seconds=1.2))
+    assert first is None
+    assert second is None
+    assert service.clone_voice.await_count == 0
+
+    third = await manager.voice_for_utterance(_tone(200, seconds=3.0))
+    assert third is not None
+    assert third.voice_id == "voice-buffered"
+    assert service.clone_voice.await_count == 1
+    import io
+    import wave
+
+    wav_bytes = service.clone_voice.await_args.kwargs["audio_data"]
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+        assert wav_file.getnframes() >= int(16000 * 5.0) - 1
+
+
+@pytest.mark.asyncio
 async def test_translated_line_keeps_its_voice_after_the_next_line(tmp_path) -> None:
     from live_dubbing.core.events import EventBus
     from live_dubbing.processing.pipeline import PipelineConfig, ProcessingPipeline

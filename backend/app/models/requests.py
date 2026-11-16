@@ -88,6 +88,7 @@ class TranslateRequest(BaseModel):
     text: str = Field(max_length=10000)
     target_language: str
     source_language: str = "auto"
+    context: str = Field(default="", max_length=4000)
 
 
 class CloneVoiceRequest(BaseModel):

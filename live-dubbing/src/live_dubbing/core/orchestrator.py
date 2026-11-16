@@ -256,7 +256,9 @@ class Orchestrator:
             voice_stability=self._settings.voice_clone.voice_stability,
             voice_similarity=self._settings.voice_clone.voice_similarity,
             use_premade_voice_id=self._settings.voice_clone.use_premade_voice_id,
+            preferred_voice_id=self._settings.voice_clone.default_voice_id,
             auto_clone_voice=self._settings.voice_clone.auto_clone_voice,
+            preserve_context=self._settings.translation.preserve_context,
             usage_reporter=getattr(self, "_usage_reporter", None),
         )
         self._processing_pipeline = ProcessingPipeline(
@@ -411,7 +413,9 @@ class Orchestrator:
                     voice_stability=self._settings.voice_clone.voice_stability,
                     voice_similarity=self._settings.voice_clone.voice_similarity,
                     use_premade_voice_id=self._settings.voice_clone.use_premade_voice_id,
+                    preferred_voice_id=self._settings.voice_clone.default_voice_id,
                     auto_clone_voice=self._settings.voice_clone.auto_clone_voice,
+                    preserve_context=self._settings.translation.preserve_context,
                 ))
 
             # Start the processing pipeline BEFORE audio capture

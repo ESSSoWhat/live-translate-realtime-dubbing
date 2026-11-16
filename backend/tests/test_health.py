@@ -32,4 +32,4 @@ def test_translate_uses_google_endpoint_when_openai_is_unavailable(client: TestC
         client.app.dependency_overrides.clear()
     assert r.status_code == 200
     assert r.json()["translated_text"] == "見つけました。"
-    google.assert_awaited_once_with("We found it.", "ja")
+    google.assert_awaited_once_with("We found it.", "ja", source="en")
