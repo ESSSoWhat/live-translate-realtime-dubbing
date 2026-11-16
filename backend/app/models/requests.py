@@ -76,8 +76,11 @@ class SynthesizeRequest(BaseModel):
     """Request body for TTS synthesis."""
 
     text: str = Field(max_length=5000)
-    voice_id: str
-    model_id: str = "eleven_flash_v2_5"
+    # ElevenLabs voice IDs are short alphanumeric tokens. The ID is interpolated into
+    # upstream URL paths that carry the server API key, so reject anything else
+    # (e.g. "../") instead of letting it reach another ElevenLabs endpoint.
+    voice_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    model_id: str = Field(default="eleven_flash_v2_5", pattern=r"^[A-Za-z0-9_.-]{1,64}$")
     stability: float = Field(default=0.5, ge=0.0, le=1.0)
     similarity_boost: float = Field(default=0.75, ge=0.0, le=1.0)
 

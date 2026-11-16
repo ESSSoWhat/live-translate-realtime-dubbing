@@ -142,3 +142,56 @@ class TestVADWithMock:
         result = vad.process_chunk(sample_speech_audio)
         assert result.is_speech
         assert result.confidence >= 0.5
+
+
+class TestVADWindowCarry:
+    """Capture sends 1600-sample chunks; Silero needs 512-sample windows."""
+
+    class _CountingModel:
+        def __init__(self, prob=0.9):
+            self.samples_seen = 0
+            self.calls = 0
+            self.prob = prob
+
+        def __call__(self, audio, sr):
+            assert tuple(audio.shape) == (1, 512)
+            self.samples_seen += audio.shape[1]
+            self.calls += 1
+            return self.prob
+
+        def reset_states(self):
+            pass
+
+    def _vad(self, model):
+        from live_dubbing.processing.vad import SileroVAD  # type: ignore[import-not-found]
+
+        vad = SileroVAD(threshold=0.5)
+        vad._model = model
+        vad._is_loaded = True
+        return vad
+
+    def test_no_samples_dropped_across_100ms_chunks(self):
+        model = self._CountingModel()
+        vad = self._vad(model)
+        for _ in range(10):
+            vad.process_chunk(np.zeros(1600, dtype=np.float32))
+        # 16000 samples -> 31 full windows (15872) + 128 carried, nothing discarded
+        assert model.samples_seen == 31 * 512
+        assert len(vad._carry) == 16000 - 31 * 512
+
+    def test_short_chunk_reuses_last_score(self):
+        model = self._CountingModel(prob=0.9)
+        vad = self._vad(model)
+        assert vad.process_chunk(np.zeros(1600, dtype=np.float32)).is_speech
+        calls = model.calls
+        # 64 carried + 100 new < 512: no new window, keep the previous decision
+        result = vad.process_chunk(np.zeros(100, dtype=np.float32))
+        assert model.calls == calls
+        assert result.is_speech
+
+    def test_reset_clears_carry(self):
+        vad = self._vad(self._CountingModel())
+        vad.process_chunk(np.zeros(1600, dtype=np.float32))
+        assert len(vad._carry) == 64
+        vad.reset_state()
+        assert len(vad._carry) == 0

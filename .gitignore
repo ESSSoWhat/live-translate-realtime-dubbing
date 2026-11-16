@@ -80,3 +80,6 @@ credentials.json
 *.pem
 *.key
 .credentials
+
+# Gradle daemon state created when HOME resolves to a literal "~" folder
+**/~/

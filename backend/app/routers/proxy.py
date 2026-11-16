@@ -41,9 +41,54 @@ router = APIRouter(prefix="/proxy", tags=["proxy"])
 
 UPGRADE_URL = "https://www.livetranslate.net/upgrade"
 
+# Largest audio upload accepted for STT / cloning. Real desktop and mobile clips are a
+# few MB at most; the cap stops one request from holding hundreds of MB in memory.
+MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024
+
+_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _require_voice_id(voice_id: str) -> str:
+    """Reject voice IDs that could change the upstream URL path (they carry the server key)."""
+    if not _VOICE_ID_RE.match(voice_id or ""):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid voice id")
+    return voice_id
+
+
+async def _read_audio_upload(audio: UploadFile) -> bytes:
+    """Read an uploaded audio file, refusing bodies above MAX_AUDIO_UPLOAD_BYTES."""
+    data = await audio.read(MAX_AUDIO_UPLOAD_BYTES + 1)
+    if len(data) > MAX_AUDIO_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Audio file is too large (max {MAX_AUDIO_UPLOAD_BYTES // (1024 * 1024)} MB)",
+        )
+    return data
+
+
+def _wav_duration_seconds(audio_bytes: bytes) -> float | None:
+    """Duration of a RIFF/WAV payload from its header, or None when it is not a readable WAV."""
+    if audio_bytes[:4] != b"RIFF" or audio_bytes[8:12] != b"WAVE":
+        return None
+    import wave
+
+    try:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as wav:
+            rate = wav.getframerate()
+            if rate <= 0:
+                return None
+            return wav.getnframes() / float(rate)
+    except (wave.Error, EOFError):
+        return None
+
 
 def _audio_duration_seconds(audio_bytes: bytes, content_type: str | None, fallback_rate: int) -> float:
     """Get audio duration in seconds; use parsed duration when possible, else format-appropriate heuristic."""
+    # The desktop app uploads WAV for every transcribed line. Reading the header is
+    # microseconds; pydub would spawn ffmpeg/decode the whole clip on the event loop.
+    wav_seconds = _wav_duration_seconds(audio_bytes)
+    if wav_seconds is not None:
+        return max(1.0, wav_seconds)
     fmt: str | None = None
     if content_type:
         ctl = content_type.lower()
@@ -187,7 +232,9 @@ async def transcribe(
     user: dict = Depends(get_current_user),  # noqa: B008
 ) -> TranscriptionResponse:
     """Transcribe audio to text via ElevenLabs STT; record STT usage by duration."""
-    audio_bytes = await audio.read()
+    audio_bytes = await _read_audio_upload(audio)
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio file is empty")
     rate = int(sample_rate) if sample_rate.isdigit() else 16000
     rate = max(8000, min(48000, rate))
 
@@ -543,12 +590,29 @@ async def translate(
 
 # ── Voice Management ─────────────────────────────────────────────────────────
 
+async def _owned_voice_ids(user_id: str) -> set[str]:
+    """Voice IDs this user cloned. Empty when the lookup fails (fail closed: hide clones)."""
+    try:
+        sb = await get_supabase()
+        rows = await sb.table("user_voices").select("voice_id").eq("user_id", user_id).execute()
+    except Exception as exc:  # noqa: BLE001 - any lookup failure hides clones
+        logger.warning("Could not load owned voices", error=str(exc)[:200])
+        return set()
+    return {str(r.get("voice_id") or "").strip() for r in (rows.data or []) if r.get("voice_id")}
+
+
 @router.get("/voices", response_model=list[VoiceItem])
 async def list_voices(user: dict = Depends(get_current_user)) -> list[VoiceItem]:  # noqa: B008
-    """Return all ElevenLabs voices available to the user."""
+    """Return the shared library voices plus the clones this user owns.
+
+    Every user's clones live in one server ElevenLabs account, so the raw list also
+    contains other users' cloned voices. Only premade voices and clones recorded in
+    ``user_voices`` for this user are returned.
+    """
     client = _elevenlabs()
     try:
         result = await client.voices.get_all()
+        owned_ids = await _owned_voice_ids(str(user["id"]))
         items: list[VoiceItem] = []
         for v in result.voices:
             vid = str(getattr(v, "voice_id", "") or "").strip()
@@ -561,6 +625,8 @@ async def list_voices(user: dict = Depends(get_current_user)) -> list[VoiceItem]
                 cat = str(raw_cat.value)
             else:
                 cat = str(raw_cat) or "premade"
+            if cat != "premade" and vid not in owned_ids:
+                continue
             name = str(getattr(v, "name", None) or "").strip() or vid
             items.append(VoiceItem(voice_id=vid, name=name, category=cat))
         return items
@@ -573,6 +639,7 @@ async def list_voices(user: dict = Depends(get_current_user)) -> list[VoiceItem]
 @router.delete("/voices/{voice_id}")
 async def delete_voice(voice_id: str, user: dict = Depends(get_current_user)) -> Response:  # noqa: B008
     """Delete a cloned voice from ElevenLabs and ownership record if owned by user."""
+    _require_voice_id(voice_id)
     client = _elevenlabs()
     try:
         all_voices = await client.voices.get_all()
@@ -606,6 +673,7 @@ async def rename_voice(
     name: str = Form(...),  # noqa: B008
 ) -> CloneVoiceResponse:
     """Rename a user-owned cloned voice on ElevenLabs."""
+    _require_voice_id(voice_id)
     new_name = (name or "").strip()
     if not new_name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name must not be empty")
@@ -743,7 +811,7 @@ async def clone_voice(
         logger.exception("Clone quota check failed", user_id=user["id"])
         raise HTTPException(status_code=503, detail=f"Usage metering unavailable: {exc}") from exc
 
-    audio_bytes = await audio.read()
+    audio_bytes = await _read_audio_upload(audio)
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Audio file is empty")
 
