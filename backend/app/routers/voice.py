@@ -21,11 +21,14 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.dependencies import get_current_user
+from app.services import call_guard
 from app.services.twilio_media_bridge import (
     AudioProcessor,
+    active_session_count,
     get_session_meta,
     register_leg,
     register_session,
+    stream_token_ok,
     unregister_leg,
 )
 from app.services.usage import QuotaExceededError, check_quota
@@ -57,6 +60,26 @@ async def start_translated_call(
             status_code=503,
             detail="Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.",
         )
+    if cfg.is_production and not cfg.live_translate_public_url:
+        # Without it Twilio callbacks can't be signature-checked behind the proxy.
+        raise HTTPException(status_code=503, detail="Calls unavailable: LIVE_TRANSLATE_PUBLIC_URL is not set.")
+
+    # Abuse guards: paid plan, real (non-premium) numbers, per-user limits.
+    call_guard.require_call_plan(user, cfg)
+    user_phone = call_guard.check_destination(body.user_phone, cfg, "user_phone")
+    dest_phone = call_guard.check_destination(body.dest_phone, cfg, "dest_phone")
+    own = call_guard.normalize_phone(cfg.twilio_phone_number)
+    if user_phone == dest_phone or own in (user_phone, dest_phone):
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "invalid_phone", "message": "Use two different numbers, neither of them ours."},
+        )
+    if active_session_count(user["id"]) >= cfg.twilio_max_concurrent_calls:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "call_in_progress", "limit": cfg.twilio_max_concurrent_calls,
+                    "message": "Finish your current call before starting another."},
+        )
 
     # The session id is the only thing guarding the media WebSocket, so make it
     # unguessable (was 8 hex characters of a uuid).
@@ -71,6 +94,7 @@ async def start_translated_call(
         ) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    call_guard.rate_limiter.check_and_record(user["id"], cfg.twilio_max_calls_per_hour)
     base_url = _get_base_url()
     register_session(session_id, user["id"], body.target_lang)
 
@@ -84,7 +108,7 @@ async def start_translated_call(
     try:
         call_user = client.calls.create(
             url=twiml_user,
-            to=body.user_phone,
+            to=user_phone,
             from_=cfg.twilio_phone_number,
         )
         logger.info("Created user leg", call_sid=call_user.sid, session_id=session_id)
@@ -96,7 +120,7 @@ async def start_translated_call(
     try:
         call_dest = client.calls.create(
             url=twiml_dest,
-            to=body.dest_phone,
+            to=dest_phone,
             from_=cfg.twilio_phone_number,
         )
         logger.info("Created dest leg", call_sid=call_dest.sid, session_id=session_id)
@@ -111,11 +135,17 @@ async def start_translated_call(
 
 
 @router.websocket("/ws/media")
-async def ws_media(websocket: WebSocket, leg: str = Query(...), session: str = Query(...)) -> None:
+async def ws_media(
+    websocket: WebSocket,
+    leg: str = Query(...),
+    session: str = Query(...),
+    token: str | None = Query(default=None),
+) -> None:
     """WebSocket handler for Twilio bidirectional Media Streams."""
     await websocket.accept()
     meta = get_session_meta(session) if leg in _LEGS else None
-    if not meta:
+    # The per-leg token only exists in the signed TwiML, so only Twilio has it.
+    if not meta or not stream_token_ok(session, leg, token):
         await websocket.close(code=4004)
         return
 
@@ -160,19 +190,24 @@ async def ws_media(websocket: WebSocket, leg: str = Query(...), session: str = Q
             await processor.drain()
 
 
-@router.get("/twiml/stream")
+@router.api_route("/twiml/stream", methods=["GET", "POST"])
 async def twiml_stream(
     request: Request,
     leg: str = Query(...),
     session: str = Query(...),
 ) -> Response:
-    """Return TwiML that connects the call to our Media Streams WebSocket."""
+    """Return TwiML that connects the call to our Media Streams WebSocket.
+
+    Twilio fetches call URLs with POST by default; both methods are signature-checked.
+    """
+    await call_guard.verify_twilio_request(request, get_settings())
     if leg not in _LEGS or not _SESSION_RE.match(session) or get_session_meta(session) is None:
         # Query values went straight into the XML; reject anything that is not ours.
         raise HTTPException(status_code=404, detail="Unknown call session")
     base_url = _get_base_url()
     wss_url = base_url.replace("https://", "wss://").replace("http://", "ws://")
-    stream_url = f"{wss_url}/api/v1/voice/ws/media?leg={leg}&session={session}"
+    token = get_session_meta(session)["stream_tokens"][leg]
+    stream_url = f"{wss_url}/api/v1/voice/ws/media?leg={leg}&session={session}&token={token}"
 
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -186,8 +221,6 @@ async def twiml_stream(
 
 def _get_base_url() -> str:
     """Return base URL for webhooks (from config or env)."""
-    from app.config import get_settings
-
     cfg = get_settings()
     url = cfg.live_translate_public_url or ""
     if not url:

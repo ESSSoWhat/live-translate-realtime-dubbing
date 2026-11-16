@@ -56,6 +56,12 @@ class Settings(BaseSettings):  # pylint: disable=too-few-public-methods
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
+    # Translated calls: abuse limits (per user, per backend process).
+    twilio_call_tiers: str = "starter,pro,early_adopters"  # tiers allowed to start calls
+    twilio_max_concurrent_calls: int = 1
+    twilio_max_calls_per_hour: int = 10
+    # Optional comma-separated E.164 prefixes calls may go to (e.g. "+61,+1"); empty = any.
+    twilio_allowed_prefixes: str = ""
 
     # App
     backend_env: str = "development"

@@ -29,6 +29,21 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
     super.dispose();
   }
 
+  /// The API returns `detail` as a string or as `{error, message, ...}`.
+  static String _errorText(DioException e) {
+    final data = e.response?.data;
+    final detail = data is Map ? data['detail'] : null;
+    if (detail is String && detail.isNotEmpty) return detail;
+    if (detail is Map) {
+      final msg = detail['message'];
+      if (msg is String && msg.isNotEmpty) return msg;
+      if (detail['error'] == 'quota_exceeded') {
+        return 'You have used this month\'s allowance.';
+      }
+    }
+    return e.message ?? 'Request failed';
+  }
+
   Future<void> _startCall() async {
     if (_loading) return;
     if (!await _auth.hasTokens()) {
@@ -72,7 +87,7 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = e.response?.data?['detail'] ?? e.message ?? 'Request failed';
+          _error = _errorText(e);
           _status = null;
         });
       }
