@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS users (
     tier                TEXT NOT NULL DEFAULT 'free' REFERENCES tier_limits(tier),
     subscription_status TEXT NOT NULL DEFAULT 'active',
     subscription_id     TEXT,
+    phone_e164          TEXT UNIQUE,      -- verified caller number (translated calls)
+    phone_verified_at   TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

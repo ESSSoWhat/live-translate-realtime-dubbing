@@ -3,6 +3,7 @@ Voice router — translated phone calls via Twilio.
 
 Endpoints:
 - POST /voice/translated-call: Initiate a two-leg translated call (auth required).
+- GET/DELETE /voice/phone, POST /voice/phone/verify/{start,confirm}: the caller's verified number.
 - GET /voice/twiml/stream: Return TwiML for Media Streams (called by Twilio).
 - WS /voice/ws/media: WebSocket for Twilio Media Streams (bidirectional).
 """
@@ -12,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from datetime import datetime, timezone
 from xml.sax.saxutils import quoteattr
 
 import structlog
@@ -21,7 +23,8 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.dependencies import get_current_user
-from app.services import call_guard
+from app.services import call_guard, phone_verify
+from app.services.supabase_client import get_supabase
 from app.services.twilio_media_bridge import (
     AudioProcessor,
     active_session_count,
@@ -41,11 +44,120 @@ _SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
 
 class TranslatedCallRequest(BaseModel):
-    """Request to start a translated phone call."""
+    """Request to start a translated phone call.
 
-    user_phone: str
+    The caller's side always rings their verified number; ``user_phone`` is optional
+    and only accepted when it matches that number (older app versions send it).
+    """
+
     dest_phone: str
+    user_phone: str | None = None
     target_lang: str = "es"
+
+
+class PhoneStartRequest(BaseModel):
+    phone: str
+
+
+class PhoneConfirmRequest(BaseModel):
+    phone: str
+    code: str
+
+
+def _verified_phone(user: dict) -> str | None:
+    phone = user.get("phone_e164")
+    return phone if phone and user.get("phone_verified_at") else None
+
+
+def _require_twilio(cfg) -> None:
+    if not cfg.twilio_account_sid or not cfg.twilio_auth_token or not cfg.twilio_phone_number:
+        raise HTTPException(
+            status_code=503,
+            detail="Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.",
+        )
+
+
+def _db_error(exc: Exception) -> HTTPException:
+    text = f"{getattr(exc, 'code', '')} {exc}"
+    if "23505" in text:
+        return HTTPException(
+            status_code=409,
+            detail={"error": "phone_in_use", "message": "This number is already linked to another account."},
+        )
+    logger.warning("Phone number update failed", error=str(exc))
+    return HTTPException(
+        status_code=503,
+        detail={"error": "phone_storage_unavailable",
+                "message": "Phone numbers can't be saved yet. Please try again later."},
+    )
+
+
+@router.get("/phone")
+async def get_phone(user: dict = Depends(get_current_user)) -> dict:
+    """The number translated calls ring on the caller's side."""
+    phone = _verified_phone(user)
+    return {"phone": phone, "verified": bool(phone), "verified_at": user.get("phone_verified_at") if phone else None}
+
+
+@router.post("/phone/verify/start")
+async def start_phone_verification(body: PhoneStartRequest, user: dict = Depends(get_current_user)) -> dict:
+    """Text a one-time code to ``phone``. Paid plans only (each SMS costs money)."""
+    cfg = get_settings()
+    _require_twilio(cfg)
+    call_guard.require_call_plan(user, cfg)
+    phone = call_guard.check_destination(body.phone, cfg, "phone")
+    if phone == call_guard.normalize_phone(cfg.twilio_phone_number):
+        raise HTTPException(status_code=422, detail={"error": "invalid_phone", "message": "Use your own phone number."})
+    try:
+        sb = await get_supabase()
+        taken = await sb.table("users").select("id").eq("phone_e164", phone).neq("id", user["id"]).limit(1).execute()
+    except Exception as exc:
+        raise _db_error(exc) from exc
+    if taken.data:
+        raise _db_error(Exception("23505"))
+    try:
+        await phone_verify.send_code(user["id"], phone, cfg)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Verification SMS failed", error=str(exc))
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "sms_failed", "message": "Couldn't send the code. Check the number and try again."},
+        ) from exc
+    return {"phone": phone, "sent": True, "expires_in": phone_verify.CODE_TTL_SEC}
+
+
+@router.post("/phone/verify/confirm")
+async def confirm_phone_verification(body: PhoneConfirmRequest, user: dict = Depends(get_current_user)) -> dict:
+    """Check the code and link the number to this account."""
+    cfg = get_settings()
+    _require_twilio(cfg)
+    phone = call_guard.normalize_phone(body.phone)
+    await phone_verify.check_code(user["id"], phone, body.code, cfg)
+    try:
+        sb = await get_supabase()
+        res = await (
+            sb.table("users")
+            .update({"phone_e164": phone, "phone_verified_at": datetime.now(timezone.utc).isoformat()})
+            .eq("id", user["id"])
+            .execute()
+        )
+    except Exception as exc:
+        raise _db_error(exc) from exc
+    row = (res.data or [{}])[0]
+    return {"phone": phone, "verified": True, "verified_at": row.get("phone_verified_at")}
+
+
+@router.delete("/phone")
+async def remove_phone(user: dict = Depends(get_current_user)) -> dict:
+    """Unlink the verified number (calls are refused until a number is verified again)."""
+    try:
+        sb = await get_supabase()
+        await sb.table("users").update({"phone_e164": None, "phone_verified_at": None}).eq("id", user["id"]).execute()
+    except Exception as exc:
+        raise _db_error(exc) from exc
+    return {"phone": None, "verified": False}
 
 
 @router.post("/translated-call")
@@ -55,18 +167,26 @@ async def start_translated_call(
 ) -> dict:
     """Create two Twilio call legs and bridge them with translation."""
     cfg = get_settings()
-    if not cfg.twilio_account_sid or not cfg.twilio_auth_token or not cfg.twilio_phone_number:
-        raise HTTPException(
-            status_code=503,
-            detail="Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.",
-        )
+    _require_twilio(cfg)
     if cfg.is_production and not cfg.live_translate_public_url:
         # Without it Twilio callbacks can't be signature-checked behind the proxy.
         raise HTTPException(status_code=503, detail="Calls unavailable: LIVE_TRANSLATE_PUBLIC_URL is not set.")
 
     # Abuse guards: paid plan, real (non-premium) numbers, per-user limits.
     call_guard.require_call_plan(user, cfg)
-    user_phone = call_guard.check_destination(body.user_phone, cfg, "user_phone")
+    user_phone = _verified_phone(user)
+    if not user_phone:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "phone_not_verified",
+                    "message": "Verify your phone number before starting a translated call."},
+        )
+    if body.user_phone and call_guard.normalize_phone(body.user_phone) != user_phone:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "phone_mismatch", "field": "user_phone",
+                    "message": "Calls ring your verified number only."},
+        )
     dest_phone = call_guard.check_destination(body.dest_phone, cfg, "dest_phone")
     own = call_guard.normalize_phone(cfg.twilio_phone_number)
     if user_phone == dest_phone or own in (user_phone, dest_phone):

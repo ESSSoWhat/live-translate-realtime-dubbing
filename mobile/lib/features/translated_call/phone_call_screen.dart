@@ -5,7 +5,7 @@ import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 
 /// Screen for placing a translated phone call via Twilio (PSTN).
-/// User enters their phone (to receive the call) and destination number.
+/// Your side rings your verified number; you only enter the number to call.
 class PhoneCallScreen extends StatefulWidget {
   const PhoneCallScreen({super.key});
 
@@ -14,17 +14,28 @@ class PhoneCallScreen extends StatefulWidget {
 }
 
 class _PhoneCallScreenState extends State<PhoneCallScreen> {
-  final _userPhoneController = TextEditingController();
+  final _myPhoneController = TextEditingController();
+  final _codeController = TextEditingController();
   final _destPhoneController = TextEditingController();
   final _api = ApiClient();
   final _auth = AuthService();
   bool _loading = false;
+  bool _checkingPhone = true;
+  String? _verifiedPhone;
+  String? _codeSentTo;
   String? _status;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _loadPhone();
+  }
+
+  @override
   void dispose() {
-    _userPhoneController.dispose();
+    _myPhoneController.dispose();
+    _codeController.dispose();
     _destPhoneController.dispose();
     super.dispose();
   }
@@ -44,66 +55,178 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
     return e.message ?? 'Request failed';
   }
 
-  Future<void> _startCall() async {
+  void _show({String? status, String? error}) {
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _status = status;
+      _error = error;
+    });
+  }
+
+  /// Runs [action] with the spinner on; shows API errors in the screen.
+  Future<void> _run(Future<void> Function() action) async {
     if (_loading) return;
     if (!await _auth.hasTokens()) {
-      setState(() {
-        _error = 'Sign in required';
-        _status = null;
-      });
+      _show(error: 'Sign in required');
       return;
     }
-
-    final userPhone = _userPhoneController.text.trim();
-    final destPhone = _destPhoneController.text.trim();
-    if (userPhone.isEmpty || destPhone.isEmpty) {
-      setState(() {
-        _error = 'Enter both phone numbers';
-        _status = null;
-      });
-      return;
-    }
-
     setState(() {
       _loading = true;
       _error = null;
-      _status = 'Starting call…';
+      _status = null;
     });
-
     try {
-      await _api.startTranslatedCall(
-        userPhone: userPhone,
-        destPhone: destPhone,
-        targetLang: 'es',
-      );
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _status = 'Both phones will ring. Answer both for real-time translation.';
-          _error = null;
-        });
-      }
+      await action();
     } on DioException catch (e) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = _errorText(e);
-          _status = null;
-        });
-      }
+      _show(error: _errorText(e));
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = e.toString();
-          _status = null;
-        });
-      }
+      _show(error: e.toString());
     }
+  }
+
+  Future<void> _loadPhone() async {
+    try {
+      if (await _auth.hasTokens()) {
+        final r = await _api.getVerifiedPhone();
+        final phone = r['phone'];
+        _verifiedPhone = phone is String && phone.isNotEmpty ? phone : null;
+      }
+    } catch (_) {
+      // Leave unverified; the call endpoint explains what is missing.
+    }
+    if (mounted) setState(() => _checkingPhone = false);
+  }
+
+  Future<void> _sendCode() => _run(() async {
+        final phone = _myPhoneController.text.trim();
+        if (phone.isEmpty) {
+          _show(error: 'Enter your phone number in international format, e.g. +61412345678');
+          return;
+        }
+        final r = await _api.startPhoneVerification(phone);
+        final sentTo = r['phone'];
+        _codeSentTo = sentTo is String ? sentTo : phone;
+        _codeController.clear();
+        _show(status: 'We texted a 6-digit code to $_codeSentTo.');
+      });
+
+  Future<void> _confirmCode() => _run(() async {
+        final sentTo = _codeSentTo;
+        final code = _codeController.text.trim();
+        if (sentTo == null || code.isEmpty) {
+          _show(error: 'Enter the code from the text message');
+          return;
+        }
+        final r = await _api.confirmPhoneVerification(sentTo, code);
+        final phone = r['phone'];
+        _verifiedPhone = phone is String ? phone : sentTo;
+        _codeSentTo = null;
+        _show(status: 'Your number is verified.');
+      });
+
+  Future<void> _removePhone() => _run(() async {
+        await _api.removeVerifiedPhone();
+        _verifiedPhone = null;
+        _show(status: 'Number removed.');
+      });
+
+  Future<void> _startCall() => _run(() async {
+        final destPhone = _destPhoneController.text.trim();
+        if (destPhone.isEmpty) {
+          _show(error: 'Enter the number to call');
+          return;
+        }
+        if (mounted) setState(() => _status = 'Starting call…');
+        await _api.startTranslatedCall(destPhone: destPhone, targetLang: 'es');
+        _show(status: 'Both phones will ring. Answer both for real-time translation.');
+      });
+
+  Widget _spinnerOr(String label) => _loading
+      ? const SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        )
+      : Text(label);
+
+  List<Widget> _verifySection(BuildContext context) {
+    if (_codeSentTo != null) {
+      return [
+        Text('Enter the code we texted to $_codeSentTo.', textAlign: TextAlign.center),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _codeController,
+          decoration: const InputDecoration(labelText: 'Code'),
+          keyboardType: TextInputType.number,
+          maxLength: 6,
+        ),
+        const SizedBox(height: 8),
+        FilledButton(
+          onPressed: _loading ? null : _confirmCode,
+          child: _spinnerOr('Verify'),
+        ),
+        TextButton(
+          onPressed: _loading ? null : () => setState(() => _codeSentTo = null),
+          child: const Text('Use a different number'),
+        ),
+      ];
+    }
+    return [
+      Text(
+        'First verify your own phone number. Translated calls always ring this number on your side.',
+        style: Theme.of(context).textTheme.bodyMedium,
+        textAlign: TextAlign.center,
+      ),
+      const SizedBox(height: 16),
+      TextField(
+        controller: _myPhoneController,
+        decoration: const InputDecoration(
+          labelText: 'Your phone',
+          hintText: '+61412345678',
+        ),
+        keyboardType: TextInputType.phone,
+      ),
+      const SizedBox(height: 8),
+      FilledButton(
+        onPressed: _loading ? null : _sendCode,
+        child: _spinnerOr('Text me a code'),
+      ),
+    ];
+  }
+
+  List<Widget> _callSection(BuildContext context) {
+    return [
+      Text(
+        'Your phone: $_verifiedPhone',
+        style: Theme.of(context).textTheme.titleMedium,
+        textAlign: TextAlign.center,
+      ),
+      TextButton(
+        onPressed: _loading ? null : _removePhone,
+        child: const Text('Remove this number'),
+      ),
+      const SizedBox(height: 8),
+      Text(
+        'Enter the number to call. Both of you will hear each other translated in real time.',
+        style: Theme.of(context).textTheme.bodyMedium,
+        textAlign: TextAlign.center,
+      ),
+      const SizedBox(height: 16),
+      TextField(
+        controller: _destPhoneController,
+        decoration: const InputDecoration(
+          labelText: 'Number to call',
+          hintText: '+14155550123',
+        ),
+        keyboardType: TextInputType.phone,
+      ),
+    ];
   }
 
   @override
   Widget build(BuildContext context) {
+    final verified = _verifiedPhone != null;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Call with translation'),
@@ -115,65 +238,44 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 16),
-              Text(
-                'Enter your phone number (to receive the call) and the number to call. '
-                'Both parties will hear each other translated in real time.',
-                style: Theme.of(context).textTheme.bodyMedium,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
-              TextField(
-                controller: _userPhoneController,
-                decoration: const InputDecoration(
-                  labelText: 'Your phone',
-                  hintText: '+1234567890',
-                ),
-                keyboardType: TextInputType.phone,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _destPhoneController,
-                decoration: const InputDecoration(
-                  labelText: 'Number to call',
-                  hintText: '+0987654321',
-                ),
-                keyboardType: TextInputType.phone,
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 16),
-                Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-              if (_status != null) ...[
-                const SizedBox(height: 16),
-                Text(
-                  _status!,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.green,
+          child: _checkingPhone
+              ? const Center(child: CircularProgressIndicator())
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: ListView(
+                        children: [
+                          const SizedBox(height: 16),
+                          ...(verified ? _callSection(context) : _verifySection(context)),
+                          if (_error != null) ...[
+                            const SizedBox(height: 16),
+                            Text(
+                              _error!,
+                              style: TextStyle(color: Theme.of(context).colorScheme.error),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                          if (_status != null) ...[
+                            const SizedBox(height: 16),
+                            Text(
+                              _status!,
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: Colors.green,
+                                  ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ],
                       ),
-                  textAlign: TextAlign.center,
+                    ),
+                    if (verified)
+                      FilledButton(
+                        onPressed: _loading ? null : _startCall,
+                        child: _spinnerOr('Call with translation'),
+                      ),
+                  ],
                 ),
-              ],
-              const Spacer(),
-              FilledButton(
-                onPressed: _loading ? null : _startCall,
-                child: _loading
-                    ? const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Call with translation'),
-              ),
-            ],
-          ),
         ),
       ),
     );
