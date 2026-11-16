@@ -12,6 +12,8 @@ import audioop
 import json
 import base64
 import io
+import secrets
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,10 +38,44 @@ _session_meta: dict[str, dict[str, Any]] = {}
 _sessions: dict[str, dict[str, tuple[Any, str]]] = {}
 
 
+# A call nobody answers never opens a stream, so it would otherwise count as
+# "active" forever. Unanswered sessions expire after this, any session after the cap.
+_UNANSWERED_TTL_SEC = 180.0
+_MAX_SESSION_SEC = 4 * 3600.0
+
+
 def register_session(session_id: str, user_id: str, target_lang: str) -> None:
     """Register session metadata when creating a call."""
-    _session_meta[session_id] = {"user_id": user_id, "target_lang": target_lang}
+    _session_meta[session_id] = {
+        "user_id": user_id,
+        "target_lang": target_lang,
+        "created": time.monotonic(),
+        # Per-leg secrets for the media WebSocket URL. They only appear in the
+        # signed TwiML Twilio fetches, never in the API response to the caller.
+        "stream_tokens": {"user": secrets.token_urlsafe(18), "dest": secrets.token_urlsafe(18)},
+    }
     _sessions[session_id] = {}
+
+
+def _prune_sessions(now: float | None = None) -> None:
+    now = time.monotonic() if now is None else now
+    for sid, meta in list(_session_meta.items()):
+        age = now - meta.get("created", now)
+        if age > _MAX_SESSION_SEC or (age > _UNANSWERED_TTL_SEC and not _sessions.get(sid)):
+            _session_meta.pop(sid, None)
+            _sessions.pop(sid, None)
+
+
+def active_session_count(user_id: str) -> int:
+    """Calls this user has started that are ringing or connected."""
+    _prune_sessions()
+    return sum(1 for m in _session_meta.values() if m.get("user_id") == user_id)
+
+
+def stream_token_ok(session_id: str, leg: str, token: str | None) -> bool:
+    meta = _session_meta.get(session_id)
+    expected = (meta or {}).get("stream_tokens", {}).get(leg)
+    return bool(expected and token) and secrets.compare_digest(expected, token or "")
 
 
 def get_other_leg(session_id: str, leg: str) -> tuple[Any, str] | None:

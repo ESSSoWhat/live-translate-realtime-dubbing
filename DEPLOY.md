@@ -145,3 +145,19 @@ Point the app at your backend URL and use the same API-key flow (user pastes key
 - **Store upload automation**  
   - Play: fastlane `supply` or Play Developer API.  
   - App Store: fastlane `deliver` or App Store Connect API.
+
+## Translated phone calls (Twilio)
+
+Backend (Railway) variables:
+
+| Variable | Required | Notes |
+|---|---|---|
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` | yes | The auth token also verifies `X-Twilio-Signature` on Twilio callbacks. |
+| `LIVE_TRANSLATE_PUBLIC_URL` | yes in production | Public `https://` base of the backend, exactly as Twilio calls it (no trailing slash). Signatures are checked against this URL, not the proxy's internal host. With `BACKEND_ENV=production`, calls are refused if it is missing. |
+| `BACKEND_ENV` | `production` | Fails closed: unsigned callbacks are rejected when the token is missing. |
+| `TWILIO_CALL_TIERS` | no | Plans allowed to call. Default `starter,pro,early_adopters`. |
+| `TWILIO_MAX_CONCURRENT_CALLS` | no | Per user. Default `1`. |
+| `TWILIO_MAX_CALLS_PER_HOUR` | no | Per user, per backend process. Default `10`. |
+| `TWILIO_ALLOWED_PREFIXES` | no | For example `+61,+1,+44`. Empty means any country (premium ranges are always blocked). |
+
+Also restrict countries in the Twilio console under Voice → Geo Permissions.
