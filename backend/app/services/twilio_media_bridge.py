@@ -21,6 +21,12 @@ from elevenlabs import AsyncElevenLabs
 
 from app.config import get_settings
 from app.services.text_filter import strip_non_verbal
+from app.services.usage import QuotaExceededError, check_and_record_quota, refund_usage
+
+# Shared premade ElevenLabs voice ("Rachel"). The old code used the account's first
+# voice, which can be another user's cloned voice, and listed voices on every chunk.
+DEFAULT_CALL_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
+_MULAW_RATE = 8000  # Twilio Media Streams: 8 kHz mono mu-law, 1 byte per sample
 
 logger = structlog.get_logger(__name__)
 
@@ -75,6 +81,24 @@ class AudioProcessor:
     _buffer: bytearray = field(default_factory=bytearray)
     _pending: deque[asyncio.Task[None]] = field(default_factory=deque)
     _min_samples: int = 12000  # ~1.5s at 8kHz
+    _client: Any = None
+    _order: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _heard_ms: int = 0
+    _charged_sec: int = 0
+    _stopped: bool = False
+
+    def _eleven(self) -> AsyncElevenLabs:
+        """One ElevenLabs client per call leg instead of one per chunk."""
+        if self._client is None:
+            self._client = AsyncElevenLabs(api_key=get_settings().elevenlabs_api_key, timeout=30.0)
+        return self._client
+
+    def _stt_seconds_due(self, n_bytes: int) -> int:
+        """Whole STT seconds to charge for this chunk, carrying the fraction to the next."""
+        self._heard_ms += n_bytes * 1000 // _MULAW_RATE
+        due = self._heard_ms // 1000 - self._charged_sec
+        self._charged_sec += due
+        return due
 
     async def add_chunk(self, mulaw_b64: str) -> None:
         """Add mulaw chunk and process if buffer is full."""
@@ -87,26 +111,62 @@ class AudioProcessor:
         if len(self._buffer) >= self._min_samples:
             chunk = bytes(self._buffer[: self._min_samples])
             self._buffer = bytearray(self._buffer[self._min_samples :])
+            # Drop finished tasks so a long call does not keep every chunk's task alive.
+            while self._pending and self._pending[0].done():
+                self._pending.popleft()
             task = asyncio.create_task(self._process(chunk))
             self._pending.append(task)
 
-    async def _process(self, mulaw_bytes: bytes) -> None:
-        """Run STT → translate → TTS and send to other leg."""
+    async def _charge(self, event_type: str, quantity: int) -> bool:
+        """Reserve usage for this call's owner. False (and stop the leg) when over quota."""
+        if quantity <= 0:
+            return True
         try:
-            text = await self._stt(mulaw_bytes)
-            if not text or not text.strip():
+            await check_and_record_quota(self.user_id, event_type, quantity)
+            return True
+        except QuotaExceededError:
+            logger.info("Translated call quota exhausted", leg=self.leg, event_type=event_type)
+            self._stopped = True
+            return False
+
+    async def _process(self, mulaw_bytes: bytes) -> None:
+        """Run STT → translate → TTS and send to other leg.
+
+        Chunks run one at a time per leg so translated audio reaches the other
+        caller in the order it was spoken. Every step is metered against the
+        caller's plan like the desktop proxy; a failed paid call is refunded.
+        """
+        async with self._order:
+            if self._stopped:
                 return
-            text = strip_non_verbal(text)
-            if not text:
-                return
-            translated = strip_non_verbal(await self._translate(text))
-            if not translated:
-                return
-            mulaw_out = await self._tts(translated)
-            if mulaw_out:
-                await self._send_to_other_leg(mulaw_out)
-        except Exception as e:
-            logger.exception("Audio processing failed", leg=self.leg, error=str(e))
+            try:
+                stt_sec = self._stt_seconds_due(len(mulaw_bytes))
+                if not await self._charge("stt", stt_sec):
+                    return
+                try:
+                    text = await self._stt(mulaw_bytes)
+                except Exception:
+                    await refund_usage(self.user_id, "stt", stt_sec)
+                    raise
+                text = strip_non_verbal(text or "")
+                if not text:
+                    return
+                if not await self._charge("translate", len(text)):
+                    return
+                translated = strip_non_verbal(await self._translate(text))
+                if not translated:
+                    return
+                if not await self._charge("tts", len(translated)):
+                    return
+                try:
+                    mulaw_out = await self._tts(translated)
+                except Exception:
+                    await refund_usage(self.user_id, "tts", len(translated))
+                    raise
+                if mulaw_out:
+                    await self._send_to_other_leg(mulaw_out)
+            except Exception as e:
+                logger.exception("Audio processing failed", leg=self.leg, error=str(e))
 
     async def _stt(self, mulaw_bytes: bytes) -> str:
         """Convert mulaw to WAV and transcribe via ElevenLabs."""
@@ -132,16 +192,13 @@ class AudioProcessor:
         wav_buf.write(b"data")
         wav_buf.write(len(pcm_16k).to_bytes(4, "little"))
         wav_buf.write(pcm_16k)
-        wav_buf.seek(0)
 
-        client = AsyncElevenLabs(api_key=cfg.elevenlabs_api_key, timeout=30.0)
-        result = await asyncio.to_thread(
-            client._client.speech_to_text.convert,
-            audio=wav_buf,
+        # AsyncElevenLabs has no ``_client``; the old call raised on every chunk.
+        result = await self._eleven().speech_to_text.convert(
+            file=("audio.wav", wav_buf.getvalue(), "audio/wav"),
             model_id="scribe_v1",
-            language_code=None,
         )
-        return result.text or ""
+        return getattr(result, "text", "") or ""
 
     async def _translate(self, text: str) -> str:
         """Translate text to target language."""
@@ -186,34 +243,15 @@ class AudioProcessor:
         if not cfg.elevenlabs_api_key:
             return None
 
-        client = AsyncElevenLabs(api_key=cfg.elevenlabs_api_key, timeout=30.0)
-        try:
-            voices = await asyncio.to_thread(client._client.voices.get_all)
-            voice_id = voices.voices[0].voice_id if voices.voices else "21m00Tcm4TlvDq8ikWAM"
-        except Exception:
-            voice_id = "21m00Tcm4TlvDq8ikWAM"
-
-        audio_bytes = await asyncio.to_thread(
-            client._client.text_to_speech.convert,
-            voice_id=voice_id,
+        # Ask for 8 kHz mu-law directly: it is what Twilio plays, so there is no MP3
+        # decode (ffmpeg via pydub) on the event loop for every chunk.
+        stream = self._eleven().text_to_speech.convert(
+            DEFAULT_CALL_VOICE_ID,
             text=text,
             model_id="eleven_flash_v2_5",
-            voice_settings={"stability": 0.5, "similarity_boost": 0.75},
-            output_format="mp3_44100_128",
+            output_format="ulaw_8000",
         )
-        if hasattr(audio_bytes, "__iter__") and not isinstance(audio_bytes, bytes):
-            audio_data = b"".join(audio_bytes)
-        else:
-            audio_data = audio_bytes
-
-        # MP3 -> mulaw 8kHz
-        from pydub import AudioSegment
-
-        seg = AudioSegment.from_mp3(io.BytesIO(audio_data))
-        seg = seg.set_frame_rate(8000).set_channels(1)
-        pcm = seg.raw_data
-        mulaw_out = audioop.lin2ulaw(pcm, 2)
-        return mulaw_out
+        return b"".join([chunk async for chunk in stream])
 
     async def _send_to_other_leg(self, mulaw_bytes: bytes) -> None:
         """Send mulaw to the other leg's WebSocket."""
