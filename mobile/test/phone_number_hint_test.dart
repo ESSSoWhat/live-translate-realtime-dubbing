@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:live_translate_mobile/services/phone_number_hint.dart';
 
@@ -14,5 +16,25 @@ void main() {
     TestWidgetsFlutterBinding.ensureInitialized();
     expect(await PhoneNumberHint.requestPhoneNumber(), isNull);
     expect(await PhoneNumberHint.listenForCode(), isNull);
+  });
+
+  test('cancelCodeListener tolerates a non-string host reply', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    const channel =
+        MethodChannel('app.livetranslate.live_translate_mobile/phone_number');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      // Older Android hosts acknowledged cancelCode with `true`.
+      return call.method == 'cancelCode' ? true : null;
+    });
+    try {
+      await PhoneNumberHint.cancelCodeListener();
+      expect(await PhoneNumberHint.requestPhoneNumber(), isNull);
+    } finally {
+      messenger.setMockMethodCallHandler(channel, null);
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 }
