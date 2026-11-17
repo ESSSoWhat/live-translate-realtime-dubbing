@@ -18,7 +18,7 @@ INSERT INTO tier_limits (tier, dubbing_seconds, tts_chars, stt_seconds, translat
   ('free',            1800,    50000,    1800,    50000,    1,   0.00,  NULL),   -- 30 min/month (free trial)
   ('starter',         18000,   500000,   18000,   500000,    5,   9.99,  NULL),   -- 5 hr/month (Hobby)
   ('pro',             54000,  2000000,   54000,  2000000,   20,  24.99,  NULL),   -- 15 hr/month (Pro)
-  ('early_adopters', 2147483647, 2147483647, 2147483647, 2147483647, 99, 0.00, NULL)  -- unlimited
+  ('early_adopters', 2147483647, 2147483647, 2147483647, 2147483647, 2147483647, 0.00, NULL)  -- unlimited
 ON CONFLICT (tier) DO UPDATE SET
   dubbing_seconds = EXCLUDED.dubbing_seconds,
   tts_chars = EXCLUDED.tts_chars,
