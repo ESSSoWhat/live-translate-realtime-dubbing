@@ -28,6 +28,7 @@ from app.services.supabase_client import get_supabase
 from app.services.twilio_media_bridge import (
     AudioProcessor,
     active_session_count,
+    drop_session,
     get_session_meta,
     register_leg,
     register_session,
@@ -194,29 +195,42 @@ async def start_translated_call(
             status_code=422,
             detail={"error": "invalid_phone", "message": "Use two different numbers, neither of them ours."},
         )
+    if not cfg.elevenlabs_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Calls unavailable: ELEVENLABS_API_KEY is not set.",
+        )
+
+    # The session id is the only thing guarding the media WebSocket, so make it
+    # unguessable (was 8 hex characters of a uuid).
+    session_id = secrets.token_urlsafe(18)
+    # Reserve the concurrent-call slot before any await, so two overlapping
+    # requests cannot both pass the limit check.
     if active_session_count(user["id"]) >= cfg.twilio_max_concurrent_calls:
         raise HTTPException(
             status_code=429,
             detail={"error": "call_in_progress", "limit": cfg.twilio_max_concurrent_calls,
                     "message": "Finish your current call before starting another."},
         )
-
-    # The session id is the only thing guarding the media WebSocket, so make it
-    # unguessable (was 8 hex characters of a uuid).
-    session_id = secrets.token_urlsafe(18)
+    register_session(session_id, user["id"], body.target_lang)
     try:
-        # Each call is metered per chunk; refuse to dial when nothing is left.
-        await check_quota(user["id"], "stt", 1)
+        # Each call is metered per chunk; refuse to dial when any required stage is empty.
+        for event_type in ("stt", "translate", "tts"):
+            await check_quota(user["id"], event_type, 1)
+        call_guard.rate_limiter.check_and_record(user["id"], cfg.twilio_max_calls_per_hour)
     except QuotaExceededError as exc:
+        drop_session(session_id)
         raise HTTPException(
             status_code=402,
             detail={"error": "quota_exceeded", "event_type": exc.event_type, "used": exc.used, "limit": exc.limit},
         ) from exc
     except LookupError as exc:
+        drop_session(session_id)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    call_guard.rate_limiter.check_and_record(user["id"], cfg.twilio_max_calls_per_hour)
+    except Exception:
+        drop_session(session_id)
+        raise
     base_url = _get_base_url()
-    register_session(session_id, user["id"], body.target_lang)
 
     from twilio.rest import Client
 
@@ -234,7 +248,7 @@ async def start_translated_call(
         logger.info("Created user leg", call_sid=call_user.sid, session_id=session_id)
     except Exception as e:
         logger.exception("Twilio user leg failed", error=str(e))
-        unregister_leg(session_id, "user")
+        drop_session(session_id)
         raise HTTPException(status_code=502, detail=f"Twilio error: {str(e)}") from e
 
     try:

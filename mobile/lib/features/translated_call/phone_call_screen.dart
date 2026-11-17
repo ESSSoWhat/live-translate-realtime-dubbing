@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
@@ -124,17 +125,24 @@ class _PhoneCallScreenState extends State<PhoneCallScreen> {
           _show(error: 'Enter your phone number in international format, e.g. +61412345678');
           return;
         }
-        final r = await _api.startPhoneVerification(phone);
+        // Start SMS User Consent before the backend sends the text, so a fast
+        // SMS is not missed.
+        final pending = await PhoneNumberHint.requestWhileListening(
+          isMounted: () => mounted,
+          request: () => _api.startPhoneVerification(phone),
+        );
+        if (pending.result == null || !mounted) return;
+        final r = pending.result!;
         final sentTo = r['phone'];
         _codeSentTo = sentTo is String ? sentTo : phone;
         _codeController.clear();
         _show(status: 'We texted a 6-digit code to $_codeSentTo.');
-        _autoReadCode();
+        unawaited(_completeAutoRead(pending.code));
       });
 
   /// Android: read the code from the text (after the user taps Allow) and verify.
-  Future<void> _autoReadCode() async {
-    final code = await PhoneNumberHint.listenForCode();
+  Future<void> _completeAutoRead(Future<String?> codeFuture) async {
+    final code = await codeFuture;
     if (code == null || !mounted || _codeSentTo == null) return;
     _codeController.text = code;
     await _confirmCode();

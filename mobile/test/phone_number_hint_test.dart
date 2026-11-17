@@ -37,4 +37,76 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     }
   });
+
+  test('requestWhileListening starts the SMS listener before the request', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    const channel =
+        MethodChannel('app.livetranslate.live_translate_mobile/phone_number');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final events = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'listenForCode') {
+        events.add('listen');
+        return '123456';
+      }
+      if (call.method == 'cancelCode') {
+        events.add('cancel');
+        return null;
+      }
+      return null;
+    });
+    try {
+      final pending = await PhoneNumberHint.requestWhileListening<String>(
+        isMounted: () => true,
+        request: () async {
+          events.add('request');
+          return 'sent';
+        },
+      );
+      expect(events, ['listen', 'request']);
+      expect(pending.result, 'sent');
+      expect(await pending.code, '123456');
+    } finally {
+      messenger.setMockMethodCallHandler(channel, null);
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  test('requestWhileListening cancels the listener if the screen is gone', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    const channel =
+        MethodChannel('app.livetranslate.live_translate_mobile/phone_number');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final events = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'listenForCode') {
+        events.add('listen');
+        return '123456';
+      }
+      if (call.method == 'cancelCode') {
+        events.add('cancel');
+        return null;
+      }
+      return null;
+    });
+    try {
+      var mounted = true;
+      final pending = await PhoneNumberHint.requestWhileListening<String>(
+        isMounted: () => mounted,
+        request: () async {
+          mounted = false;
+          return 'sent';
+        },
+      );
+      expect(pending.result, isNull);
+      expect(events, containsAll(['listen', 'cancel']));
+    } finally {
+      messenger.setMockMethodCallHandler(channel, null);
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
 }

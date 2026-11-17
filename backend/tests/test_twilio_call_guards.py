@@ -228,3 +228,99 @@ def test_media_websocket_needs_the_leg_token() -> None:
                 ws.send_text('{"event": "stop"}')
     finally:
         p.stop()
+
+
+@pytest.mark.parametrize("status", ["incomplete", "incomplete_expired", "paused", "unpaid", "canceled", ""])
+def test_unentitled_subscription_status_is_refused(status: str) -> None:
+    r, tw = _start(user={**PAID, "id": "u-status", "subscription_status": status})
+    assert r.status_code == 403 and r.json()["detail"]["error"] == "plan_required"
+    tw.calls.create.assert_not_called()
+
+
+def test_trialing_paid_plan_can_start_a_call() -> None:
+    r, tw = _start(user={**PAID, "id": "u-trial", "subscription_status": "trialing"})
+    assert r.status_code == 200, r.text
+    tw.calls.create.assert_called()
+
+
+def test_calls_are_refused_without_elevenlabs() -> None:
+    r, tw = _start(cfg=_cfg(elevenlabs_api_key=""))
+    assert r.status_code == 503
+    tw.calls.create.assert_not_called()
+
+
+def test_translate_and_tts_quotas_are_checked_before_dialling() -> None:
+    from app.services.usage import QuotaExceededError
+
+    for stage in ("translate", "tts"):
+        async def reject(user_id, event_type, qty, exhausted=stage):
+            if event_type == exhausted:
+                raise QuotaExceededError(event_type=event_type, used=1, limit=1, requested=qty)
+
+        client, tw, patches = _app_client(PAID, _cfg())
+        extra = patch.object(voice, "check_quota", reject)
+        extra.start()
+        try:
+            with client:
+                r = client.post("/api/v1/voice/translated-call", json=BODY)
+            assert r.status_code == 402, r.text
+            assert r.json()["detail"]["event_type"] == stage
+            tw.calls.create.assert_not_called()
+            assert bridge.active_session_count("u1") == 0
+        finally:
+            extra.stop()
+            for p in patches:
+                p.stop()
+
+
+def test_overlapping_starts_reserve_the_slot_before_quota() -> None:
+    """Two /translated-call requests must not both pass the one-call limit."""
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+    seen: list[str] = []
+
+    async def gated_quota(user_id, event_type, qty):
+        if event_type == "stt":
+            seen.append(event_type)
+            entered.set()
+            # Yield so a second request can run while this one is in check_quota.
+            while not release.is_set():
+                await asyncio.sleep(0.01)
+
+    cfg = _cfg(twilio_max_concurrent_calls=1, twilio_max_calls_per_hour=10)
+    app = create_app()
+    app.dependency_overrides[get_current_user] = lambda: PAID
+    twilio_client = MagicMock()
+    twilio_client.calls.create.side_effect = lambda **kw: SimpleNamespace(sid="CA" + kw["to"][-4:])
+    patches = [
+        patch.object(voice, "get_settings", return_value=cfg),
+        patch.object(voice, "check_quota", gated_quota),
+        patch("twilio.rest.Client", return_value=twilio_client),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        results: list = [None, None]
+
+        def first():
+            with TestClient(app) as client:
+                results[0] = client.post("/api/v1/voice/translated-call", json=BODY)
+
+        t = threading.Thread(target=first)
+        t.start()
+        assert entered.wait(timeout=5)
+        # The first request has registered the session and is awaiting quota.
+        assert bridge.active_session_count("u1") == 1
+        with TestClient(app) as client:
+            results[1] = client.post("/api/v1/voice/translated-call", json=BODY)
+        release.set()
+        t.join(timeout=5)
+        assert results[0] is not None and results[0].status_code == 200, getattr(results[0], "text", None)
+        assert results[1].status_code == 429 and results[1].json()["detail"]["error"] == "call_in_progress"
+        assert twilio_client.calls.create.call_count == 2  # only the first request dials both legs
+    finally:
+        release.set()
+        for p in patches:
+            p.stop()

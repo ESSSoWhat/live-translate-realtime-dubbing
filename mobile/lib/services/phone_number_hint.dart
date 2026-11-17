@@ -45,6 +45,32 @@ class PhoneNumberHint {
     }
   }
 
+  /// Start SMS User Consent, then run [request].
+  ///
+  /// Listening starts before [request] so a fast SMS is not missed. If the
+  /// screen is gone when [request] finishes, the listener is cancelled and
+  /// this returns null. [listenForCode] is returned so the caller can fill the
+  /// code when it arrives. The typed-code path remains the fallback.
+  static Future<({T? result, Future<String?> code})> requestWhileListening<T>({
+    required bool Function() isMounted,
+    required Future<T> Function() request,
+  }) async {
+    final code = (isSupported && isMounted())
+        ? listenForCode()
+        : Future<String?>.value(null);
+    try {
+      final result = await request();
+      if (!isMounted()) {
+        await cancelCodeListener();
+        return (result: null, code: Future<String?>.value(null));
+      }
+      return (result: result, code: code);
+    } catch (e) {
+      await cancelCodeListener();
+      rethrow;
+    }
+  }
+
   /// `+61 412-345 678` → `+61412345678`; null when not international format.
   static String? toE164(String raw) {
     final cleaned = raw.replaceAll(RegExp(r'[\s().-]'), '');
