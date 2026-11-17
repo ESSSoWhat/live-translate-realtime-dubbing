@@ -1,5 +1,14 @@
-# Invoked from ci.yml on version tags. Declaring secrets here satisfies the Actions
-# language server (workflow_call secret schema); use secrets: inherit from the caller.
+# Android release build.
+# - Called from ci.yml on version tags (secrets: inherit); uploads the APK and AAB to the
+#   GitHub Release for that tag.
+# - Can also be run by hand (Actions → "Android release (reusable)" → Run workflow), and runs
+#   on pull requests that touch the Android build, to prove the bundle still builds. Those
+#   runs only upload a workflow artifact; they never touch a GitHub Release.
+#
+# Signing: set all four secrets below for a Play-ready, upload-key-signed build.
+# If ANDROID_KEYSTORE_BASE64 is missing the job still succeeds, but the APK/AAB are signed
+# with a throwaway debug key, renamed *-debug-signed.*, and a warning is shown. Those files
+# install for testing but Google Play will reject them.
 
 name: Android release (reusable)
 
@@ -14,9 +23,17 @@ on:
         required: false
       ANDROID_KEY_ALIAS:
         required: false
+  workflow_dispatch:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - ".github/workflows/release-android-reusable.yml"
+      - "mobile/android/**"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  API_BASE_URL: https://livetranslatedubtool-production.up.railway.app/
+  GOOGLE_WEB_CLIENT_ID: 683320997088-nbqaieaucd9rnpgn1ha2fvsjhqqh47m0.apps.googleusercontent.com
 
 permissions:
   contents: write
@@ -52,6 +69,7 @@ jobs:
           flutter test
 
       - name: Decode keystore and create key.properties
+        id: signing
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 || '' }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
@@ -59,32 +77,84 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || '' }}
         run: |
           cd mobile/android
+          rm -f key.properties
           if [ -z "$KEYSTORE_B64" ]; then
-            echo "ANDROID_KEYSTORE_BASE64 not set; release builds will use debug signing."
+            echo "::warning title=Android build is NOT release-signed::ANDROID_KEYSTORE_BASE64 is not set, so the APK and AAB are signed with a debug key. They install for testing but Google Play will reject them. Add ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_PASSWORD and ANDROID_KEY_ALIAS to sign properly."
+            echo "mode=debug" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "$KEYSTORE_B64" | base64 -d > upload-keystore.jks
-          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=upload-keystore.jks\n' \
-            "$KEYSTORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" "upload-keystore.jks" > key.properties
+          missing=""
+          [ -n "$KEYSTORE_PASSWORD" ] || missing="$missing ANDROID_KEYSTORE_PASSWORD"
+          [ -n "$KEY_PASSWORD" ] || missing="$missing ANDROID_KEY_PASSWORD"
+          [ -n "$KEY_ALIAS" ] || missing="$missing ANDROID_KEY_ALIAS"
+          if [ -n "$missing" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is set but these secrets are missing:$missing"
+            exit 1
+          fi
+          # Absolute path: app/build.gradle resolves storeFile relative to android/app/.
+          KEYSTORE_PATH="$RUNNER_TEMP/upload-keystore.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$KEYSTORE_PATH"
+          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=%s\n' \
+            "$KEYSTORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" "$KEYSTORE_PATH" > key.properties
+          echo "mode=release" >> "$GITHUB_OUTPUT"
 
       - name: Build release APK
         run: |
           cd mobile
           flutter build apk --release \
-            --dart-define=API_BASE_URL=https://livetranslatedubtool-production.up.railway.app/ \
-            --dart-define=GOOGLE_WEB_CLIENT_ID=683320997088-nbqaieaucd9rnpgn1ha2fvsjhqqh47m0.apps.googleusercontent.com
+            --dart-define=API_BASE_URL=$API_BASE_URL \
+            --dart-define=GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID
 
       - name: Build App Bundle
         run: |
           cd mobile
           flutter build appbundle --release \
-            --dart-define=API_BASE_URL=https://livetranslatedubtool-production.up.railway.app/ \
-            --dart-define=GOOGLE_WEB_CLIENT_ID=683320997088-nbqaieaucd9rnpgn1ha2fvsjhqqh47m0.apps.googleusercontent.com
+            --dart-define=API_BASE_URL=$API_BASE_URL \
+            --dart-define=GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID
+
+      - name: Collect outputs
+        id: outputs
+        env:
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
+        run: |
+          cd mobile
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          AAB=build/app/outputs/bundle/release/app-release.aab
+          for f in "$APK" "$AAB"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Expected build output $f is missing"
+              find . -name "*.aab" -o -name "app-release.apk" | head -20
+              exit 1
+            fi
+          done
+          mkdir -p ../dist
+          if [ "$SIGNING_MODE" = "release" ]; then
+            cp "$APK" ../dist/app-release.apk
+            cp "$AAB" ../dist/app-release.aab
+          else
+            cp "$APK" ../dist/app-release-debug-signed.apk
+            cp "$AAB" ../dist/app-release-debug-signed.aab
+          fi
+          ls -la ../dist
+          echo "Signer of the App Bundle:"
+          keytool -printcert -jarfile ../dist/*.aab | grep -m1 "Owner:" || true
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ steps.signing.outputs.mode }}-signed-run${{ github.run_number }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload APK and AAB to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: |
-            mobile/build/app/outputs/flutter-apk/app-release.apk
-            mobile/build/app/outputs/bundle/release/app-release.aab
+          fail_on_unmatched_files: true
+          files: dist/*
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload-keystore.jks" mobile/android/key.properties

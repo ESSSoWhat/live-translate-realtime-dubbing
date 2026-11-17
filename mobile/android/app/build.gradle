@@ -113,6 +113,37 @@ tasks.register("syncFlutterApkToRoot") {
         }
     }
 }
+// Same problem for App Bundles: `flutter build appbundle` looks for
+// mobile/build/app/outputs/bundle/<variant>/app-<variant>.aab, but AGP writes it under
+// android/app/build/outputs/bundle/<variant>/. Without this copy the CLI reports
+// "Gradle build failed to produce an .aab file" and exits 1 even though Gradle succeeded.
+def dstBundleRoot = new File(projectRoot, "build/app/outputs/bundle")
+tasks.register("syncFlutterBundleToRoot") {
+    doLast {
+        def srcBundleRoot = new File(layout.buildDirectory.get().asFile, "outputs/bundle")
+        if (!srcBundleRoot.exists()) {
+            return
+        }
+        srcBundleRoot.eachFileRecurse { f ->
+            if (f.isFile() && f.name.endsWith(".aab")) {
+                def rel = srcBundleRoot.toPath().relativize(f.toPath())
+                def dst = dstBundleRoot.toPath().resolve(rel)
+                java.nio.file.Files.createDirectories(dst.parent)
+                java.nio.file.Files.copy(
+                    f.toPath(), dst, java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                )
+            }
+        }
+    }
+}
+afterEvaluate {
+    ["bundleDebug", "bundleProfile", "bundleRelease"].each { String name ->
+        def t = tasks.findByName(name)
+        if (t != null) {
+            t.finalizedBy(syncFlutterBundleToRoot)
+        }
+    }
+}
 afterEvaluate {
     def hook = { String name ->
         def t = tasks.findByName(name)
