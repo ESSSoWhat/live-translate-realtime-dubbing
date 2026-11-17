@@ -17,6 +17,8 @@ os.environ.setdefault("ELEVENLABS_API_KEY", "test-elevenlabs-key")
 # Admin/Wix sync secret the tests authenticate with. Set here so the suite is
 # self-contained (local .env supplies it too, but CI has no .env).
 os.environ.setdefault("LT_SYNC_SECRET", "test-secret-123")
+# Keep verification codes in process memory so tests do not need a real database.
+os.environ.setdefault("PHONE_VERIFY_STORE", "memory")
 
 # test_usage_tracking_integration.py is a standalone asyncio script (run directly
 # against a real Postgres), NOT a pytest module. Exclude it from collection so it

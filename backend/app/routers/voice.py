@@ -117,7 +117,7 @@ async def start_phone_verification(body: PhoneStartRequest, user: dict = Depends
     if taken.data:
         raise _db_error(Exception("23505"))
     try:
-        await phone_verify.send_code(user["id"], phone, cfg)
+        await phone_verify.send_code(user["id"], phone, cfg, db=sb)
     except HTTPException:
         raise
     except Exception as exc:
@@ -135,15 +135,17 @@ async def confirm_phone_verification(body: PhoneConfirmRequest, user: dict = Dep
     cfg = get_settings()
     _require_twilio(cfg)
     phone = call_guard.normalize_phone(body.phone)
-    await phone_verify.check_code(user["id"], phone, body.code, cfg)
     try:
         sb = await get_supabase()
+        await phone_verify.check_code(user["id"], phone, body.code, cfg, db=sb)
         res = await (
             sb.table("users")
             .update({"phone_e164": phone, "phone_verified_at": datetime.now(timezone.utc).isoformat()})
             .eq("id", user["id"])
             .execute()
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise _db_error(exc) from exc
     row = (res.data or [{}])[0]
