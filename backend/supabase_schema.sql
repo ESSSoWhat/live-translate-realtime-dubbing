@@ -292,3 +292,30 @@ BEGIN
   RETURN 'invalid';
 END;
 $$;
+
+-- Only the backend (service_role) may call these SECURITY DEFINER functions.
+-- Supabase grants EXECUTE on new public functions to anon/authenticated by
+-- default, so without this anyone with the public anon key could call them
+-- over the REST RPC endpoint. Matches migrations/003_phone_verification_codes.sql.
+-- Role checks keep this file runnable on plain Postgres (local integration tests).
+REVOKE ALL ON FUNCTION public.try_record_phone_verification_send(uuid, text, timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.apply_phone_verification_attempt(uuid, text, text, boolean) FROM PUBLIC;
+DO $$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('REVOKE ALL ON TABLE public.phone_verification_codes FROM %I', r);
+      EXECUTE format('REVOKE ALL ON TABLE public.phone_verification_sends FROM %I', r);
+      EXECUTE format('REVOKE ALL ON FUNCTION public.try_record_phone_verification_send(uuid, text, timestamptz) FROM %I', r);
+      EXECUTE format('REVOKE ALL ON FUNCTION public.apply_phone_verification_attempt(uuid, text, text, boolean) FROM %I', r);
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    GRANT ALL ON TABLE public.phone_verification_codes TO service_role;
+    GRANT ALL ON TABLE public.phone_verification_sends TO service_role;
+    GRANT EXECUTE ON FUNCTION public.try_record_phone_verification_send(uuid, text, timestamptz) TO service_role;
+    GRANT EXECUTE ON FUNCTION public.apply_phone_verification_attempt(uuid, text, text, boolean) TO service_role;
+  END IF;
+END;
+$$;
