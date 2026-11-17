@@ -529,3 +529,52 @@ def test_supabase_store_rolls_back_send_when_sms_fails() -> None:
         asyncio.run(phone_verify.send_code(USER_A, PHONE, cfg, now=db.clock, store=store))
     assert db.sends == []
     assert db.codes == {}
+
+
+def test_twilio_verify_not_called_without_pending_code_or_after_lockout() -> None:
+    """Codex review on #56: check local state before spending a Twilio Verify check."""
+    db = FakeVerifyDb(clock=datetime.now(timezone.utc))
+    store = phone_verify.SupabaseStore(db)
+    cfg = _cfg(twilio_verify_service_sid="VA123")
+    tw = MagicMock()
+    svc = tw.verify.v2.services.return_value
+    svc.verification_checks.create.side_effect = lambda to, code: SimpleNamespace(status="pending")
+    with patch("twilio.rest.Client", return_value=tw):
+        # No code was ever sent: rejected without calling Twilio.
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(phone_verify.check_code(USER_A, PHONE, "111111", cfg, store=store))
+        assert "Ask for a code" in exc.value.detail["message"]
+        svc.verification_checks.create.assert_not_called()
+
+        asyncio.run(phone_verify.send_code(USER_A, PHONE, cfg, now=db.clock, store=store))
+        # A different number than the pending one: also no Twilio call.
+        with pytest.raises(HTTPException):
+            asyncio.run(phone_verify.check_code(USER_A, "+61400000001", "111111", cfg, store=store))
+        svc.verification_checks.create.assert_not_called()
+
+        for _ in range(phone_verify.MAX_ATTEMPTS):
+            with pytest.raises(HTTPException):
+                asyncio.run(phone_verify.check_code(USER_A, PHONE, "111111", cfg, store=store))
+        assert svc.verification_checks.create.call_count == phone_verify.MAX_ATTEMPTS
+        # Locked out: further tries don't reach Twilio.
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(phone_verify.check_code(USER_A, PHONE, "111111", cfg, store=store))
+        assert "Too many wrong codes" in exc.value.detail["message"]
+        assert svc.verification_checks.create.call_count == phone_verify.MAX_ATTEMPTS
+
+
+def test_memory_store_twilio_verify_precheck() -> None:
+    cfg = _cfg(twilio_verify_service_sid="VA123")
+    tw = MagicMock()
+    svc = tw.verify.v2.services.return_value
+    svc.verification_checks.create.side_effect = lambda to, code: SimpleNamespace(status="pending")
+    store = phone_verify.MemoryStore()
+    with patch("twilio.rest.Client", return_value=tw):
+        with pytest.raises(HTTPException):
+            asyncio.run(phone_verify.check_code(USER_A, PHONE, "111111", cfg, now=0.0, store=store))
+        svc.verification_checks.create.assert_not_called()
+        asyncio.run(phone_verify.send_code(USER_A, PHONE, cfg, now=0.0, store=store))
+        for _ in range(phone_verify.MAX_ATTEMPTS + 2):
+            with pytest.raises(HTTPException):
+                asyncio.run(phone_verify.check_code(USER_A, PHONE, "111111", cfg, now=1.0, store=store))
+        assert svc.verification_checks.create.call_count == phone_verify.MAX_ATTEMPTS
