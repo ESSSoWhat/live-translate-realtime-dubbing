@@ -32,8 +32,17 @@ class PhoneNumberHint {
   /// after the user taps Allow, or null.
   static Future<String?> listenForCode() => _call('listenForCode');
 
+  /// Stops waiting for the text. Never throws (it runs from dispose()).
   static Future<void> cancelCodeListener() async {
-    await _call('cancelCode');
+    if (!isSupported) return;
+    try {
+      // `void`, not `String`: the host acknowledges with a non-string value.
+      await _channel.invokeMethod<void>('cancelCode');
+    } on PlatformException {
+      // Nothing to cancel.
+    } on MissingPluginException {
+      // No Android host.
+    }
   }
 
   /// `+61 412-345 678` → `+61412345678`; null when not international format.

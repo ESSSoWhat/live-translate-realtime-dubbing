@@ -30,7 +30,7 @@ class PhoneNumberHelper(private val activity: Activity) {
             "listenForCode" -> listenForCode(result)
             "cancelCode" -> {
                 finishCode(null)
-                result.success(true)
+                result.success(null)
             }
             else -> result.notImplemented()
         }
