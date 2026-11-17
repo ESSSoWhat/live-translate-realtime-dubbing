@@ -9,6 +9,10 @@ const APP_PRODUCTS: Record<string, string> = {
 
 const searchOrders = auth.elevate(orders.searchOrders);
 
+const PAGE_SIZE = 100;
+// Safety cap so one request can't loop forever: 50 pages = 5,000 orders.
+const MAX_PAGES = 50;
+
 export async function GET(req: Request) {
   const slug = new URL(req.url).searchParams.get('slug') ?? '';
   const productId = APP_PRODUCTS[slug];
@@ -21,14 +25,29 @@ export async function GET(req: Request) {
     return Response.json({ found: false });
   }
 
-  const result = await searchOrders({
-    filter: { 'buyerInfo.memberId': { $eq: token.subjectId } },
-    cursorPaging: { limit: 100 },
-  });
-  const found = (result.orders ?? []).some(
-    (order) =>
-      order.status === 'APPROVED' &&
-      (order.lineItems ?? []).some((item) => item.catalogReference?.catalogItemId === productId),
-  );
+  // Walk every page of the member's orders (newest first) so an older approved
+  // download order is still found for members with more than one page of orders.
+  // Follow-up pages pass only the cursor, as Wix cursor paging requires.
+  let cursor: string | null | undefined;
+  let found = false;
+  for (let page = 0; page < MAX_PAGES && !found; page++) {
+    const result = await searchOrders(
+      cursor
+        ? { cursorPaging: { limit: PAGE_SIZE, cursor } }
+        : {
+            filter: { 'buyerInfo.memberId': { $eq: token.subjectId } },
+            cursorPaging: { limit: PAGE_SIZE },
+          },
+    );
+    found = (result.orders ?? []).some(
+      (order) =>
+        order.status === 'APPROVED' &&
+        (order.lineItems ?? []).some((item) => item.catalogReference?.catalogItemId === productId),
+    );
+    cursor = result.metadata?.cursors?.next;
+    if (!cursor || result.metadata?.hasNext === false) {
+      break;
+    }
+  }
   return Response.json({ found });
 }
