@@ -26,7 +26,9 @@ BLOCKED_PREFIXES = (
     "+881", "+882", "+883", "+979",  # satellite / international networks / premium
 )
 
-PAID_STATUS_BLOCKED = {"past_due", "unpaid", "canceled"}
+# Stripe/Wix statuses that actually grant a paid entitlement. A paid tier with
+# incomplete, paused, or empty status must not be able to start billable calls.
+PAID_STATUS_ALLOWED = {"active", "trialing"}
 
 
 def normalize_phone(raw: str) -> str:
@@ -62,7 +64,7 @@ def require_call_plan(user: dict, cfg: Settings) -> None:
     tiers = {t.strip() for t in cfg.twilio_call_tiers.split(",") if t.strip()}
     tier = str(user.get("tier") or "free")
     status = str(user.get("subscription_status") or "")
-    if tier not in tiers or status in PAID_STATUS_BLOCKED:
+    if tier not in tiers or status not in PAID_STATUS_ALLOWED:
         raise HTTPException(
             status_code=403,
             detail={"error": "plan_required", "tier": tier,

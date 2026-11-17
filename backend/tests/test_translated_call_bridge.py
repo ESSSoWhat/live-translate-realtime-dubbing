@@ -7,7 +7,19 @@ import base64
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.services import twilio_media_bridge as bridge
+
+
+@pytest.fixture(autouse=True)
+def _clear_sessions():
+    bridge._session_meta.clear()
+    bridge._sessions.clear()
+    yield
+    bridge._session_meta.clear()
+    bridge._sessions.clear()
+
 
 
 def _processor() -> bridge.AudioProcessor:
@@ -115,3 +127,49 @@ def test_twiml_rejects_unknown_sessions_and_escapes_the_url(client) -> None:
         bridge.unregister_leg(session, "dest")
     assert r.status_code == 200
     assert "&amp;session=" + session in r.text
+
+
+
+def test_missing_elevenlabs_key_does_not_charge_stt() -> None:
+    proc = _processor()
+    el = _fake_eleven()
+    proc._client = el
+    quota = AsyncMock()
+    with (
+        patch.object(bridge, "check_and_record_quota", quota),
+        patch.object(bridge, "get_settings", return_value=SimpleNamespace(elevenlabs_api_key="", openai_api_key="")),
+        patch.object(proc, "_send_to_other_leg", AsyncMock()),
+    ):
+        asyncio.run(proc._process(b"\xff" * 12000))
+    quota.assert_not_awaited()
+    el.speech_to_text.convert.assert_not_awaited()
+    assert not proc._stopped
+
+
+def test_one_disconnected_leg_keeps_the_session_counted() -> None:
+    sid = "B" * 24
+    bridge.register_session(sid, "u1", "es")
+    try:
+        bridge.register_leg(sid, "user", object(), "MS1")
+        assert bridge.active_session_count("u1") == 1
+        bridge.unregister_leg(sid, "user")
+        # The dest leg may still be ringing; do not free the slot yet.
+        assert bridge.active_session_count("u1") == 1
+        assert bridge.get_session_meta(sid) is not None
+        # TwiML for the remaining leg must still resolve the session.
+        assert bridge.get_session_meta(sid)["stream_tokens"]["dest"]
+    finally:
+        bridge.drop_session(sid)
+    assert bridge.active_session_count("u1") == 0
+
+
+def test_session_drops_only_after_both_legs_have_connected_and_left() -> None:
+    sid = "C" * 24
+    bridge.register_session(sid, "u1", "es")
+    bridge.register_leg(sid, "user", object(), "MS1")
+    bridge.register_leg(sid, "dest", object(), "MS2")
+    bridge.unregister_leg(sid, "user")
+    assert bridge.get_session_meta(sid) is not None
+    bridge.unregister_leg(sid, "dest")
+    assert bridge.get_session_meta(sid) is None
+    assert bridge.active_session_count("u1") == 0

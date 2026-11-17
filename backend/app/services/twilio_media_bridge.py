@@ -90,16 +90,37 @@ def register_leg(session_id: str, leg: str, ws: Any, stream_sid: str) -> None:
     if session_id not in _sessions:
         _sessions[session_id] = {}
     _sessions[session_id][leg] = (ws, stream_sid)
+    meta = _session_meta.get(session_id)
+    if meta is not None:
+        meta.setdefault("connected_legs", set()).add(leg)
     logger.info("Leg registered", session_id=session_id, leg=leg, stream_sid=stream_sid)
 
 
+def drop_session(session_id: str) -> None:
+    """Forget a session that never reached Twilio, or that has fully ended."""
+    _sessions.pop(session_id, None)
+    _session_meta.pop(session_id, None)
+
+
 def unregister_leg(session_id: str, leg: str) -> None:
-    """Remove a leg when disconnected."""
+    """Remove a leg when disconnected.
+
+    The session stays counted while the other PSTN leg may still be ringing or
+    connected, so a second call cannot start mid-hangup. It is dropped once both
+    legs have connected and then gone, or when the unanswered TTL expires.
+    """
     if session_id in _sessions:
         _sessions[session_id].pop(leg, None)
         if not _sessions[session_id]:
             _sessions.pop(session_id, None)
-    _session_meta.pop(session_id, None)
+    meta = _session_meta.get(session_id)
+    if meta is None:
+        return
+    if _sessions.get(session_id):
+        return
+    connected = meta.get("connected_legs") or set()
+    if connected >= {"user", "dest"}:
+        _session_meta.pop(session_id, None)
 
 
 def get_session_meta(session_id: str) -> dict[str, Any] | None:
@@ -176,6 +197,11 @@ class AudioProcessor:
             if self._stopped:
                 return
             try:
+                # STT and TTS both need ElevenLabs; do not reserve quota when
+                # the key is missing (those calls are skipped, not fulfilled).
+                if not get_settings().elevenlabs_api_key:
+                    logger.warning("Translated call skipped: ELEVENLABS_API_KEY is not set", leg=self.leg)
+                    return
                 stt_sec = self._stt_seconds_due(len(mulaw_bytes))
                 if not await self._charge("stt", stt_sec):
                     return
