@@ -200,9 +200,8 @@ class AppSettings(BaseModel):
     # Advanced settings
     enable_debug_logging: bool = False
     max_latency_warning_ms: int = Field(default=2000, ge=500, le=10000)
-    # When True, use direct ElevenLabs API even when signed in (for offline / flaky network).
-    # Usage is not tracked when this is enabled.
-    prefer_direct_api: bool = False
+    # NOTE: Direct API calls are disabled by default. Use LT_DEV_DIRECT_API=1 env var
+    # for local development only. Production always uses backend proxy.
 
     # Backend URL (can be overridden by LIVE_TRANSLATE_BACKEND_URL env var)
     backend_base_url: str = "https://livetranslatedubtool-production.up.railway.app"
@@ -479,6 +478,17 @@ class ConfigManager:
             try:
                 data = json.loads(self.config_file.read_text(encoding="utf-8"))
                 settings = AppSettings.model_validate(data)
+
+                # Migrate localhost backend URLs to production (from dev/test settings)
+                if "127.0.0.1" in settings.backend_base_url or "localhost" in settings.backend_base_url.lower():
+                    logger.info(
+                        "Migrating localhost backend URL to production",
+                        old_url=settings.backend_base_url,
+                    )
+                    settings.backend_base_url = "https://livetranslatedubtool-production.up.railway.app"
+                    # Save the corrected settings immediately
+                    self.save(settings)
+
                 logger.info("Settings loaded", path=str(self.config_file))
                 return settings
             except Exception as e:
@@ -493,8 +503,19 @@ class ConfigManager:
         return AppSettings()
 
     def save(self, settings: AppSettings) -> None:
-        """Save settings to file."""
+        """Save settings to file.
+
+        Ensures localhost backend URLs are never persisted in saved config.
+        """
         try:
+            # Prevent localhost URLs from being saved to config
+            if "127.0.0.1" in settings.backend_base_url or "localhost" in settings.backend_base_url.lower():
+                logger.warning(
+                    "Refusing to save localhost backend URL; using production default",
+                    url=settings.backend_base_url,
+                )
+                settings.backend_base_url = "https://livetranslatedubtool-production.up.railway.app"
+
             # Exclude internal fields from saved config
             data = settings.model_dump(
                 exclude={"_elevenlabs_api_key", "_openai_api_key"},

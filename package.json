@@ -1,6 +1,6 @@
 {
   "devDependencies": {
-    "@wix/astro": "^2.0.0",
+    "@wix/astro": "^3.1.2",
     "supabase": "^2.109.1"
   }
 }

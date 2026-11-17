@@ -204,6 +204,40 @@ async def record_usage(user_id: str, event_type: str, quantity: int) -> None:
     )
 
 
+async def refund_usage(user_id: str, event_type: str, quantity: int) -> None:
+    """Give back usage recorded by check_and_record_quota when the paid upstream call failed.
+
+    Quota is reserved before the call (so concurrent requests cannot overspend) and
+    refunded here on failure, so users are only charged for calls that succeeded.
+    Never raises: a failed refund is logged and the reservation stays.
+    """
+    col = _COLUMN_MAP.get(event_type)
+    if col is None or quantity <= 0:
+        return
+    try:
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE usage_records
+                SET {col} = GREATEST(usage_records.{col} - $3, 0),
+                    updated_at = NOW()
+                WHERE user_id = $1 AND period_start = $2
+                """.replace("{col}", col),
+                user_id, _period_start(), quantity,
+            )
+    except Exception as exc:  # noqa: BLE001 - refund is best effort
+        logger.warning(
+            "usage_refund_failed",
+            user_id=user_id,
+            event_type=event_type,
+            quantity=quantity,
+            error=str(exc)[:200],
+        )
+        return
+    logger.info("usage_refunded", user_id=user_id, event_type=event_type, quantity=quantity)
+
+
 async def get_usage_snapshot(user_id: str) -> dict:
     """Return current usage and limits for a user."""
     pool = await get_db_pool()

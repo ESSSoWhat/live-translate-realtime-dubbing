@@ -3,6 +3,7 @@ Voice router — translated phone calls via Twilio.
 
 Endpoints:
 - POST /voice/translated-call: Initiate a two-leg translated call (auth required).
+- GET/DELETE /voice/phone, POST /voice/phone/verify/{start,confirm}: the caller's verified number.
 - GET /voice/twiml/stream: Return TwiML for Media Streams (called by Twilio).
 - WS /voice/ws/media: WebSocket for Twilio Media Streams (bidirectional).
 """
@@ -10,7 +11,10 @@ Endpoints:
 from __future__ import annotations
 
 import json
-import uuid
+import re
+import secrets
+from datetime import datetime, timezone
+from xml.sax.saxutils import quoteattr
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -19,24 +23,144 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.dependencies import get_current_user
+from app.services import call_guard, phone_verify
+from app.services.supabase_client import get_supabase
 from app.services.twilio_media_bridge import (
     AudioProcessor,
+    active_session_count,
+    drop_session,
     get_session_meta,
     register_leg,
     register_session,
+    stream_token_ok,
     unregister_leg,
 )
+from app.services.usage import QuotaExceededError, check_quota
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/voice", tags=["voice"])
 
+_LEGS = ("user", "dest")
+_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
 
 class TranslatedCallRequest(BaseModel):
-    """Request to start a translated phone call."""
+    """Request to start a translated phone call.
 
-    user_phone: str
+    The caller's side always rings their verified number; ``user_phone`` is optional
+    and only accepted when it matches that number (older app versions send it).
+    """
+
     dest_phone: str
+    user_phone: str | None = None
     target_lang: str = "es"
+
+
+class PhoneStartRequest(BaseModel):
+    phone: str
+
+
+class PhoneConfirmRequest(BaseModel):
+    phone: str
+    code: str
+
+
+def _verified_phone(user: dict) -> str | None:
+    phone = user.get("phone_e164")
+    return phone if phone and user.get("phone_verified_at") else None
+
+
+def _require_twilio(cfg) -> None:
+    if not cfg.twilio_account_sid or not cfg.twilio_auth_token or not cfg.twilio_phone_number:
+        raise HTTPException(
+            status_code=503,
+            detail="Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.",
+        )
+
+
+def _db_error(exc: Exception) -> HTTPException:
+    text = f"{getattr(exc, 'code', '')} {exc}"
+    if "23505" in text:
+        return HTTPException(
+            status_code=409,
+            detail={"error": "phone_in_use", "message": "This number is already linked to another account."},
+        )
+    logger.warning("Phone number update failed", error=str(exc))
+    return HTTPException(
+        status_code=503,
+        detail={"error": "phone_storage_unavailable",
+                "message": "Phone numbers can't be saved yet. Please try again later."},
+    )
+
+
+@router.get("/phone")
+async def get_phone(user: dict = Depends(get_current_user)) -> dict:
+    """The number translated calls ring on the caller's side."""
+    phone = _verified_phone(user)
+    return {"phone": phone, "verified": bool(phone), "verified_at": user.get("phone_verified_at") if phone else None}
+
+
+@router.post("/phone/verify/start")
+async def start_phone_verification(body: PhoneStartRequest, user: dict = Depends(get_current_user)) -> dict:
+    """Text a one-time code to ``phone``. Paid plans only (each SMS costs money)."""
+    cfg = get_settings()
+    _require_twilio(cfg)
+    call_guard.require_call_plan(user, cfg)
+    phone = call_guard.check_destination(body.phone, cfg, "phone")
+    if phone == call_guard.normalize_phone(cfg.twilio_phone_number):
+        raise HTTPException(status_code=422, detail={"error": "invalid_phone", "message": "Use your own phone number."})
+    try:
+        sb = await get_supabase()
+        taken = await sb.table("users").select("id").eq("phone_e164", phone).neq("id", user["id"]).limit(1).execute()
+    except Exception as exc:
+        raise _db_error(exc) from exc
+    if taken.data:
+        raise _db_error(Exception("23505"))
+    try:
+        await phone_verify.send_code(user["id"], phone, cfg, db=sb)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Verification SMS failed", error=str(exc))
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "sms_failed", "message": "Couldn't send the code. Check the number and try again."},
+        ) from exc
+    return {"phone": phone, "sent": True, "expires_in": phone_verify.CODE_TTL_SEC}
+
+
+@router.post("/phone/verify/confirm")
+async def confirm_phone_verification(body: PhoneConfirmRequest, user: dict = Depends(get_current_user)) -> dict:
+    """Check the code and link the number to this account."""
+    cfg = get_settings()
+    _require_twilio(cfg)
+    phone = call_guard.normalize_phone(body.phone)
+    try:
+        sb = await get_supabase()
+        await phone_verify.check_code(user["id"], phone, body.code, cfg, db=sb)
+        res = await (
+            sb.table("users")
+            .update({"phone_e164": phone, "phone_verified_at": datetime.now(timezone.utc).isoformat()})
+            .eq("id", user["id"])
+            .execute()
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _db_error(exc) from exc
+    row = (res.data or [{}])[0]
+    return {"phone": phone, "verified": True, "verified_at": row.get("phone_verified_at")}
+
+
+@router.delete("/phone")
+async def remove_phone(user: dict = Depends(get_current_user)) -> dict:
+    """Unlink the verified number (calls are refused until a number is verified again)."""
+    try:
+        sb = await get_supabase()
+        await sb.table("users").update({"phone_e164": None, "phone_verified_at": None}).eq("id", user["id"]).execute()
+    except Exception as exc:
+        raise _db_error(exc) from exc
+    return {"phone": None, "verified": False}
 
 
 @router.post("/translated-call")
@@ -46,15 +170,69 @@ async def start_translated_call(
 ) -> dict:
     """Create two Twilio call legs and bridge them with translation."""
     cfg = get_settings()
-    if not cfg.twilio_account_sid or not cfg.twilio_auth_token or not cfg.twilio_phone_number:
+    _require_twilio(cfg)
+    if cfg.is_production and not cfg.live_translate_public_url:
+        # Without it Twilio callbacks can't be signature-checked behind the proxy.
+        raise HTTPException(status_code=503, detail="Calls unavailable: LIVE_TRANSLATE_PUBLIC_URL is not set.")
+
+    # Abuse guards: paid plan, real (non-premium) numbers, per-user limits.
+    call_guard.require_call_plan(user, cfg)
+    user_phone = _verified_phone(user)
+    if not user_phone:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "phone_not_verified",
+                    "message": "Verify your phone number before starting a translated call."},
+        )
+    if body.user_phone and call_guard.normalize_phone(body.user_phone) != user_phone:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "phone_mismatch", "field": "user_phone",
+                    "message": "Calls ring your verified number only."},
+        )
+    dest_phone = call_guard.check_destination(body.dest_phone, cfg, "dest_phone")
+    own = call_guard.normalize_phone(cfg.twilio_phone_number)
+    if user_phone == dest_phone or own in (user_phone, dest_phone):
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "invalid_phone", "message": "Use two different numbers, neither of them ours."},
+        )
+    if not cfg.elevenlabs_api_key:
         raise HTTPException(
             status_code=503,
-            detail="Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.",
+            detail="Calls unavailable: ELEVENLABS_API_KEY is not set.",
         )
 
-    session_id = str(uuid.uuid4())[:8]
-    base_url = _get_base_url()
+    # The session id is the only thing guarding the media WebSocket, so make it
+    # unguessable (was 8 hex characters of a uuid).
+    session_id = secrets.token_urlsafe(18)
+    # Reserve the concurrent-call slot before any await, so two overlapping
+    # requests cannot both pass the limit check.
+    if active_session_count(user["id"]) >= cfg.twilio_max_concurrent_calls:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "call_in_progress", "limit": cfg.twilio_max_concurrent_calls,
+                    "message": "Finish your current call before starting another."},
+        )
     register_session(session_id, user["id"], body.target_lang)
+    try:
+        # Each call is metered per chunk; refuse to dial when any required stage is empty.
+        for event_type in ("stt", "translate", "tts"):
+            await check_quota(user["id"], event_type, 1)
+        call_guard.rate_limiter.check_and_record(user["id"], cfg.twilio_max_calls_per_hour)
+    except QuotaExceededError as exc:
+        drop_session(session_id)
+        raise HTTPException(
+            status_code=402,
+            detail={"error": "quota_exceeded", "event_type": exc.event_type, "used": exc.used, "limit": exc.limit},
+        ) from exc
+    except LookupError as exc:
+        drop_session(session_id)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception:
+        drop_session(session_id)
+        raise
+    base_url = _get_base_url()
 
     from twilio.rest import Client
 
@@ -66,19 +244,19 @@ async def start_translated_call(
     try:
         call_user = client.calls.create(
             url=twiml_user,
-            to=body.user_phone,
+            to=user_phone,
             from_=cfg.twilio_phone_number,
         )
         logger.info("Created user leg", call_sid=call_user.sid, session_id=session_id)
     except Exception as e:
         logger.exception("Twilio user leg failed", error=str(e))
-        unregister_leg(session_id, "user")
+        drop_session(session_id)
         raise HTTPException(status_code=502, detail=f"Twilio error: {str(e)}") from e
 
     try:
         call_dest = client.calls.create(
             url=twiml_dest,
-            to=body.dest_phone,
+            to=dest_phone,
             from_=cfg.twilio_phone_number,
         )
         logger.info("Created dest leg", call_sid=call_dest.sid, session_id=session_id)
@@ -93,11 +271,17 @@ async def start_translated_call(
 
 
 @router.websocket("/ws/media")
-async def ws_media(websocket: WebSocket, leg: str = Query(...), session: str = Query(...)) -> None:
+async def ws_media(
+    websocket: WebSocket,
+    leg: str = Query(...),
+    session: str = Query(...),
+    token: str | None = Query(default=None),
+) -> None:
     """WebSocket handler for Twilio bidirectional Media Streams."""
     await websocket.accept()
-    meta = get_session_meta(session)
-    if not meta:
+    meta = get_session_meta(session) if leg in _LEGS else None
+    # The per-leg token only exists in the signed TwiML, so only Twilio has it.
+    if not meta or not stream_token_ok(session, leg, token):
         await websocket.close(code=4004)
         return
 
@@ -142,21 +326,29 @@ async def ws_media(websocket: WebSocket, leg: str = Query(...), session: str = Q
             await processor.drain()
 
 
-@router.get("/twiml/stream")
+@router.api_route("/twiml/stream", methods=["GET", "POST"])
 async def twiml_stream(
     request: Request,
     leg: str = Query(...),
     session: str = Query(...),
 ) -> Response:
-    """Return TwiML that connects the call to our Media Streams WebSocket."""
+    """Return TwiML that connects the call to our Media Streams WebSocket.
+
+    Twilio fetches call URLs with POST by default; both methods are signature-checked.
+    """
+    await call_guard.verify_twilio_request(request, get_settings())
+    if leg not in _LEGS or not _SESSION_RE.match(session) or get_session_meta(session) is None:
+        # Query values went straight into the XML; reject anything that is not ours.
+        raise HTTPException(status_code=404, detail="Unknown call session")
     base_url = _get_base_url()
     wss_url = base_url.replace("https://", "wss://").replace("http://", "ws://")
-    stream_url = f"{wss_url}/api/v1/voice/ws/media?leg={leg}&session={session}"
+    token = get_session_meta(session)["stream_tokens"][leg]
+    stream_url = f"{wss_url}/api/v1/voice/ws/media?leg={leg}&session={session}&token={token}"
 
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="{stream_url}" />
+    <Stream url={quoteattr(stream_url)} />
   </Connect>
 </Response>"""
 
@@ -165,8 +357,6 @@ async def twiml_stream(
 
 def _get_base_url() -> str:
     """Return base URL for webhooks (from config or env)."""
-    from app.config import get_settings
-
     cfg = get_settings()
     url = cfg.live_translate_public_url or ""
     if not url:

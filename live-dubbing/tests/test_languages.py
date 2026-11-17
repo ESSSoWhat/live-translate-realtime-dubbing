@@ -68,3 +68,24 @@ class TestLanguages:
         assert len(SUPPORTED_LANGUAGES) == 12
         for code in expected_codes:
             assert code in actual_codes
+
+
+class TestLanguageNormalization:
+    """Normalize STT tags before translation skip/pass-through."""
+
+    def test_normalize_strips_region_and_aliases(self):
+        from live_dubbing.processing.languages import normalize_language_code
+
+        assert normalize_language_code("en-US") == "en"
+        assert normalize_language_code("ENG") == "en"
+        assert normalize_language_code("zh-CN") == "zh"
+        assert normalize_language_code("fil") == "tl"
+        assert normalize_language_code("auto") == "auto"
+        assert normalize_language_code("") == "auto"
+
+    def test_same_language_ignores_region_tags(self):
+        from live_dubbing.processing.languages import same_language
+
+        assert same_language("en-US", "en") is True
+        assert same_language("ja", "en") is False
+        assert same_language("auto", "en") is False

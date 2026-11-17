@@ -144,6 +144,15 @@ class Application:
         self._qt_app.setApplicationVersion(__version__)
         # Overlay (Tool) + hiding the main window must not quit the process.
         self._qt_app.setQuitOnLastWindowClosed(False)
+        from live_dubbing.gui.theme import apply_theme
+
+        apply_theme(self._qt_app)
+
+        from live_dubbing.services.app_update import apply_startup_update
+
+        if apply_startup_update():
+            logger.info("Exiting so the downloaded update can install")
+            return 0
 
         # Set application icon
         import pathlib

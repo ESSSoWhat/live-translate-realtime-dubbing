@@ -17,10 +17,28 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files, coll
 
 block_cipher = None
 
-# FFmpeg path: set FFMPEG_DIR (e.g. to CI runner path) or defaults for local Windows build
+# FFmpeg path: set FFMPEG_DIR to the real bin folder, not a Chocolatey shim.
 _ffmpeg_dir = Path(os.environ.get("FFMPEG_DIR", r"S:\Codingproject\ffmpeg\bin"))
-_ffmpeg_exe = _ffmpeg_dir / "ffmpeg.exe"
-_ffmpeg_probe = _ffmpeg_dir / "ffprobe.exe"
+
+
+def _bundle_ffmpeg(directory: Path) -> list[tuple[str, str]]:
+    """Copy ffmpeg, ffprobe, and the DLLs they load. Skip package shims."""
+    if not directory.is_dir():
+        print(f"WARNING: FFMPEG_DIR does not exist: {directory}")
+        return []
+    bundled: list[tuple[str, str]] = []
+    for path in sorted(directory.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in {".exe", ".dll"}:
+            continue
+        if path.stat().st_size < 1_000_000 and path.suffix.lower() == ".exe":
+            blob = path.read_bytes()[:8192].lower()
+            if b"chocolatey" in blob or b"shimgen" in blob:
+                print(f"WARNING: skipping ffmpeg shim {path}")
+                continue
+        bundled.append((str(path), "."))
+    if not any(Path(src).name.lower() == "ffmpeg.exe" for src, _dest in bundled):
+        print(f"WARNING: no ffmpeg.exe bundled from {directory}")
+    return bundled
 
 # Project paths
 PROJECT_ROOT = Path(SPECPATH)
@@ -46,9 +64,8 @@ a = Analysis(
     [str(SRC_DIR / "live_dubbing" / "__main__.py")],
     pathex=[str(SRC_DIR)],
     binaries=[
-        # ffmpeg for pydub MP3 decoding (TTS audio conversion)
-        (str(_ffmpeg_exe), "."),
-        (str(_ffmpeg_probe), "."),
+        # ffmpeg for pydub MP3 decoding (TTS audio conversion), plus its DLLs
+        *_bundle_ffmpeg(_ffmpeg_dir),
         # numpy C-extension .pyd binaries (e.g. _multiarray_umath, _umath_doc_generated)
         *_numpy_binaries,
     ],
@@ -75,10 +92,8 @@ a = Analysis(
         ),
         # numpy data files (via collect_all — includes .pyi stubs, testing data)
         *_numpy_datas,
-        # .env file (Supabase config for OAuth login) - optional, may not exist in CI
-        *([
-            (str(PROJECT_ROOT / ".env"), ".")
-        ] if (PROJECT_ROOT / ".env").exists() else []),
+        # NOTE: .env should NEVER be bundled in the installer — it contains secrets and
+        # dev-only config. Users configure via the GUI or their own %APPDATA%/.env.
         # VB-Cable driver pack (optional install for play-as-mic)
         (
             str(PROJECT_ROOT / "third_party" / "VBCABLE_Driver_Pack43"),
@@ -172,6 +187,7 @@ a = Analysis(
         "ruff",
         "black",
         "pip",
+        "onnxruntime",  # Not used by this app (silero uses torch, not ONNX) - saves ~31 MB
         # NOTE: Do NOT exclude setuptools or wheel — pkg_resources (and
         # PyInstaller's pyi_rth_pkgres / setuptools hooks) depend on them at
         # runtime. Excluding "wheel" makes PyInstaller's setuptools hook fail with
@@ -190,12 +206,54 @@ a = Analysis(
 # ── Filter out CUDA DLLs (this app only needs CPU for Silero VAD) ───────────
 # CUDA DLLs require CUDA runtime which may not be installed on target machines.
 # Removing them prevents "The specified procedure could not be found" errors.
-cuda_dll_patterns = ('cuda', 'cudnn', 'cublas', 'cusparse', 'cufft', 'curand', 'nvrtc')
+cuda_dll_patterns = (
+    'cuda', 'cudnn', 'cublas', 'cusparse', 'cufft', 'curand', 'nvrtc',
+    'cusolver', 'cusolverMg', 'nvjit', 'cupti', 'nvtools'
+)
 a.binaries = [
     (name, path, typ)
     for name, path, typ in a.binaries
     if not any(pattern in name.lower() for pattern in cuda_dll_patterns)
 ]
+
+# ── Filter out software OpenGL renderer (saves ~20 MB) ───────────────────────
+# opengl32sw.dll is a software OpenGL renderer; not needed for this 2D GUI app
+a.binaries = [
+    (name, path, typ)
+    for name, path, typ in a.binaries
+    if 'opengl32sw' not in name.lower()
+]
+
+# ── Filter out large unused torch subdirectories ─────────────────────────────
+# CRITICAL: torch.distributed CANNOT be excluded - torch.utils.data.dataloader imports it
+# Only exclude modules that are truly optional (saves ~13 MB)
+torch_exclude_dirs = ('torch/_inductor', 'torch/testing')
+a.datas = [
+    (name, path, typ)
+    for name, path, typ in a.datas
+    if not any(excl in name.replace('\\', '/') for excl in torch_exclude_dirs)
+]
+
+# ── Deduplicate dist-info metadata (prevents duplicate package versions) ─────
+# PyInstaller can pick up multiple versions of the same package if the venv is dirty.
+# Keep only the first occurrence of each package's dist-info.
+seen_dist_info = set()
+filtered_datas = []
+for name, path, typ in a.datas:
+    # Extract package name from dist-info path (e.g. "numpy-2.4.6.dist-info" -> "numpy")
+    if ".dist-info" in name:
+        pkg_name = name.split("/")[0].split("-")[0].lower() if "/" in name else name.split("\\")[0].split("-")[0].lower()
+        if pkg_name in seen_dist_info:
+            continue  # Skip duplicate
+        seen_dist_info.add(pkg_name)
+    filtered_datas.append((name, path, typ))
+
+a.datas = filtered_datas
+
+# ── Torch size impact ────────────────────────────────────────────────────────
+# torch 2.15.0+cpu bundled: ~700 MB (DLLs + Python modules).
+# silero_vad can run on onnxruntime (~50 MB) instead, but requires model conversion.
+# TODO: Evaluate migrating to onnxruntime + ONNX-exported silero model for smaller builds.
 
 # ── PYZ (bytecode archive) ──────────────────────────────────────────────────
 
@@ -220,6 +278,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(SRC_DIR / "live_dubbing" / "gui" / "assets" / "logo.ico"),
+    version="version_info.txt",  # Windows version resource
 )
 
 # ── COLLECT (one-dir bundle) ────────────────────────────────────────────────

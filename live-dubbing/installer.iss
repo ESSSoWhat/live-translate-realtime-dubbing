@@ -3,10 +3,10 @@
 
 #define MyAppName "Live Translate"
 #ifndef MyAppVersion
-#define MyAppVersion "0.2.3"
+#define MyAppVersion "0.2.14"
 #endif
-#define MyAppPublisher "Live Translate Team"
-#define MyAppURL "https://github.com/live-translate"
+#define MyAppPublisher "Live Translate"
+#define MyAppURL "https://www.livetranslate.net"
 #define MyAppExeName "LiveTranslate.exe"
 
 [Setup]
@@ -47,10 +47,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "installvbcable"; Description: "Install VB-Audio Virtual Cable (recommended for play-as-mic)"; GroupDescription: "Optional components:"; Flags: unchecked
 
 [Files]
-; Main application files from PyInstaller output
-Source: "dist\LiveTranslate\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-; API key config (bundled next to exe so the app finds it on any machine)
-Source: ".env"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+; Main application files from PyInstaller output (exclude secrets)
+Source: "dist\LiveTranslate\*"; DestDir: "{app}"; Excludes: ".env,*.env,account.json,*secret*,*credential*"; Flags: ignoreversion recursesubdirs createallsubdirs
+; PyInstaller 6 stores this pack under {app}\_internal, so the finish step
+; cannot see it there. Copy it beside the exe, which is the path we launch.
+Source: "third_party\VBCABLE_Driver_Pack43\*"; DestDir: "{app}\VBCABLE_Driver_Pack43"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -58,5 +59,5 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\VBCABLE_Driver_Pack43\VBCABLE_Setup_x64.exe"; Description: "Install VB-Audio Virtual Cable"; Flags: nowait postinstall skipifsilent; Tasks: installvbcable
+Filename: "{app}\VBCABLE_Driver_Pack43\VBCABLE_Setup_x64.exe"; Description: "Install VB-Audio Virtual Cable"; Flags: nowait postinstall skipifsilent skipifdoesntexist; Tasks: installvbcable
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

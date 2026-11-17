@@ -67,6 +67,33 @@ class SpeakerIdentifier:
         )
         return emb
 
+    def blend_speaker(
+        self,
+        speaker_key: str,
+        audio: np.ndarray,
+        prior_count: int = 1,
+    ) -> np.ndarray | None:
+        """Fold *audio* into an existing embedding as a running mean.
+
+        A missing embedding is stored as-is. Returns the stored vector, or
+        None when the clip is too short and nothing was stored yet.
+        """
+        if len(audio) < self._sample_rate * 0.5:
+            return self.get_embedding(speaker_key)
+        fresh = self._compute_embedding(audio)
+        stored = self._embeddings.get(speaker_key)
+        if stored is None:
+            self._embeddings[speaker_key] = fresh
+            return fresh
+        count = max(1, int(prior_count))
+        mixed = stored.astype(np.float64) * count + fresh.astype(np.float64)
+        norm = float(np.linalg.norm(mixed))
+        if norm > 0:
+            mixed = mixed / norm
+        blended = mixed.astype(np.float32)
+        self._embeddings[speaker_key] = blended
+        return blended
+
     def register_embedding(self, speaker_key: str, embedding: np.ndarray | list[float]) -> None:
         """Register a precomputed L2-normalised embedding (e.g. from disk)."""
         emb = np.asarray(embedding, dtype=np.float32)
@@ -105,6 +132,14 @@ class SpeakerIdentifier:
             return best_id, best_score
 
         return None, best_score
+
+    def score_speaker(self, speaker_key: str, audio: np.ndarray) -> float:
+        """Cosine similarity of *audio* against one stored embedding."""
+        stored = self._embeddings.get(speaker_key)
+        if stored is None or len(audio) < self._sample_rate * 0.3:
+            return 0.0
+        emb = self._compute_embedding(audio)
+        return float(np.dot(emb, stored))
 
     @property
     def has_multiple_speakers(self) -> bool:

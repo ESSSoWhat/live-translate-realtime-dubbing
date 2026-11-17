@@ -1,23 +1,28 @@
 """
 Floating always-on-top Live Translate overlay HUD.
 
-Collapsed: a cyan bubble. Expanded: captions plus session controls
-(status, voice, volume, mute, clone, stop, home), matching the mobile overlay.
+Collapsed: a circular logo bubble in the app palette. Expanded: captions plus
+session controls (status, voice, volume, mute, clone, stop, home), matching the
+mobile overlay.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
-from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QCloseEvent,
     QColor,
     QFont,
     QMouseEvent,
     QPainter,
+    QPainterPath,
     QPaintEvent,
+    QPen,
+    QPixmap,
     QTextCharFormat,
     QTextCursor,
     QWheelEvent,
@@ -34,16 +39,23 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from live_dubbing.gui.theme import (
+    ACCENT,
+    ACCENT_HOVER,
+    ACCENT_INK,
+    BG,
+    LINE,
+    MUTED,
+    PANEL,
+    TEXT,
+)
+
 if TYPE_CHECKING:
     from live_dubbing.config.settings import UIConfig
 
 logger = structlog.get_logger(__name__)
 
-_CYAN = "#68F8F8"
-_NAVY = "#000810"
-_NAVY_SURFACE = "#001020"
-_ON_SURFACE = "#E8F7FF"
-_MUTED = "#8AA4B5"
+_LOGO_PATH = Path(__file__).resolve().parents[1] / "assets" / "logo.png"
 
 _COLLAPSED = 96
 _EXPANDED_WIDTH = 320
@@ -52,35 +64,99 @@ _DRAG_THRESHOLD = 6
 
 
 class _BubbleButton(QWidget):
-    """Circular cyan bubble painted without a native button chrome."""
+    """Circular logo bubble painted without a native button chrome."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._muted = False
+        self._logo = QPixmap(str(_LOGO_PATH))
         self.setFixedSize(_COLLAPSED, _COLLAPSED)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Live Translate")
 
     def set_muted(self, muted: bool) -> None:
-        """Update the glyph to reflect mute state."""
+        """Update the mute badge on the logo bubble."""
         self._muted = muted
+        self.setToolTip("Muted" if muted else "Live Translate")
         self.update()
 
     def paintEvent(self, event: QPaintEvent | None) -> None:  # noqa: ARG002
-        """Draw the circular bubble and glyph."""
+        """Draw the circular logo bubble in the app palette."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         margin = 6
         rect = self.rect().adjusted(margin, margin, -margin, -margin)
+        oval = QRectF(rect)
+
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(_CYAN))
-        painter.drawEllipse(rect)
-        painter.setPen(QColor(_NAVY))
-        font = QFont()
-        font.setBold(True)
-        font.setPointSize(16)
-        painter.setFont(font)
-        glyph = "M" if self._muted else "LT"
-        painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), glyph)
+        painter.setBrush(QColor(BG))
+        painter.drawEllipse(oval)
+
+        clip = QPainterPath()
+        clip.addEllipse(oval)
+        painter.setClipPath(clip)
+        if not self._logo.isNull():
+            scaled = self._logo.scaled(
+                rect.size(),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = rect.x() + (rect.width() - scaled.width()) // 2
+            y = rect.y() + (rect.height() - scaled.height()) // 2
+            painter.drawPixmap(x, y, scaled)
+        else:
+            painter.setPen(QColor(ACCENT_INK))
+            font = QFont()
+            font.setBold(True)
+            font.setPointSize(16)
+            painter.setFont(font)
+            painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), "LT")
+        painter.setClipping(False)
+
+        if self._muted:
+            painter.setBrush(QColor(0, 0, 0, 160))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(oval)
+            self._paint_muted_speaker(painter, rect)
+
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(ACCENT), 3.0))
+        painter.drawEllipse(oval.adjusted(1.5, 1.5, -1.5, -1.5))
+
+    @staticmethod
+    def _paint_muted_speaker(painter: QPainter, rect: object) -> None:
+        """Draw a speaker icon with a diagonal mute slash."""
+        bounds = QRectF(rect)
+        cx = bounds.center().x()
+        cy = bounds.center().y()
+        scale = min(bounds.width(), bounds.height())
+
+        body_w = scale * 0.12
+        body_h = scale * 0.24
+        body_x = cx - scale * 0.26
+        body_y = cy - body_h / 2
+        speaker = QPainterPath()
+        speaker.addRoundedRect(QRectF(body_x, body_y, body_w, body_h), 2.0, 2.0)
+        cone = QPainterPath()
+        cone.moveTo(body_x + body_w, cy - scale * 0.08)
+        cone.lineTo(cx + scale * 0.06, cy - scale * 0.28)
+        cone.lineTo(cx + scale * 0.06, cy + scale * 0.28)
+        cone.lineTo(body_x + body_w, cy + scale * 0.08)
+        cone.closeSubpath()
+        speaker = speaker.united(cone)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(TEXT))
+        painter.drawPath(speaker)
+
+        slash = QPen(QColor(ACCENT), max(3.5, scale * 0.07))
+        slash.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(slash)
+        painter.drawLine(
+            QPointF(cx - scale * 0.30, cy + scale * 0.30),
+            QPointF(cx + scale * 0.30, cy - scale * 0.30),
+        )
 
 
 def _split_chunks(text: str) -> list[str]:
@@ -113,7 +189,7 @@ class _CaptionPane(QWidget):
         layout.setSpacing(2)
 
         title_label = QLabel(title)
-        title_label.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
+        title_label.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
         layout.addWidget(title_label)
 
         row = QHBoxLayout()
@@ -197,10 +273,10 @@ class _CaptionPane(QWidget):
         self._apply_text_style()
 
     def _apply_text_style(self) -> None:
-        color = f"rgba(232, 247, 255, {self._text_alpha})"
+        color = f"rgba(231, 246, 255, {self._text_alpha})"
         self._text.setStyleSheet(
-            f"background-color: {_NAVY}; color: {color}; "
-            f"border: 1px solid #003050; border-radius: 6px; padding: 6px;"
+            f"background-color: {BG}; color: {color}; "
+            f"border: 1px solid {LINE}; border-radius: 6px; padding: 6px;"
         )
 
     def _on_slider_changed(self, value: int) -> None:
@@ -246,7 +322,7 @@ class _CaptionPane(QWidget):
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         fmt = QTextCharFormat()
         fmt.setBackground(QColor("#0A4A68"))
-        fmt.setForeground(QColor(_CYAN))
+        fmt.setForeground(QColor(ACCENT))
         selection = QTextEdit.ExtraSelection()
         selection.format = fmt
         selection.cursor = cursor
@@ -359,58 +435,59 @@ class DubbedWindow(QWidget):
         self._panel.setStyleSheet(
             f"""
             QWidget#overlayPanel {{
-                background-color: {_NAVY_SURFACE};
-                border: 1px solid #003050;
+                background-color: {PANEL};
+                border: 1px solid {LINE};
                 border-radius: 16px;
             }}
             QLabel {{
-                color: {_ON_SURFACE};
+                color: {TEXT};
             }}
             QComboBox {{
-                background-color: {_NAVY};
-                color: {_ON_SURFACE};
-                border: 1px solid #003050;
+                background-color: {BG};
+                color: {TEXT};
+                border: 1px solid {LINE};
                 border-radius: 4px;
                 padding: 4px 8px;
             }}
             QTextEdit {{
-                background-color: {_NAVY};
-                color: {_ON_SURFACE};
-                border: 1px solid #003050;
+                background-color: {BG};
+                color: {TEXT};
+                border: 1px solid {LINE};
                 border-radius: 6px;
                 padding: 6px;
             }}
             QPushButton {{
-                background-color: #002040;
-                color: {_ON_SURFACE};
-                border: 1px solid #003050;
+                background-color: {BG};
+                color: {TEXT};
+                border: 1px solid {LINE};
                 border-radius: 6px;
                 padding: 6px 10px;
             }}
             QPushButton:hover {{
-                background-color: #003050;
+                background-color: {LINE};
+                color: {ACCENT};
             }}
             QPushButton:disabled {{
-                color: {_MUTED};
+                color: {MUTED};
             }}
             QSlider::groove:horizontal {{
                 height: 4px;
-                background: #002040;
+                background: {LINE};
                 border-radius: 2px;
             }}
             QSlider::handle:horizontal {{
-                background: {_CYAN};
+                background: {ACCENT};
                 width: 12px;
                 margin: -5px 0;
                 border-radius: 6px;
             }}
             QSlider::groove:vertical {{
                 width: 4px;
-                background: #002040;
+                background: {LINE};
                 border-radius: 2px;
             }}
             QSlider::handle:vertical {{
-                background: {_CYAN};
+                background: {ACCENT};
                 height: 12px;
                 margin: 0 -5px;
                 border-radius: 6px;
@@ -502,14 +579,14 @@ class DubbedWindow(QWidget):
         self._stop_btn.setStyleSheet(
             f"""
             QPushButton {{
-                background-color: {_CYAN};
-                color: {_NAVY};
+                background-color: {ACCENT};
+                color: {ACCENT_INK};
                 font-weight: bold;
                 border: none;
                 border-radius: 6px;
                 padding: 6px 12px;
             }}
-            QPushButton:hover {{ background-color: #9AFFFF; }}
+            QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}
             """
         )
         self._stop_btn.clicked.connect(self.stop_requested.emit)

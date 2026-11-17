@@ -35,6 +35,7 @@ class VoiceProfile:
     name: str
     assigned_voice_id: str | None = None
     embedding: list[float] | None = None
+    embedding_samples: int = 0
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -133,6 +134,7 @@ class VoiceProfileStore:
             "name": profile.name,
             "assigned_voice_id": profile.assigned_voice_id,
             "embedding": profile.embedding,
+            "embedding_samples": profile.embedding_samples,
             "created_at": profile.created_at.isoformat(),
         }
 
@@ -150,11 +152,15 @@ class VoiceProfileStore:
         embedding = d.get("embedding")
         if embedding is not None and not isinstance(embedding, list):
             embedding = None
+        samples = d.get("embedding_samples")
+        if isinstance(samples, bool) or not isinstance(samples, int) or samples < 0:
+            samples = 1 if embedding else 0
 
         return VoiceProfile(
             id=d["id"],
             name=d.get("name", "Speaker"),
             assigned_voice_id=d.get("assigned_voice_id"),
             embedding=embedding,
+            embedding_samples=samples,
             created_at=created,
         )

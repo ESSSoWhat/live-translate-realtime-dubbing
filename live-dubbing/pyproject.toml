@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "live-dubbing"
-version = "0.2.3"
+version = "0.2.14"
 description = "Real-time audio translation and voice-cloned dubbing for Windows applications"
 readme = "README.md"
 license = {text = "MIT"}
@@ -33,14 +33,16 @@ dependencies = [
 
     # Audio I/O
     "sounddevice>=0.4.6",
-    "pyaudiowpatch>=0.2.12.6",
-    "pycaw>=20240210",
+    "pyaudiowpatch>=0.2.12.6; sys_platform == 'win32'",
+    "pycaw>=20240210; sys_platform == 'win32'",
 
     # Audio processing
     "numpy>=1.24.0",
     "scipy>=1.11.0",
     "soundfile>=0.12.0",
     "pydub>=0.25.0",
+    # pydub imports audioop, which Python 3.13 removed from the stdlib.
+    "audioop-lts>=0.2.1; python_version >= '3.13'",
 
     # VAD (Voice Activity Detection)
     "silero-vad>=5.1",
@@ -78,6 +80,9 @@ dev = [
     "mypy>=1.7.0",
     "ruff>=0.1.6",
     "black>=23.11.0",
+    "fastapi>=0.104.0",
+    "python-multipart>=0.0.22",
+    "uvicorn>=0.24.0",
 ]
 
 [project.scripts]

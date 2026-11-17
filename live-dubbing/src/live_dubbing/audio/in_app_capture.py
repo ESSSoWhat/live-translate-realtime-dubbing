@@ -14,12 +14,6 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-# Apps where process loopback often fails (0x8000000E). Use system loopback instead.
-PROCESS_LOOPBACK_UNRELIABLE: frozenset[str] = frozenset({
-    "chrome.exe",
-    "msedge.exe",
-})
-
 
 @dataclass
 class CaptureConfig:
@@ -102,8 +96,8 @@ def get_capture_config(
     Args:
         use_system_only: If True, always use system loopback (all system audio).
         target_pid: Process ID for per-app capture when use_system_only is False.
-        target_process_name: Process name (e.g. chrome.exe) — used to skip process
-            loopback for apps known to fail (Chrome, Edge).
+        target_process_name: Process name (for example firefox.exe). Kept so callers
+            can log which app was requested.
 
     Returns:
         CaptureConfig with device_id (system) or pid (process loopback).
@@ -118,15 +112,8 @@ def get_capture_config(
             )
         raise RuntimeError("No output device found for loopback capture.")
 
-    # Skip process loopback for apps that often fail (0x8000000E)
-    skip_process_loopback = target_process_name and target_process_name.lower() in PROCESS_LOOPBACK_UNRELIABLE
-    if skip_process_loopback:
-        logger.info(
-            "Using system loopback (process loopback unreliable for this app)",
-            app=target_process_name,
-        )
-
-    if not skip_process_loopback and target_pid and is_process_loopback_supported():
+    if target_pid and is_process_loopback_supported():
+        logger.info("Using process loopback", app=target_process_name, pid=target_pid)
         return CaptureConfig(pid=target_pid, mode="process_loopback")
 
     device_id = get_system_loopback_device_id(capture_device_id)

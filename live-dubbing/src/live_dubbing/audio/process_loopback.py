@@ -20,6 +20,9 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+# Callbacks Windows may still invoke after a timed-out activation.
+_PENDING_ACTIVATIONS: list[object] = []
+
 # Windows build 20348 = 21H2 Server / Windows 11
 PROCESS_LOOPBACK_MIN_BUILD = 20348
 
@@ -105,6 +108,246 @@ class PROPVARIANT(ctypes.Structure):
     ]
 
 
+def _hresult(value: int) -> int:
+    """Normalize a COM return code to an unsigned 32-bit value."""
+    return int(value) & 0xFFFFFFFF
+
+
+def _guid(data1: int, data2: int, data3: int, data4: tuple[int, ...]) -> GUID:
+    return GUID(
+        Data1=data1,
+        Data2=data2,
+        Data3=data3,
+        Data4=(wintypes.BYTE * 8)(*data4),
+    )
+
+
+def _iid_unknown() -> GUID:
+    return _guid(0x00000000, 0x0000, 0x0000, (0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46))
+
+
+def _iid_activate_handler() -> GUID:
+    # IActivateAudioInterfaceCompletionHandler
+    return _guid(0x41D949AB, 0x9862, 0x444A, (0x80, 0xF6, 0xC2, 0x61, 0x33, 0x4D, 0xA5, 0xEB))
+
+
+def _iid_agile() -> GUID:
+    # IAgileObject — required so the callback can be called from any apartment
+    return _guid(0x94EA2B94, 0xE9CC, 0x49E0, (0xC0, 0xFF, 0xEE, 0x64, 0xCA, 0x8F, 0x5B, 0x90))
+
+
+def _same_guid(left: GUID, right: GUID) -> bool:
+    return (
+        int(left.Data1) == int(right.Data1)
+        and int(left.Data2) == int(right.Data2)
+        and int(left.Data3) == int(right.Data3)
+        and bytes(left.Data4) == bytes(right.Data4)
+    )
+
+
+def activation_handler_accepts(iid: GUID) -> bool:
+    """True for the interfaces ActivateAudioInterfaceAsync asks the handler for."""
+    return any(
+        _same_guid(iid, known)
+        for known in (_iid_unknown(), _iid_activate_handler(), _iid_agile())
+    )
+
+
+def loopback_pid_candidates(
+    pid: int,
+    *,
+    name_of: Callable[[int], str] | None = None,
+    parent_of: Callable[[int], tuple[int, str] | None] | None = None,
+) -> list[int]:
+    """Selected process, then parents that share its executable name.
+
+    Firefox plays audio in a child process. If that child cannot be opened,
+    the parent ``firefox.exe`` still includes it because capture follows the
+    process tree.
+    """
+    if name_of is None or parent_of is None:
+        import psutil
+
+        def _name(value: int) -> str:
+            return str(psutil.Process(value).name())
+
+        def _parent(value: int) -> tuple[int, str] | None:
+            parent = psutil.Process(value).parent()
+            if parent is None:
+                return None
+            return int(parent.pid), str(parent.name())
+
+        name_of = name_of or _name
+        parent_of = parent_of or _parent
+
+    try:
+        root_name = name_of(pid).lower()
+    except Exception:
+        return [pid]
+
+    found = [pid]
+    current = pid
+    for _ in range(8):
+        try:
+            parent = parent_of(current)
+        except Exception:
+            break
+        if parent is None:
+            break
+        parent_pid, parent_name = parent
+        if parent_name.lower() != root_name or parent_pid in found:
+            break
+        found.append(parent_pid)
+        current = parent_pid
+    return found
+
+
+def _activate_process_loopback(mmdevapi: Any, pid: int) -> ctypes.c_void_p:
+    """Activate an IAudioClient for one process. Caller is already in the MTA."""
+    result_holder: dict[str, Any] = {}
+    completion_event = threading.Event()
+
+    def completion_handler_activate_completed(
+        _this: ctypes.c_void_p, operation: ctypes.c_void_p
+    ) -> int:
+        try:
+            vtbl = ctypes.cast(operation, ctypes.POINTER(ctypes.c_void_p))
+            get_result_fn = ctypes.CFUNCTYPE(
+                ctypes.c_long,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_long),
+                ctypes.POINTER(ctypes.c_void_p),
+            )(ctypes.cast(vtbl[3], ctypes.c_void_p))  # type: ignore[call-overload]
+            hr_result = ctypes.c_long()
+            punk = ctypes.c_void_p()
+            hr = get_result_fn(operation, ctypes.byref(hr_result), ctypes.byref(punk))
+            if _hresult(hr) == 0 and _hresult(hr_result.value) == 0 and punk:
+                result_holder["audio_client"] = punk
+            else:
+                failed = hr_result.value if _hresult(hr) == 0 else hr
+                result_holder["error"] = f"0x{_hresult(failed):08X}"
+        except Exception as exc:
+            result_holder["error"] = str(exc)
+        completion_event.set()
+        return 0
+
+    loopback_params = AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS(
+        TargetProcessId=pid,
+        ProcessLoopbackMode=PROCESS_LOOPBACK_MODE_INCLUDE,
+    )
+    activation_params = AUDIOCLIENT_ACTIVATION_PARAMS(
+        ActivationType=AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+    )
+    activation_params._.ProcessLoopbackParams = loopback_params
+
+    activation_params_buffer = (wintypes.BYTE * ctypes.sizeof(activation_params))()
+    ctypes.memmove(
+        ctypes.byref(activation_params_buffer),
+        ctypes.byref(activation_params),
+        ctypes.sizeof(activation_params),
+    )
+    propvar = PROPVARIANT()
+    propvar.vt = VT_BLOB
+    propvar.blob.cbSize = ctypes.sizeof(activation_params)
+    propvar.blob.pBlobData = ctypes.cast(
+        ctypes.pointer(activation_params_buffer),
+        ctypes.POINTER(wintypes.BYTE),
+    )
+
+    iid_audio_client = GUID(
+        Data1=0x1CB9AD4C,
+        Data2=0xDBFA,
+        Data3=0x4C32,
+        Data4=(wintypes.BYTE * 8)(0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2),
+    )
+
+    def qi(this: ctypes.c_void_p, riid: ctypes.c_void_p, ppv: ctypes.c_void_p) -> int:
+        out = ctypes.cast(ppv, ctypes.POINTER(ctypes.c_void_p))
+        try:
+            accepted = activation_handler_accepts(riid.contents)  # type: ignore[attr-defined]
+        except Exception:
+            accepted = False
+        if not accepted:
+            out[0] = None
+            return 0x80004002
+        out[0] = this
+        return 0
+
+    def addref(_this: ctypes.c_void_p) -> int:
+        return 1
+
+    def release(_this: ctypes.c_void_p) -> int:
+        return 1
+
+    qi_fn = ctypes.CFUNCTYPE(
+        ctypes.c_long,
+        ctypes.c_void_p,
+        ctypes.POINTER(GUID),
+        ctypes.POINTER(ctypes.c_void_p),
+    )(qi)
+    addref_fn = ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(addref)
+    release_fn = ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(release)
+    act_fn = ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p)(
+        completion_handler_activate_completed
+    )
+    vtbl = (ctypes.c_void_p * 4)(
+        ctypes.cast(qi_fn, ctypes.c_void_p),
+        ctypes.cast(addref_fn, ctypes.c_void_p),
+        ctypes.cast(release_fn, ctypes.c_void_p),
+        ctypes.cast(act_fn, ctypes.c_void_p),
+    )
+    completion_obj = (ctypes.c_void_p * 2)(ctypes.addressof(vtbl), 0)
+    # The blob points at this buffer. Keep both until Windows finishes the call,
+    # including when the wait times out and this function has already returned.
+    keepalive = (
+        qi_fn,
+        addref_fn,
+        release_fn,
+        act_fn,
+        vtbl,
+        completion_obj,
+        propvar,
+        activation_params,
+        activation_params_buffer,
+        iid_audio_client,
+    )
+    _PENDING_ACTIVATIONS.append(keepalive)
+
+    activate = mmdevapi.ActivateAudioInterfaceAsync
+    activate.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.POINTER(GUID),
+        ctypes.POINTER(PROPVARIANT),
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    activate.restype = ctypes.c_long
+
+    activation_op = ctypes.c_void_p()
+    hr = activate(
+        VAD_PROCESS_LOOPBACK,
+        ctypes.byref(iid_audio_client),
+        ctypes.byref(propvar),
+        ctypes.byref(completion_obj),
+        ctypes.byref(activation_op),
+    )
+    code = _hresult(hr)
+    if code != 0:
+        raise RuntimeError(f"ActivateAudioInterfaceAsync failed: 0x{code:08X}")
+    if not completion_event.wait(timeout=10.0):
+        raise RuntimeError("Process loopback activation timed out")
+    if "error" in result_holder:
+        raise RuntimeError(f"Activation callback failed: {result_holder['error']}")
+    audio_client = result_holder.get("audio_client")
+    if not audio_client:
+        raise RuntimeError("Activation did not return IAudioClient")
+    try:
+        _PENDING_ACTIVATIONS.remove(keepalive)
+    except ValueError:
+        pass
+    return audio_client
+
+
 def is_process_loopback_supported() -> bool:
     """
     Check if Windows supports process loopback capture (build 20348+).
@@ -144,130 +387,38 @@ def _capture_loop(
         mmdevapi = ctypes.windll.mmdevapi  # type: ignore[attr-defined]
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
 
-        # CoInitializeEx STA - ActivateAudioInterfaceAsync for capture may require STA
-        COINIT_APARTMENTTHREADED = 0x2
-        ole32.CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+        # ActivateAudioInterfaceAsync requires the multithreaded apartment.
+        # STA returns E_ILLEGAL_METHOD_CALL (0x8000000E) and capture falls back
+        # to every sound on the machine.
+        COINIT_MULTITHREADED = 0
+        ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+        ole32.CoInitializeEx.restype = ctypes.c_long
+        init_hr = _hresult(ole32.CoInitializeEx(None, COINIT_MULTITHREADED))
+        if init_hr not in (0, 1):
+            raise RuntimeError(f"CoInitializeEx failed: 0x{init_hr:08X}")
 
-        result_holder: dict[str, Any] = {}
-        completion_event = threading.Event()
-
-        def completion_handler_activate_completed(
-            _this: ctypes.c_void_p, operation: ctypes.c_void_p
-        ) -> int:
+        audio_client = None
+        last_error: Exception | None = None
+        for candidate in loopback_pid_candidates(pid):
             try:
-                vtbl = ctypes.cast(operation, ctypes.POINTER(ctypes.c_void_p))
-                get_result_fn = ctypes.CFUNCTYPE(
-                    ctypes.c_long,
-                    ctypes.c_void_p,
-                    ctypes.POINTER(ctypes.c_long),
-                    ctypes.POINTER(ctypes.c_void_p),
-                )(ctypes.cast(vtbl[3], ctypes.c_void_p))  # type: ignore[call-overload]
-
-                hr_result = ctypes.c_long()
-                punk = ctypes.c_void_p()
-                hr = get_result_fn(operation, ctypes.byref(hr_result), ctypes.byref(punk))
-                if hr == 0 and hr_result.value == 0 and punk:
-                    result_holder["audio_client"] = punk
-                else:
-                    result_holder["error"] = hr_result.value if hr == 0 else hr
-            except Exception as e:
-                result_holder["error"] = str(e)
-            completion_event.set()
-            return 0
-
-        # Build activation params - keep alive for ActivateAudioInterfaceAsync
-        loopback_params = AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS(
-            TargetProcessId=pid,
-            ProcessLoopbackMode=PROCESS_LOOPBACK_MODE_INCLUDE,
-        )
-        activation_params = AUDIOCLIENT_ACTIVATION_PARAMS(
-            ActivationType=AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
-        )
-        activation_params._.ProcessLoopbackParams = loopback_params
-
-        # PROPVARIANT with blob pointing to activation_params
-        activation_params_buffer = (wintypes.BYTE * ctypes.sizeof(activation_params))()
-        ctypes.memmove(
-            ctypes.byref(activation_params_buffer),
-            ctypes.byref(activation_params),
-            ctypes.sizeof(activation_params),
-        )
-
-        propvar = PROPVARIANT()
-        propvar.vt = VT_BLOB
-        propvar.blob.cbSize = ctypes.sizeof(activation_params)
-        propvar.blob.pBlobData = ctypes.cast(
-            ctypes.pointer(activation_params_buffer),
-            ctypes.POINTER(wintypes.BYTE),
-        )
-
-        # IID_IAudioClient: 1CB9AD4C-DBFA-4c32-B178-C2F568A703B2
-        iid_audio_client = GUID(
-            Data1=0x1CB9AD4C,
-            Data2=0xDBFA,
-            Data3=0x4C32,
-            Data4=(wintypes.BYTE * 8)(0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2),
-        )
-
-        # Completion handler vtable: QI, AddRef, Release, ActivateCompleted
-        def qi(_s: ctypes.c_void_p, _riid: ctypes.c_void_p, _ppv: ctypes.c_void_p) -> int:
-            return 0x80004002  # E_NOINTERFACE
-
-        def addref(_s: ctypes.c_void_p) -> int:
-            return 1
-
-        def release(_s: ctypes.c_void_p) -> int:
-            return 0
-
-        act_fn = ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p)(
-            completion_handler_activate_completed
-        )
-
-        vtbl = (ctypes.c_void_p * 5)(
-            ctypes.cast(ctypes.CFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(qi), ctypes.c_void_p),  # type: ignore[call-overload]
-            ctypes.cast(ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(addref), ctypes.c_void_p),  # type: ignore[call-overload]
-            ctypes.cast(ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(release), ctypes.c_void_p),  # type: ignore[call-overload]
-            ctypes.cast(act_fn, ctypes.c_void_p),  # type: ignore[call-overload]
-        )
-        completion_obj = (ctypes.c_void_p * 2)(ctypes.addressof(vtbl), 0)
-
-        ActivateAudioInterfaceAsync = mmdevapi.ActivateAudioInterfaceAsync  # type: ignore[attr-defined]
-        ActivateAudioInterfaceAsync.argtypes = [
-            ctypes.c_wchar_p,
-            ctypes.POINTER(GUID),
-            ctypes.POINTER(PROPVARIANT),
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_void_p),
-        ]
-        ActivateAudioInterfaceAsync.restype = ctypes.c_long
-
-        activation_op = ctypes.c_void_p()
-        hr = ActivateAudioInterfaceAsync(
-            VAD_PROCESS_LOOPBACK,
-            ctypes.byref(iid_audio_client),
-            ctypes.byref(propvar),
-            ctypes.byref(completion_obj),
-            ctypes.byref(activation_op),
-        )
-
-        if hr != 0:
-            # 0x8000000E often indicates COM/threading or unsupported config
-            hint = (
-                " Try ensuring the target app is playing audio. "
-                "If it persists, use 'All system audio' mode."
-                if hr == 0x8000000E
-                else ""
-            )
-            raise RuntimeError(f"ActivateAudioInterfaceAsync failed: 0x{hr:08X}.{hint}")
-
-        completion_event.wait(timeout=10.0)
-        if "error" in result_holder:
-            err = result_holder["error"]
-            raise RuntimeError(f"Activation callback failed: {err}")
-        if "audio_client" not in result_holder:
-            raise RuntimeError("Activation did not return IAudioClient")
-
-        audio_client = result_holder["audio_client"]
+                audio_client = _activate_process_loopback(mmdevapi, candidate)
+                if candidate != pid:
+                    logger.info(
+                        "Process loopback opened the parent process",
+                        session_pid=pid,
+                        pid=candidate,
+                    )
+                pid = candidate
+                break
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Process loopback activation failed",
+                    pid=candidate,
+                    error=str(exc),
+                )
+        if audio_client is None:
+            raise last_error or RuntimeError("Process loopback activation failed")
 
         # Create stop_fn early so it can be used in finally for cleanup
         ac_vtbl = ctypes.cast(audio_client, ctypes.POINTER(ctypes.c_void_p))

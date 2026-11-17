@@ -187,6 +187,74 @@ Before releasing a build, verify on a Windows machine:
 4. **App dubbing**: Select an app from the dropdown, set its Windows output to "CABLE Input", start translation; confirm dubbed audio plays on the selected output device.
 5. **Mic translate**: In the main window, use the **Mic Translate** section; select microphone, target language, and **Output device = CABLE Input**; start; speak into the mic; confirm translated audio is heard in another app (e.g. set Discord/Zoom input to "CABLE Output") and optionally on **Monitor output**. ("Monitor output" is the system playback or virtual output used to hear mixed audio—e.g. VB-Cable's virtual input/output or the OS "Stereo Mix"/monitor of the chosen device. See [VB-Cable setup](https://vb-audio.com/Cable/) for which device to select and how it fits into the live-dubbing setup.)
 
+### Development Setup
+
+For development and testing on Windows, use the automated setup script:
+
+```powershell
+# One-command setup: create venv, install deps, run tests
+.\scripts\dev-setup.ps1 -RunTests
+
+# Or just setup without tests
+.\scripts\dev-setup.ps1
+
+# Setup, test, and run the app
+.\scripts\dev-setup.ps1 -RunTests -RunApp
+
+# Clean install (remove existing venv first)
+.\scripts\dev-setup.ps1 -Clean -RunTests
+```
+
+Manual setup:
+```bash
+cd live-dubbing
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+pytest tests/ -v
+```
+
+#### Direct API Mode (Development Only)
+
+**Production builds always use the backend proxy.** All OpenAI and ElevenLabs API calls go through `/api/v1/proxy/*` endpoints by default, ensuring usage tracking and authentication.
+
+For local development and testing, you can enable direct API calls to providers:
+
+```powershell
+# Enable direct API mode (dev only)
+$env:LT_DEV_DIRECT_API = "1"
+$env:ELEVENLABS_API_KEY = "your-key-here"
+$env:OPENAI_API_KEY = "your-key-here"  # Optional, for translation
+
+# Run the app
+python -m live_dubbing
+```
+
+**Important:**
+- `LT_DEV_DIRECT_API=1` must **never** be set in production or release builds
+- Direct API mode bypasses usage tracking and authentication
+- Used only for offline development and testing
+- Tests verify this flag is required for direct calls (`tests/test_no_direct_api_calls.py`)
+
+### Mock Backend for Testing
+
+The mock backend simulates the production Railway API for testing error handling without touching production:
+
+```bash
+# Terminal 1: Start mock backend
+cd live-dubbing
+python -m tests.mock_backend
+
+# Terminal 2: Run pipeline latency test
+$env:LIVE_TRANSLATE_BACKEND_URL="http://127.0.0.1:8765"
+python -m tests.test_pipeline_latency
+
+# Or via pytest
+pytest tests/test_pipeline_latency.py -v
+```
+
+The mock backend can simulate various failure modes (401/429/500/502/503) for testing. See `tests/mock_backend.py` for configuration.
+
 ### Code Style
 
 ```bash

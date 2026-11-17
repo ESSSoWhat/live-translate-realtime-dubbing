@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 
 if TYPE_CHECKING:
     from live_dubbing.config.settings import AppSettings
+from live_dubbing.gui.theme import ACCENT, ACCENT_HOVER, ACCENT_INK, DANGER, MUTED, progress_css
 
 logger = structlog.get_logger(__name__)
 
@@ -31,12 +32,13 @@ class _UsageFetcher(QThread):
     """Background thread to fetch usage without blocking the UI."""
 
     fetched = pyqtSignal(dict)
-    failed = pyqtSignal()
+    failed = pyqtSignal(int)  # emit failure count
 
-    def __init__(self, base_url: str, access_token: str) -> None:
+    def __init__(self, base_url: str, access_token: str, failure_count: int = 0) -> None:
         super().__init__()
         self._base_url = base_url.rstrip("/")
         self._token = access_token
+        self._failure_count = failure_count
 
     def run(self) -> None:
         """Fetch usage from backend and emit fetched or failed signal."""
@@ -49,15 +51,20 @@ class _UsageFetcher(QThread):
             if response.status_code == 200:
                 self.fetched.emit(response.json())
             else:
-                logger.debug(
-                    "Usage fetch failed",
-                    status_code=response.status_code,
-                    url=f"{self._base_url}/api/v1/user/usage",
-                )
-                self.failed.emit()
+                # Only log on first failure and every 10th failure to reduce spam
+                if self._failure_count == 0 or self._failure_count % 10 == 0:
+                    logger.warning(
+                        "Usage fetch failed",
+                        status_code=response.status_code,
+                        url=f"{self._base_url}/api/v1/user/usage",
+                        failure_count=self._failure_count + 1,
+                    )
+                self.failed.emit(self._failure_count + 1)
         except Exception as exc:
-            logger.debug("Usage fetch failed", error=str(exc))
-            self.failed.emit()
+            # Only log on first failure and every 10th failure
+            if self._failure_count == 0 or self._failure_count % 10 == 0:
+                logger.warning("Usage fetch failed", error=str(exc), failure_count=self._failure_count + 1)
+            self.failed.emit(self._failure_count + 1)
 
 
 class UsageMeterWidget(QFrame):
@@ -78,14 +85,16 @@ class UsageMeterWidget(QFrame):
         self._usage: dict = {}
         self._checkout_url: str = ""
         self._fetcher: _UsageFetcher | None = None
+        self._failure_count: int = 0
+        self._backoff_multiplier: int = 1  # increases on consecutive failures
 
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setMaximumHeight(60)
         self._build_ui()
 
-        # Auto-refresh timer
+        # Auto-refresh timer with dynamic interval for backoff
         self._timer = QTimer(self)
-        self._timer.setInterval(60_000)  # 60 seconds
+        self._timer.setInterval(60_000)  # 60 seconds initially
         self._timer.timeout.connect(self.refresh)
 
     def _build_ui(self) -> None:
@@ -98,7 +107,7 @@ class UsageMeterWidget(QFrame):
         left.setSpacing(2)
 
         self._tier_label = QLabel("Free tier")
-        self._tier_label.setStyleSheet("font-size: 11px; color: #aaa;")
+        self._tier_label.setStyleSheet(f"font-size: 11px; color: {MUTED};")
         left.addWidget(self._tier_label)
 
         self._progress = QProgressBar()
@@ -106,14 +115,11 @@ class UsageMeterWidget(QFrame):
         self._progress.setTextVisible(False)
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
-        self._progress.setStyleSheet(
-            "QProgressBar { border-radius: 4px; background: #2a2a2a; }"
-            "QProgressBar::chunk { background: #4f8cff; border-radius: 4px; }"
-        )
+        self._progress.setStyleSheet(progress_css(ACCENT))
         left.addWidget(self._progress)
 
         self._usage_label = QLabel("Loading usage…")
-        self._usage_label.setStyleSheet("font-size: 10px; color: #777;")
+        self._usage_label.setStyleSheet(f"font-size: 10px; color: {MUTED};")
         left.addWidget(self._usage_label)
 
         layout.addLayout(left, stretch=1)
@@ -122,9 +128,9 @@ class UsageMeterWidget(QFrame):
         self._upgrade_btn = QPushButton("⬆ Upgrade")
         self._upgrade_btn.setMaximumWidth(90)
         self._upgrade_btn.setStyleSheet(
-            "QPushButton { background: #f0a020; color: black; border-radius: 5px; "
-            "font-weight: bold; font-size: 11px; padding: 4px 8px; }"
-            "QPushButton:hover { background: #e09010; }"
+            f"QPushButton {{ background: {ACCENT}; color: {ACCENT_INK}; border-radius: 8px; "
+            "font-weight: 600; font-size: 11px; padding: 4px 8px; }"
+            f"QPushButton:hover {{ background: {ACCENT_HOVER}; }}"
         )
         self._upgrade_btn.clicked.connect(self._on_upgrade_clicked)
         layout.addWidget(self._upgrade_btn)
@@ -139,7 +145,7 @@ class UsageMeterWidget(QFrame):
         self._timer.stop()
 
     def refresh(self) -> None:
-        """Fetch latest usage in a background thread."""
+        """Fetch latest usage in a background thread with exponential backoff."""
         token = self._settings.get_access_token()
         if not token:
             self._usage_label.setText("Sign in to see usage")
@@ -147,8 +153,15 @@ class UsageMeterWidget(QFrame):
         if self._fetcher is not None and self._fetcher.isRunning():
             return  # already in flight
 
-        self._usage_label.setText("Loading usage…")
-        self._fetcher = _UsageFetcher(self._settings.get_backend_url(), token)
+        # Show loading only on first attempt or after successful fetch
+        if self._failure_count == 0:
+            self._usage_label.setText("Loading usage…")
+
+        self._fetcher = _UsageFetcher(
+            self._settings.get_backend_url(),
+            token,
+            self._failure_count,
+        )
         self._fetcher.fetched.connect(self._on_usage_fetched)
         self._fetcher.failed.connect(self._on_fetcher_failed)
         self._fetcher.finished.connect(self._on_fetcher_finished)
@@ -160,8 +173,26 @@ class UsageMeterWidget(QFrame):
             self._fetcher.deleteLater()
             self._fetcher = None
 
-    def _on_fetcher_failed(self) -> None:
-        """On fetch failure keep previous data; use free-tier defaults if none."""
+    def _on_fetcher_failed(self, failure_count: int) -> None:
+        """On fetch failure keep previous data; use free-tier defaults if none.
+
+        Implements exponential backoff: after consecutive failures, increase
+        the refresh interval (60s, 2m, 4m, 8m, max 15m).
+        """
+        self._failure_count = failure_count
+
+        # Exponential backoff: 1min, 2min, 4min, 8min, max 15min
+        self._backoff_multiplier = min(2 ** (self._failure_count - 1), 15)
+        new_interval = 60_000 * self._backoff_multiplier
+        if self._timer.interval() != new_interval:
+            self._timer.setInterval(new_interval)
+            if self._failure_count == 1 or self._failure_count % 10 == 0:
+                logger.info(
+                    "Usage fetch backoff",
+                    interval_minutes=self._backoff_multiplier,
+                    failure_count=self._failure_count,
+                )
+
         if not self._usage:
             self._usage = {
                 "tier": "free",
@@ -173,6 +204,11 @@ class UsageMeterWidget(QFrame):
 
     def _on_usage_fetched(self, data: dict) -> None:
         self._usage = data
+        # Reset failure count and backoff on successful fetch
+        if self._failure_count > 0:
+            self._failure_count = 0
+            self._backoff_multiplier = 1
+            self._timer.setInterval(60_000)  # reset to 60 seconds
         # Update tier from server so subscription level stays in sync
         tier = data.get("tier")
         if isinstance(tier, str) and tier.strip():
@@ -197,22 +233,18 @@ class UsageMeterWidget(QFrame):
                 else f"You've used {pct}% of your minutes — upgrade"
             )
             self._usage_label.setText(msg)
-            self._usage_label.setStyleSheet("font-size: 10px; color: #f0a020; font-weight: bold;")
+            self._usage_label.setStyleSheet(
+                f"font-size: 10px; color: {ACCENT}; font-weight: bold;"
+            )
         else:
             self._usage_label.setText(f"{used_min} / {limit_min} min dubbed this month")
-            self._usage_label.setStyleSheet("font-size: 10px; color: #777;")
+            self._usage_label.setStyleSheet(f"font-size: 10px; color: {MUTED};")
 
         # Colour progress bar red when near limit
         if pct >= 90:
-            self._progress.setStyleSheet(
-                "QProgressBar { border-radius: 4px; background: #2a2a2a; }"
-                "QProgressBar::chunk { background: #e05555; border-radius: 4px; }"
-            )
+            self._progress.setStyleSheet(progress_css(DANGER))
         else:
-            self._progress.setStyleSheet(
-                "QProgressBar { border-radius: 4px; background: #2a2a2a; }"
-                "QProgressBar::chunk { background: #4f8cff; border-radius: 4px; }"
-            )
+            self._progress.setStyleSheet(progress_css(ACCENT))
 
     def set_tier(self, tier: str) -> None:
         """Set the displayed tier label and show/hide upgrade button."""

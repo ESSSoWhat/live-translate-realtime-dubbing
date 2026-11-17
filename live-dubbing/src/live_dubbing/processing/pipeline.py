@@ -105,32 +105,43 @@ def _is_mp3_like(data: bytes) -> bool:
     return len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0
 
 
-def _tts_audio_to_float32_bytes(audio_bytes: bytes) -> bytes:
+def _decode_mp3_to_float32(audio_bytes: bytes, target_sr: int) -> tuple[bytes, str]:
+    """Decode MP3 with the bundled ffmpeg. Empty bytes mean playback cannot start."""
+    from live_dubbing.ffmpeg_bundle import configure_pydub, find_ffmpeg
+
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        return b"", ""
+    try:
+        configure_pydub(ffmpeg)
+        from pydub import AudioSegment
+        from scipy import signal
+
+        seg = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
+        seg = seg.set_channels(1)
+        samples = np.array(seg.get_array_of_samples(), dtype=np.float32) / 32768.0
+        sr = seg.frame_rate
+        if sr != target_sr and len(samples) > 0:
+            num = int(len(samples) * target_sr / sr)
+            samples = signal.resample(samples, num).astype(np.float32)
+        out = samples.tobytes()
+        if len(out) > 0:
+            return out, ""
+        return b"", "The converter produced no audio."
+    except Exception as e:
+        logger.warning("MP3 decode failed", error=str(e))
+        return b"", str(e)
+
+
+def _tts_audio_to_float32_bytes(audio_bytes: bytes) -> tuple[bytes, str]:
     """Convert TTS output (MP3 or PCM) to float32 bytes for playback at 24kHz."""
     _target_sr = 24000
     if not audio_bytes:
-        return b""
+        return b"", "The translator returned no audio."
 
     # Prefer pydub for MP3 (dubbing API returns MP3); needs ffmpeg
     if _is_mp3_like(audio_bytes):
-        try:
-            from pydub import AudioSegment
-            from scipy import signal
-            seg = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
-            samples = np.array(seg.get_array_of_samples(), dtype=np.float32) / 32768.0
-            sr = seg.frame_rate
-            if sr != _target_sr:
-                num = int(len(samples) * _target_sr / sr)
-                samples = signal.resample(samples, num).astype(np.float32)
-            out = samples.tobytes()
-            if len(out) > 0:
-                return out
-        except Exception as e:
-            logger.warning(
-                "MP3 decode failed (install ffmpeg for pydub). No playback.",
-                error=str(e),
-            )
-            return b""
+        return _decode_mp3_to_float32(audio_bytes, _target_sr)
 
     try:
         data, sr = sf.read(io.BytesIO(audio_bytes))
@@ -141,28 +152,22 @@ def _tts_audio_to_float32_bytes(audio_bytes: bytes) -> bytes:
             from scipy import signal
             num = int(len(data) * _target_sr / sr)
             data = signal.resample(data, num).astype(np.float32)
-        return cast(bytes, data.tobytes())
+        return cast(bytes, data.tobytes()), ""
     except Exception:
         pass
-    try:
-        from pydub import AudioSegment
-        from scipy import signal
-        seg = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
-        samples = np.array(seg.get_array_of_samples(), dtype=np.float32) / 32768.0
-        sr = seg.frame_rate
-        if sr != _target_sr:
-            num = int(len(samples) * _target_sr / sr)
-            samples = signal.resample(samples, num).astype(np.float32)
-        return samples.tobytes()
-    except Exception:
-        pass
+    decoded, error = _decode_mp3_to_float32(audio_bytes, _target_sr)
+    if decoded:
+        return decoded, ""
+    if error:
+        return b"", error
     try:
         arr = np.frombuffer(audio_bytes, dtype=np.int16)
-        return (arr.astype(np.float32) / 32768.0).tobytes()
-    except Exception:
-        pass
-    logger.warning("Could not convert TTS audio to float32; skipping playback")
-    return b""
+        if arr.size == 0:
+            return b"", "The translator returned no audio."
+        return (arr.astype(np.float32) / 32768.0).tobytes(), ""
+    except Exception as e:
+        logger.warning("Could not convert TTS audio to float32; skipping playback", error=str(e))
+        return b"", str(e)
 
 
 class PipelineState(Enum):
@@ -185,8 +190,10 @@ class PipelineConfig:
     voice_similarity: float = 0.75
     min_voice_capture_sec: float = 30.0
     use_premade_voice_id: str | None = None  # Skip cloning; use this voice
+    preferred_voice_id: str | None = None  # Last saved clone / profile voice
     use_dubbing_api: bool = False  # Dubbing API is batch (~30s latency); use STT+translate+TTS for real-time
     auto_clone_voice: bool = True  # Auto-clone speaker voice on start
+    preserve_context: bool = True  # Send recent lines to the translator
     usage_reporter: "UsageReporter | None" = None  # Report usage when using direct ElevenLabs
 
 
@@ -199,6 +206,14 @@ class AudioChunk:
     sample_rate: int = 16000
     is_speech: bool = False
     vad_confidence: float = 0.0
+
+
+@dataclass
+class TtsItem:
+    """One translated line and the voice cloned from that line."""
+
+    text: str
+    voice: ClonedVoice | None = None
 
 
 @dataclass
@@ -256,6 +271,7 @@ class ProcessingPipeline:
         self._service = elevenlabs_service
         self._event_bus = event_bus
         self._config = config or PipelineConfig()
+        self._tts_convert_warned = False
 
         # Initialize components (lower threshold = more sensitive, captures quieter speech)
         self._vad = SileroVAD(threshold=0.05, min_silence_duration_ms=250)
@@ -280,11 +296,14 @@ class ProcessingPipeline:
         # Async queues (larger to reduce drops when pipeline is briefly slow)
         self._vad_queue: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=100)
         self._stt_queue: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=30)
-        self._tts_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=20)
+        self._tts_queue: asyncio.Queue[TtsItem] = asyncio.Queue(maxsize=20)
+        self._line_clone_warned = False
+        self._translation_context: list[str] = []
         self._output_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=50)
 
         # Tasks
         self._tasks: list[asyncio.Task] = []
+        self._background_tasks: set[asyncio.Task] = set()  # Track voice clone/background tasks
 
         # Dedicated thread pool for VAD (single thread to avoid PyTorch threading issues)
         self._vad_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vad")
@@ -333,6 +352,7 @@ class ProcessingPipeline:
             return
 
         logger.info("Starting processing pipeline")
+        self._tts_convert_warned = False
 
         self._on_output = on_output
         self._on_transcription = on_transcription
@@ -351,22 +371,14 @@ class ProcessingPipeline:
                 {},
             )
 
-        # Default fallback voice ID (ElevenLabs "Rachel")
-        _FALLBACK_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
-
-        # Always start in PROCESSING state so STT/translate/TTS work immediately.
-        # Use a premade voice for TTS right away; swap to cloned voice when ready.
-        premade_id = (self._config.use_premade_voice_id or "").strip()
-        initial_voice_id = premade_id or _FALLBACK_VOICE_ID
-        self._cloned_voice = ClonedVoice(
-            voice_id=initial_voice_id,
-            name="Premade (temporary)" if not premade_id else "Premade",
-            is_dynamic=False,
-        )
+        # Prefer a saved/premade clone so early lines are not Rachel.
+        self._cloned_voice = self._initial_session_voice()
+        self._translation_context = []
         self._state = PipelineState.PROCESSING
         self._processing_start_time = time.time()
         self._last_stt_flush_time = time.time()
 
+        premade_id = (self._config.use_premade_voice_id or "").strip()
         if premade_id:
             # User explicitly chose a premade voice — no cloning needed
             self._stats.voice_clone_ready = True
@@ -376,21 +388,22 @@ class ProcessingPipeline:
             )
             logger.info("Using premade voice, skipping clone", voice_id=premade_id)
         elif self._voice_manager and self._config.auto_clone_voice:
-            # Start voice capture for dynamic cloning IN PARALLEL with processing.
-            # TTS uses the fallback voice until clone is ready, then swaps.
-            self._voice_capture_start_time = time.time()
-            self._is_cloning_in_background = True
-            await self._voice_manager.start_dynamic_capture()
-            # Emit COMPLETED immediately so orchestrator transitions to TRANSLATING state
-            # (the fallback voice is usable right now; clone will upgrade it later)
+            seeded = bool((self._config.preferred_voice_id or "").strip())
+            temporary = self._cloned_voice.voice_id == "21m00Tcm4TlvDq8ikWAM" and not seeded
+            if not temporary:
+                self._stats.voice_clone_ready = True
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
-                {"voice_id": self._cloned_voice.voice_id, "is_temporary": True},
+                {
+                    "voice_id": self._cloned_voice.voice_id,
+                    "is_temporary": temporary,
+                    "name": self._cloned_voice.name,
+                },
             )
-            self._event_bus.emit(EventType.VOICE_CLONE_STARTED, {})
             logger.info(
-                "Started voice capture in background, using fallback voice for now",
-                fallback_voice=initial_voice_id,
+                "Lines reuse a matching profile or clone after enough speech",
+                session_voice=self._cloned_voice.voice_id,
+                session_voice_name=self._cloned_voice.name,
             )
         else:
             self._stats.voice_clone_ready = True
@@ -425,15 +438,25 @@ class ProcessingPipeline:
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
 
+        # Cancel and wait for background tasks (voice cloning, etc.)
+        for task in self._background_tasks:
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
+
         # Clear queues
         self._clear_queues()
 
         # Reset state
         self._speech_buffer = []
         self._speech_buffer_duration_sec = 0.0
+        self._translation_context = []
         self._output_suppress_until = 0.0
         self._output_playing = False
         self._is_cloning_in_background = False
+        if self._voice_manager:
+            self._voice_manager.reset_line_clone_buffer()
         self._vad.reset_state()
 
         # Shutdown VAD executor (don't wait for pending tasks)
@@ -443,9 +466,24 @@ class ProcessingPipeline:
 
         logger.info("Pipeline stopped")
 
+    def _warn_tts_conversion_once(self, error: str) -> None:
+        """Show one dialog when dubbed audio cannot be played."""
+        if self._tts_convert_warned:
+            return
+        self._tts_convert_warned = True
+        from live_dubbing.ffmpeg_bundle import find_ffmpeg, tts_playback_failure_message
+
+        self._event_bus.emit_warning(
+            tts_playback_failure_message(
+                ffmpeg_found=find_ffmpeg() is not None,
+                error=error,
+            ),
+            {},
+        )
+
     def _clear_queues(self) -> None:
         """Clear all queues."""
-        queues: list[asyncio.Queue[AudioChunk] | asyncio.Queue[str] | asyncio.Queue[bytes]] = [
+        queues: list[asyncio.Queue[AudioChunk] | asyncio.Queue[TtsItem] | asyncio.Queue[bytes]] = [
             self._vad_queue, self._stt_queue, self._tts_queue, self._output_queue,
         ]
         for q in queues:
@@ -469,28 +507,106 @@ class ProcessingPipeline:
             "output": self._output_queue.qsize(),
         }
 
+    def _initial_session_voice(self) -> ClonedVoice:
+        """Pick the first TTS voice: premade, saved clone/profile, then Rachel."""
+        _FALLBACK_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
+        premade_id = (self._config.use_premade_voice_id or "").strip()
+        if premade_id:
+            return ClonedVoice(voice_id=premade_id, name="Premade", is_dynamic=False)
+
+        preferred = (self._config.preferred_voice_id or "").strip()
+        if preferred and self._voice_manager:
+            cached = self._voice_manager.get_voice(preferred)
+            if cached is not None:
+                return cached
+            return ClonedVoice(
+                voice_id=preferred,
+                name="Saved voice",
+                is_dynamic=True,
+            )
+
+        if self._voice_manager:
+            profile = self._voice_manager.get_default_profile()
+            resolved = self._voice_manager.resolve_tts_voice(profile)
+            if resolved is not None and resolved.voice_id != _FALLBACK_VOICE_ID:
+                return resolved
+
+        return ClonedVoice(
+            voice_id=_FALLBACK_VOICE_ID,
+            name="Rachel",
+            is_dynamic=False,
+        )
+
+    def _translation_context_text(self) -> str:
+        """Recent source lines for the translator, when context is enabled."""
+        if not self._config.preserve_context or not self._translation_context:
+            return ""
+        return "\n".join(self._translation_context[-4:])
+
+    def _remember_translation_context(self, source_text: str) -> None:
+        cleaned = (source_text or "").strip()
+        if not cleaned:
+            return
+        self._translation_context.append(cleaned)
+        if len(self._translation_context) > 8:
+            self._translation_context = self._translation_context[-8:]
+
     async def _translate_for_tts(self, text: str, source_language: str) -> str:
         """Translate text to target language for TTS. Passthrough if same or no translator."""
+        from live_dubbing.processing.languages import normalize_language_code, same_language
+
         if not text.strip():
             return text
-        target = (self._config.target_language or "en").strip().lower()
+        target = normalize_language_code(self._config.target_language or "en")
+        source = normalize_language_code(source_language)
         if target == "auto":
             logger.debug("Translation skipped - target is 'auto'")
             return text
-        if target == source_language:
-            logger.debug("No translation: target equals source", target=target)
+        if same_language(target, source):
+            logger.debug(
+                "No translation: target equals source",
+                target=target,
+                source=source,
+            )
             return text
         if self._service and hasattr(self._service, "translate_text"):
             try:
+                context = self._translation_context_text()
                 logger.info(
                     "Translating for TTS",
-                    source=source_language,
+                    source=source,
                     target=target,
                     len=len(text),
+                    context_lines=len(self._translation_context),
                 )
-                return await self._service.translate_text(text, target)
+                translated = await self._service.translate_text(
+                    text,
+                    target,
+                    source_language=source if source != "auto" else "auto",
+                    context=context,
+                )
+                cleaned = (translated or "").strip()
+                if not cleaned:
+                    raise RuntimeError("Translator returned empty text")
+                if cleaned == text.strip():
+                    logger.warning(
+                        "Translator returned the source text unchanged",
+                        source=source,
+                        target=target,
+                    )
+                    self._event_bus.emit_warning(
+                        "Translation may be inaccurate for this line. "
+                        "The spoken text may still be the original language.",
+                        {"source": source, "target": target},
+                    )
+                self._remember_translation_context(text)
+                return cleaned
             except Exception as e:
                 logger.warning("Translation failed, using original", error=str(e))
+                self._event_bus.emit_warning(
+                    "Translation failed for this line. Playing the original text.",
+                    {"error": redact_secrets(str(e))[:100]},
+                )
                 return text
         logger.warning("Translation skipped - no translate_text on service")
         return text
@@ -501,9 +617,6 @@ class ProcessingPipeline:
             return
 
         combined = np.concatenate(self._speech_buffer)
-
-        # Speaker identification: switch TTS voice if a different speaker is detected
-        self._detect_and_switch_speaker(combined)
 
         stt_chunk = AudioChunk(
             data=combined,
@@ -527,52 +640,47 @@ class ProcessingPipeline:
         self._speech_buffer_duration_sec = 0.0
         self._silence_count = 0
 
-    def _detect_and_switch_speaker(self, audio: np.ndarray) -> None:
-        """Identify the current speaker profile and resolve TTS voice."""
+    async def _voice_for_translated_line(self, audio: np.ndarray) -> ClonedVoice | None:
+        """Clone or reuse the voice that should speak this line."""
         if not self._voice_manager:
-            return
-        if self._voice_manager.is_capturing:
-            return  # Don't switch while actively capturing a new voice
-
-        profile, confidence = self._voice_manager.resolve_profile_for_audio(audio)
-        resolved = self._voice_manager.resolve_tts_voice(profile)
-        if not resolved:
-            return
-
-        if self._cloned_voice and resolved.voice_id == self._cloned_voice.voice_id:
-            return  # Already using this voice
-
-        self._cloned_voice = resolved
-        profile_name = profile.name if profile else "Default"
-        self._event_bus.emit(
-            EventType.VOICE_PROFILE_CHANGED,
-            {
-                "profile_id": profile.id if profile else None,
-                "profile_name": profile_name,
-                "voice_id": resolved.voice_id,
-                "name": resolved.name,
-                "confidence": confidence,
-                "auto_switched": True,
-            },
-        )
-        # Keep legacy event for existing UI listeners
+            return self._cloned_voice
+        try:
+            cloned = await self._voice_manager.voice_for_utterance(audio)
+        except Exception as e:
+            logger.warning("Could not clone the translated line", error=str(e))
+            if not self._line_clone_warned:
+                self._line_clone_warned = True
+                self._event_bus.emit_warning(
+                    "Could not clone this line's voice. Translated speech uses the current voice.",
+                    {"error": redact_secrets(str(e))[:100]},
+                )
+            return self._cloned_voice
+        if cloned is None:
+            return self._cloned_voice
+        if self._config.usage_reporter and not cloned.reused_existing:
+            self._config.usage_reporter.report("clone", 1)
+        self._cloned_voice = cloned
+        self._stats.voice_clone_ready = True
         self._event_bus.emit(
             EventType.VOICE_CLONE_COMPLETED,
-            {
-                "voice_id": resolved.voice_id,
-                "name": resolved.name,
-                "auto_switched": True,
-                "profile_name": profile_name,
-            },
+            self._voice_manager.clone_event_data(cloned),
         )
         logger.info(
-            "Resolved TTS voice from speaker profile",
-            profile_id=profile.id if profile else None,
-            profile_name=profile_name,
-            voice_id=resolved.voice_id,
-            name=resolved.name,
-            confidence=f"{confidence:.2f}",
+            "Using the voice of the translated line",
+            voice_id=cloned.voice_id,
+            name=cloned.name,
+            reused=cloned.reused_existing,
         )
+        return cloned
+
+    async def _item_for_line(
+        self,
+        text: str,
+        voice_task: asyncio.Task[ClonedVoice | None] | None,
+    ) -> TtsItem:
+        """Pair a translation with the voice resolved from that line."""
+        voice = await voice_task if voice_task is not None else self._cloned_voice
+        return TtsItem(text=text, voice=voice)
 
     async def process_chunk(
         self,
@@ -690,10 +798,14 @@ class ProcessingPipeline:
                         if self._is_cloning_in_background:
                             # Initial auto-clone: swap active voice from fallback
                             self._is_cloning_in_background = False
-                            asyncio.create_task(self._run_voice_clone())
+                            task = asyncio.create_task(self._run_voice_clone())
+                            self._background_tasks.add(task)
+                            task.add_done_callback(self._background_tasks.discard)
                         else:
                             # Manual capture: clone and add to cache without auto-activating
-                            asyncio.create_task(self._run_manual_voice_clone())
+                            task = asyncio.create_task(self._run_manual_voice_clone())
+                            self._background_tasks.add(task)
+                            task.add_done_callback(self._background_tasks.discard)
 
                 # Always process speech for STT/translate/TTS (even during cloning)
                 if self._state == PipelineState.PROCESSING:
@@ -767,11 +879,11 @@ class ProcessingPipeline:
             cloned = await self._voice_manager.create_dynamic_clone()
             self._cloned_voice = cloned
             self._stats.voice_clone_ready = True
-            if self._config.usage_reporter:
+            if self._config.usage_reporter and not cloned.reused_existing:
                 self._config.usage_reporter.report("clone", 1)
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
-                {"voice_id": cloned.voice_id},
+                self._voice_manager.clone_event_data(cloned),
             )
             logger.info(
                 "Voice clone ready, swapped from fallback",
@@ -791,9 +903,24 @@ class ProcessingPipeline:
                 hint = " Sign in again from Account → Sign in."
             elif "402" in err_s or "quota" in err_s.lower():
                 hint = " Voice clone limit reached. Upgrade your plan for more."
+            elif (
+                "voice_limit" in err_s.lower()
+                or "maximum amount of custom voices" in err_s.lower()
+            ):
+                hint = " The voice library is full. Delete an old voice and try again."
+            elif "timed out" in err_s.lower() or "timeout" in err_s.lower():
+                hint = " The clone took too long. Try again with a shorter clip."
+            detail = ""
+            if not hint and err_s:
+                detail = err_s.split("\n")[0].strip()
+                if len(detail) > 120:
+                    detail = detail[:117] + "..."
+                if detail:
+                    detail = " " + detail
             self._event_bus.emit_warning(
                 "Voice clone failed — using default voice for TTS. You can still hear translated speech."
-                + hint,
+                + hint
+                + detail,
                 {"error": err_s[:100]},
             )
 
@@ -803,12 +930,12 @@ class ProcessingPipeline:
             if not self._voice_manager:
                 return
             cloned = await self._voice_manager.create_dynamic_clone()
-            if self._config.usage_reporter:
+            if self._config.usage_reporter and not cloned.reused_existing:
                 self._config.usage_reporter.report("clone", 1)
             # Don't swap active voice — let the user activate it from the list
             self._event_bus.emit(
                 EventType.VOICE_CLONE_COMPLETED,
-                {"voice_id": cloned.voice_id, "name": cloned.name},
+                self._voice_manager.clone_event_data(cloned),
             )
             logger.info(
                 "Manual voice clone created",
@@ -914,17 +1041,16 @@ class ProcessingPipeline:
                                 )
 
                                 # Convert dubbed audio (MP3) to playable format
-                                dubbed_float32 = _tts_audio_to_float32_bytes(dub_result.audio)
+                                dubbed_float32, convert_error = _tts_audio_to_float32_bytes(
+                                    dub_result.audio
+                                )
 
                                 if not dubbed_float32:
                                     logger.warning(
-                                        "Dubbed audio conversion produced no data "
-                                        "(install ffmpeg for MP3 playback)"
+                                        "Dubbed audio conversion produced no data",
+                                        error=convert_error,
                                     )
-                                    self._event_bus.emit_warning(
-                                        "Audio conversion failed. Install ffmpeg for playback.",
-                                        {},
-                                    )
+                                    self._warn_tts_conversion_once(convert_error)
                                     continue
 
                                 # Queue for output
@@ -951,7 +1077,17 @@ class ProcessingPipeline:
                         logger.exception("Dubbing API error, falling back", error=str(e))
                         use_dubbing = False
 
-                # Standard path: STT → translate → TTS
+                # Standard path: STT → translate → TTS.
+                # The clone starts from this line's audio while transcription runs.
+                voice_task: asyncio.Task[ClonedVoice | None] | None = None
+                premade = (self._config.use_premade_voice_id or "").strip()
+                manual_capture = bool(
+                    self._voice_manager and self._voice_manager.is_capturing
+                )
+                if self._config.auto_clone_voice and not premade and not manual_capture:
+                    voice_task = asyncio.create_task(
+                        self._voice_for_translated_line(np.array(chunk.data, copy=True))
+                    )
                 try:
                     result = await self._service.transcribe(
                         audio_data=audio_wav,
@@ -995,19 +1131,31 @@ class ProcessingPipeline:
                     # Strip non-verbal markers before TTS
                     text_for_tts = strip_non_verbal(text_for_tts)
 
-                    # Send to TTS
+                    # Send to TTS with the voice cloned from this same line.
                     if text_for_tts.strip():
+                        item = await self._item_for_line(text_for_tts, voice_task)
+                        voice_task = None
                         try:
-                            self._tts_queue.put_nowait(text_for_tts)
-                            logger.info("Queued for TTS", text_len=len(text_for_tts))
+                            self._tts_queue.put_nowait(item)
+                            logger.info(
+                                "Queued for TTS",
+                                text_len=len(text_for_tts),
+                                voice_id=item.voice.voice_id if item.voice else None,
+                            )
                         except asyncio.QueueFull:
                             logger.warning("TTS queue full")
+                    elif voice_task is not None:
+                        voice_task.cancel()
+                        voice_task = None
 
                     # Update latency
                     latency_ms = (time.time() - start_time) * 1000
                     self._stats.current_latency_ms = latency_ms
 
                 except Exception as e:
+                    if voice_task is not None:
+                        voice_task.cancel()
+                        voice_task = None
                     from live_dubbing.services.backend_service import AuthExpiredException
                     logger.exception("STT failed", error=str(e))
                     raw = str(e) if str(e) else "Unknown error"
@@ -1044,43 +1192,45 @@ class ProcessingPipeline:
             try:
                 # Get text
                 try:
-                    text = await asyncio.wait_for(
+                    item = await asyncio.wait_for(
                         self._tts_queue.get(),
                         timeout=0.1,
                     )
                 except asyncio.TimeoutError:
                     continue
 
-                if not self._service or not self._cloned_voice:
+                text = item.text
+                voice = item.voice or self._cloned_voice
+                if not self._service or not voice:
                     if not hasattr(self, "_tts_skip_logged"):
                         self._tts_skip_logged = True
                         logger.warning(
                             "TTS stage: no service or cloned voice, skipping",
                             has_service=self._service is not None,
-                            has_cloned_voice=self._cloned_voice is not None,
+                            has_cloned_voice=voice is not None,
                         )
                         self._event_bus.emit_warning(
                             "TTS is not available — no API key or voice configured. "
                             "Transcription and translation will work but no speech output.",
-                            {"has_service": self._service is not None, "has_voice": self._cloned_voice is not None},
+                            {"has_service": self._service is not None, "has_voice": voice is not None},
                         )
                     continue
 
-                # Synthesize with cloned voice
+                # Synthesize with the voice cloned from this line
                 try:
                     self._event_bus.emit(EventType.TTS_STARTED, {"text": text})
 
                     try:
                         audio_bytes = await self._service.synthesize(
                             text=text,
-                            voice_id=self._cloned_voice.voice_id,
+                            voice_id=voice.voice_id,
                             stability=self._config.voice_stability,
                             similarity_boost=self._config.voice_similarity,
                         )
                     except Exception as synth_err:
                         # Stale saved clones (e.g. after ElevenLabs API key change) break TTS.
                         fallback_id = "21m00Tcm4TlvDq8ikWAM"
-                        active_id = self._cloned_voice.voice_id if self._cloned_voice else ""
+                        active_id = voice.voice_id if voice else ""
                         err_l = str(synth_err).lower()
                         can_fallback = (
                             active_id
@@ -1104,11 +1254,14 @@ class ProcessingPipeline:
                             failed_voice=active_id,
                             error=str(synth_err)[:120],
                         )
-                        self._cloned_voice = ClonedVoice(
+                        fallback_voice = ClonedVoice(
                             voice_id=fallback_id,
                             name="Default (fallback)",
                             is_dynamic=False,
                         )
+                        if self._cloned_voice is voice:
+                            self._cloned_voice = fallback_voice
+                        voice = fallback_voice
                         self._event_bus.emit_warning(
                             "Selected voice is unavailable on the server ElevenLabs account. "
                             "Switched to the default voice — re-clone or pick a listed voice.",
@@ -1128,14 +1281,14 @@ class ProcessingPipeline:
                         self._config.usage_reporter.report("dub", dub_sec)
 
                     # Convert to float32 for playback (TTS returns MP3)
-                    playback_bytes = _tts_audio_to_float32_bytes(audio_bytes)
+                    playback_bytes, convert_error = _tts_audio_to_float32_bytes(audio_bytes)
 
                     if not playback_bytes:
-                        logger.warning("TTS conversion produced no audio (check ffmpeg)")
-                        self._event_bus.emit_warning(
-                            "TTS audio conversion failed. Ensure ffmpeg is on PATH.",
-                            {},
+                        logger.warning(
+                            "TTS conversion produced no audio",
+                            error=convert_error,
                         )
+                        self._warn_tts_conversion_once(convert_error)
                     else:
                         try:
                             self._output_queue.put_nowait(playback_bytes)

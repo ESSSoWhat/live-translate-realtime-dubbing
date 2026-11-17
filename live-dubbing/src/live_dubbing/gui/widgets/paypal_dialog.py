@@ -97,7 +97,7 @@ class PayPalCheckoutDialog(QDialog):
         layout.addWidget(self._email_edit)
 
         self._status = QLabel("")
-        self._status.setStyleSheet("color: #888; font-size: 11px;")
+        self._status.setStyleSheet("color: #8EB8CC; font-size: 11px;")
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
 
