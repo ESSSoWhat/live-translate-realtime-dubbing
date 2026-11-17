@@ -124,6 +124,14 @@ class MemoryStore:
             _verify_attempts.setdefault(user_id, 0)
         _last_phone[user_id] = phone
 
+    def precheck(self, user_id: str, phone: str) -> str:
+        """Read-only check, before any Twilio Verify call, that a code is pending and not locked out."""
+        if _last_phone.get(user_id) != phone:
+            return "missing"
+        if _verify_attempts.get(user_id, 0) >= MAX_ATTEMPTS:
+            return "too_many"
+        return "ok"
+
     def attempt(self, user_id: str, phone: str, *, code_hash: str | None = None, approved: bool | None = None, now: float) -> str:
         if _last_phone.get(user_id) != phone:
             return "missing"
@@ -189,6 +197,28 @@ class SupabaseStore:
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await self.db.table("phone_verification_codes").upsert(row, on_conflict="user_id").execute()
+
+    async def precheck(self, user_id: str, phone: str) -> str:
+        """Read-only check, before any Twilio Verify call, that a code is pending and not locked out.
+
+        apply_phone_verification_attempt stays the authority (it locks the row and
+        counts the attempt); this only avoids calling Twilio for requests that RPC
+        would reject anyway (no pending code for this number, or locked out).
+        Expiry is left to the RPC so it is judged by the database clock.
+        """
+        res = await (
+            self.db.table("phone_verification_codes")
+            .select("phone_e164, attempts")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        rows = getattr(res, "data", None) or []
+        rec = rows[0] if isinstance(rows, list) and rows else (rows if isinstance(rows, dict) else None)
+        if not rec or rec.get("phone_e164") != phone:
+            return "missing"
+        if int(rec.get("attempts") or 0) >= MAX_ATTEMPTS:
+            return "too_many"
+        return "ok"
 
     async def attempt(
         self,
@@ -308,6 +338,8 @@ async def check_code(
     code = (code or "").strip()
     if isinstance(store, SupabaseStore):
         if cfg.twilio_verify_service_sid:
+            # Don't spend a Twilio Verify call on a request the store would reject.
+            _raise_status(await store.precheck(user_id, phone))
             svc = _twilio(cfg).verify.v2.services(cfg.twilio_verify_service_sid)
             try:
                 check = await asyncio.to_thread(svc.verification_checks.create, to=phone, code=code)
@@ -323,6 +355,7 @@ async def check_code(
 
     when_f = time.monotonic() if now is None else float(now)
     if cfg.twilio_verify_service_sid:
+        _raise_status(store.precheck(user_id, phone))
         svc = _twilio(cfg).verify.v2.services(cfg.twilio_verify_service_sid)
         try:
             check = await asyncio.to_thread(svc.verification_checks.create, to=phone, code=code)
