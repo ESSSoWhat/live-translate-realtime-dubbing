@@ -44,7 +44,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "installvbcable"; Description: "Install VB-Audio Virtual Cable (recommended for play-as-mic)"; GroupDescription: "Optional components:"; Flags: unchecked
+; VB-CABLE is optional third-party donationware by VB-Audio Software, shipped
+; unmodified. See LICENSE and https://vb-audio.com/Services/licensing.htm.
+Name: "installvbcable"; Description: "Install VB-Audio Virtual Cable (optional, recommended for play-as-mic). VB-CABLE is a third-party donationware driver by VB-Audio Software, distributed unmodified. Donations welcome at https://www.vb-cable.com"; GroupDescription: "Optional components:"; Flags: unchecked
 
 [Files]
 ; Main application files from PyInstaller output (exclude secrets)
@@ -59,5 +61,5 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\VBCABLE_Driver_Pack43\VBCABLE_Setup_x64.exe"; Description: "Install VB-Audio Virtual Cable"; Flags: nowait postinstall skipifsilent skipifdoesntexist; Tasks: installvbcable
+Filename: "{app}\VBCABLE_Driver_Pack43\VBCABLE_Setup_x64.exe"; Description: "Install VB-Audio Virtual Cable (optional donationware by VB-Audio Software; donations welcome at www.vb-cable.com)"; Flags: nowait postinstall skipifsilent skipifdoesntexist; Tasks: installvbcable
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

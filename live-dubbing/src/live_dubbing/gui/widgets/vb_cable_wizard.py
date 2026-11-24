@@ -52,11 +52,15 @@ class WelcomePage(WizardPage):
         explanation = QLabel(
             "This app needs to capture audio from a specific application.\n\n"
             "When Windows per-app capture isn't available, VB-Audio Virtual Cable "
-            "(VB-Cable) routes the app's audio. Other virtual cables (e.g. VAC) may "
-            "work, but this wizard targets VB-Cable.\n\n"
+            "(VB-CABLE) can route the app's audio. Other virtual cables (e.g. VAC) may "
+            "work, but this wizard targets VB-CABLE.\n\n"
+            "VB-CABLE is optional. It is a third-party driver by VB-Audio Software, "
+            "distributed unmodified as donationware. If you find it useful, you are "
+            "welcome to donate at https://www.vb-cable.com "
+            "(https://vb-audio.com/Cable/).\n\n"
             "This wizard will help you:\n"
-            "• Check if VB-Cable is installed\n"
-            "• Install VB-Audio Virtual Cable if needed (free)\n"
+            "• Check if VB-CABLE is installed\n"
+            "• Install VB-Audio Virtual Cable if needed (optional donationware)\n"
             "• Configure your app's audio output\n\n"
             "The setup only takes a few minutes."
         )
@@ -159,9 +163,11 @@ class InstallPage(WizardPage):
         self._layout.addWidget(title)
 
         instructions = QLabel(
-            "VB-Audio Virtual Cable is a free virtual audio device that allows "
-            "routing audio between applications.\n\n"
-            "Click the button below to open the official VB-Audio VB-Cable download page:"
+            "VB-CABLE is a third-party virtual audio driver by VB-Audio Software, "
+            "distributed unmodified as donationware. It is optional. If you find it "
+            "useful, you are welcome to donate or purchase a license at "
+            "https://www.vb-cable.com or https://vb-audio.com/Cable/.\n\n"
+            "Click the button below to open the official VB-Audio VB-CABLE page:"
         )
         instructions.setWordWrap(True)
         self._layout.addWidget(instructions)
