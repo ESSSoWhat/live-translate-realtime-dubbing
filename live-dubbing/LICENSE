@@ -29,4 +29,24 @@ This application uses the following third-party services and libraries:
 - OpenAI GPT (https://openai.com) - Translation
 - Silero VAD (https://github.com/snakers4/silero-vad) - Voice activity detection
 - PyQt6 (https://www.riverbankcomputing.com/software/pyqt/) - GUI framework
-- VB-Audio Virtual Cable (https://vb-audio.com/Cable/) - Audio routing (optional)
+- VB-Audio Virtual Cable (https://www.vb-cable.com, https://vb-audio.com/Cable/) - optional third-party donationware audio driver
+
+---
+
+Third-party software: VB-CABLE
+
+This application may optionally include or install VB-CABLE, a virtual
+audio driver by VB-Audio Software. VB-CABLE is third-party software,
+distributed unmodified as donationware. It is optional and is not
+required to use Live Translate for ordinary listening or per-app capture
+on supported Windows versions.
+
+If you find VB-CABLE useful, you are welcome to donate or purchase a
+license at:
+
+https://www.vb-cable.com
+https://vb-audio.com/Cable/
+
+VB-CABLE is copyright VB-Audio Software. See VB-Audio's licensing terms at:
+
+https://vb-audio.com/Services/licensing.htm
