@@ -13,6 +13,7 @@ This folder contains the Velo code for the API key page that enables SSO with th
 | `app-auth-page.js` | **Entry point for Sign in with Wix** (public page) | app-auth page code panel |
 | `api-key-page.js` | API key page frontend (calls sync + getApiKey) | API key page code panel |
 | `api-key.web.js` | Backend: `syncMemberToBackend`, `getApiKeyForMember` | `backend/` folder |
+| `events.js` | Backend event: deleting a Wix member deletes the linked app account | `backend/events.js` (merge if the file exists) |
 | `login-page.js` | Login page returnUrl support | Login page code panel (optional) |
 
 ## Setup Instructions

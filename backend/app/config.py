@@ -43,6 +43,14 @@ class Settings(BaseSettings):  # pylint: disable=too-few-public-methods
     # Optional; when empty the first site on the account is discovered and cached.
     wix_site_id: str = ""
 
+    # Two-way account deletion sync (Wix member <-> app account). Off until enabled.
+    account_delete_sync_enabled: bool = False
+    # Shared secret the Supabase auth.users DELETE webhook sends as a Bearer token.
+    # Separate from LT_SYNC_SECRET so the Wix secret is never stored in the database.
+    account_sync_webhook_secret: str = ""
+    # Comma-separated emails that sync must never delete (site owner, support, test admins).
+    account_sync_protected_emails: str = ""
+
     # PayPal (optional — additional payment path; one-time + subscriptions)
     paypal_env: str = "live"  # "live" or "sandbox"
     paypal_client_id: str = ""

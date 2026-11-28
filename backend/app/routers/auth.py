@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field  # pylint: disable=import-error
 from app.config import get_settings
 from app.models.requests import ApiKeyRequest, ForgotPasswordRequest, LoginRequest, RefreshRequest, RegisterRequest
 from app.models.responses import AuthResponse, RegisterPendingResponse, TokenResponse
+from app.services.account_sync import link_wix_member_id
 from app.services.supabase_client import create_auth_client, get_supabase
 from app.services.usage import get_usage_snapshot
 
@@ -297,6 +298,9 @@ async def create_or_get_api_key(body: ApiKeyRequest, request: Request) -> dict:
         # Handle case where execute() returns None or other unexpected errors
         logger.warning("API key: query returned unexpected result", email=body.email, error=str(e))
 
+    if existing_data and body.wix_member_id:
+        await link_wix_member_id(sb, existing_data["id"], body.wix_member_id)
+
     if existing_data and existing_data.get("api_key"):
         return {
             "api_key": existing_data["api_key"],
@@ -320,6 +324,8 @@ async def create_or_get_api_key(body: ApiKeyRequest, request: Request) -> dict:
         row = insert_result.data[0] if isinstance(insert_result.data, list) else insert_result.data
         user_id = row["id"]
         tier = row.get("tier", "free")
+    if body.wix_member_id:
+        await link_wix_member_id(sb, user_id, body.wix_member_id)
     logger.info("API key provisioned", email=body.email, user_id=str(user_id))
     return {"api_key": api_key, "user_id": str(user_id), "email": body.email, "tier": tier}
 
