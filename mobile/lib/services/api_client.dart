@@ -3,6 +3,7 @@ import 'package:http_parser/http_parser.dart';
 
 import '../config/api_config.dart';
 import 'auth_service.dart';
+import 'register_status.dart';
 
 /// Thrown when the API returns 402 (quota exceeded). Show upgrade/paywall.
 class QuotaExceededException implements Exception {
@@ -81,17 +82,70 @@ class ApiClient {
   }
 
   /// POST /auth/register
+  ///
+  /// Returns a map that may be a full auth session, or
+  /// `{needs_confirmation: true, message: ...}` when the user must confirm email.
   Future<Map<String, dynamic>> register(String email, String password) async {
-    final r = await _dio.post(
-      '/auth/register',
-      data: {'email': email, 'password': password},
-    );
-    final data = r.data;
-    if (data is Map<String, dynamic>) return data;
-    throw DioException(
-      requestOptions: r.requestOptions,
-      error: 'Unexpected response format',
-    );
+    try {
+      final r = await _dio.post(
+        '/auth/register',
+        data: {'email': email, 'password': password},
+      );
+      final data = r.data is Map<String, dynamic>
+          ? r.data as Map<String, dynamic>
+          : <String, dynamic>{};
+      final result = RegisterResult.fromResponse(
+        statusCode: r.statusCode ?? 0,
+        body: data,
+      );
+      if (result.needsConfirmation || result.signedIn) {
+        return result.payload;
+      }
+      if (result.isTimeout) {
+        throw DioException(
+          requestOptions: r.requestOptions,
+          response: r,
+          error: result.message,
+          type: DioExceptionType.badResponse,
+        );
+      }
+      throw DioException(
+        requestOptions: r.requestOptions,
+        response: r,
+        error: result.message,
+        type: DioExceptionType.badResponse,
+      );
+    } on DioException catch (e) {
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.sendTimeout) {
+        throw DioException(
+          requestOptions: e.requestOptions,
+          response: e.response,
+          error: signupTimeoutMessage,
+          type: e.type,
+        );
+      }
+      final data = e.response?.data;
+      final body = data is Map<String, dynamic> ? data : <String, dynamic>{};
+      final result = RegisterResult.fromResponse(
+        statusCode: e.response?.statusCode ?? 0,
+        body: body,
+        timedOut: e.response?.statusCode == 504,
+      );
+      if (result.needsConfirmation) {
+        return result.payload;
+      }
+      if (result.isTimeout) {
+        throw DioException(
+          requestOptions: e.requestOptions,
+          response: e.response,
+          error: signupTimeoutMessage,
+          type: e.type,
+        );
+      }
+      rethrow;
+    }
   }
 
   /// POST /proxy/transcribe — multipart audio, returns { text, language_code }.

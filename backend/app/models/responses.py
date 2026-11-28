@@ -2,8 +2,8 @@
 
 from pydantic import BaseModel, computed_field
 
-
 # ── Auth ────────────────────────────────────────────────────────────────────
+
 
 class TokenResponse(BaseModel):
     """Auth token pair and metadata."""
@@ -27,7 +27,16 @@ class AuthResponse(BaseModel):
     usage: "UsageSnapshot"
 
 
+class RegisterPendingResponse(BaseModel):
+    """Successful sign-up that still needs email confirmation."""
+
+    needs_confirmation: bool = True
+    message: str
+    email: str
+
+
 # ── Usage ────────────────────────────────────────────────────────────────────
+
 
 class UsageSnapshot(BaseModel):
     """Current period usage and limits."""
@@ -64,6 +73,7 @@ class UsageWithTier(BaseModel):
 
 # ── User ────────────────────────────────────────────────────────────────────
 
+
 class UserProfile(BaseModel):
     """User profile with subscription and usage."""
 
@@ -75,6 +85,7 @@ class UserProfile(BaseModel):
 
 
 # ── Proxy ────────────────────────────────────────────────────────────────────
+
 
 class TranscriptionResponse(BaseModel):
     """STT result with optional confidence."""
@@ -108,6 +119,7 @@ class VoiceItem(BaseModel):
 
 # ── Billing ──────────────────────────────────────────────────────────────────
 
+
 class CheckoutResponse(BaseModel):
     """Stripe checkout session URL."""
 
@@ -138,6 +150,7 @@ class PlanInfo(BaseModel):
 
 
 # ── Errors ──────────────────────────────────────────────────────────────────
+
 
 class ErrorResponse(BaseModel):
     """Structured error with optional upgrade URL."""

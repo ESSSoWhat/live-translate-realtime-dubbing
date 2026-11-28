@@ -16,11 +16,197 @@ from pydantic import BaseModel, Field  # pylint: disable=import-error
 
 from app.config import get_settings
 from app.models.requests import ApiKeyRequest, ForgotPasswordRequest, LoginRequest, RefreshRequest, RegisterRequest
-from app.models.responses import AuthResponse, TokenResponse
+from app.models.responses import AuthResponse, RegisterPendingResponse, TokenResponse
 from app.services.supabase_client import create_auth_client, get_supabase
 from app.services.usage import get_usage_snapshot
 
 logger = structlog.get_logger(__name__)
+
+CONFIRM_EMAIL_MESSAGE = "Check your email to confirm your account, then sign in."
+SIGNUP_TIMEOUT_MESSAGE = (
+    "This is taking longer than usual. Check your inbox before trying again."
+)
+
+
+def _is_auth_timeout(exc: BaseException) -> bool:
+    """True when a sign-up call failed because a request timed out."""
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(
+        token in text
+        for token in ("timeout", "timed out", "deadline exceeded")
+    )
+
+
+CONFIRM_EMAIL_SEND_FAILED_MESSAGE = (
+    "We couldn't send your confirmation email right now. Please try again in a few "
+    "minutes, or contact support@livetranslate.net."
+)
+ACCOUNT_EXISTS_MESSAGE = (
+    "An account with this email already exists. Sign in instead, or reset your password."
+)
+EMAIL_NOT_CONFIRMED_MESSAGE = (
+    "Confirm your email first: open the confirmation link we sent you, then sign in."
+)
+INVALID_LOGIN_MESSAGE = "Invalid email or password"
+AUTH_UNAVAILABLE_MESSAGE = "Sign-in is temporarily unavailable. Please try again in a minute."
+TOO_MANY_ATTEMPTS_MESSAGE = "Too many attempts. Wait a few minutes and try again."
+ACCOUNT_LINK_CONFLICT_MESSAGE = (
+    "This email is already linked to another Live Translate account. "
+    "Contact support@livetranslate.net."
+)
+
+
+def _auth_error_parts(exc: BaseException) -> tuple[int | None, str, str]:
+    """Return (http_status, error_code, lowercased message) from a Supabase auth error."""
+    raw_status = getattr(exc, "status", None)
+    status_value = raw_status if isinstance(raw_status, int) else None
+    raw_code = getattr(exc, "code", None)
+    code = raw_code.lower() if isinstance(raw_code, str) else ""
+    raw_message = getattr(exc, "message", None)
+    message = raw_message if isinstance(raw_message, str) and raw_message else str(exc)
+    return status_value, code, message.lower()
+
+
+def _register_error(exc: BaseException) -> HTTPException:
+    """Map a Supabase sign-up failure to a status and a message users can act on."""
+    status_value, code, message = _auth_error_parts(exc)
+    if _is_auth_timeout(exc):
+        return HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, SIGNUP_TIMEOUT_MESSAGE)
+    if code in ("user_already_exists", "email_exists") or "already registered" in message:
+        return HTTPException(status.HTTP_409_CONFLICT, ACCOUNT_EXISTS_MESSAGE)
+    if code == "weak_password" or "password should" in message:
+        return HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "That password is too weak. Use at least 8 characters with letters and numbers.",
+        )
+    if code in ("email_address_invalid", "validation_failed") or "invalid format" in message:
+        return HTTPException(status.HTTP_400_BAD_REQUEST, "Enter a valid email address.")
+    if code.startswith("over_") or status_value == 429 or "rate limit" in message:
+        return HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, TOO_MANY_ATTEMPTS_MESSAGE)
+    if code in ("signup_disabled", "email_provider_disabled"):
+        return HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Email sign-up is turned off right now. Use Google sign-in or contact support.",
+        )
+    if (
+        "sending confirmation" in message
+        or "confirmation email" in message
+        or "smtp" in message
+        or status_value is None
+        or status_value == 0
+        or status_value >= 500
+    ):
+        # Supabase creates the user, then fails to send the email and rolls back.
+        return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, CONFIRM_EMAIL_SEND_FAILED_MESSAGE)
+    return HTTPException(status.HTTP_400_BAD_REQUEST, "Sign-up failed. Please try again.")
+
+
+def _login_error(exc: BaseException) -> HTTPException:
+    """Map a Supabase password sign-in failure to a status and message."""
+    status_value, code, message = _auth_error_parts(exc)
+    if code == "email_not_confirmed" or "email not confirmed" in message:
+        return HTTPException(status.HTTP_403_FORBIDDEN, EMAIL_NOT_CONFIRMED_MESSAGE)
+    if code.startswith("over_") or status_value == 429 or "rate limit" in message:
+        return HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, TOO_MANY_ATTEMPTS_MESSAGE)
+    if (
+        _is_auth_timeout(exc)
+        or status_value is None
+        or status_value == 0
+        or status_value >= 500
+    ) and code != "invalid_credentials":
+        return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, AUTH_UNAVAILABLE_MESSAGE)
+    return HTTPException(status.HTTP_401_UNAUTHORIZED, INVALID_LOGIN_MESSAGE)
+
+
+class UserLinkConflictError(Exception):
+    """The email's users row belongs to a different, still-existing Supabase user."""
+
+
+def _first_row(data: object) -> dict | None:
+    if isinstance(data, list):
+        return data[0] if data and isinstance(data[0], dict) else None
+    if isinstance(data, dict):
+        return data
+    return None
+
+
+async def _select_user_row(sb, column: str, value: str) -> dict | None:
+    try:
+        result = await sb.table("users").select("*").eq(column, value).limit(1).execute()
+    except Exception as exc:
+        logger.warning("User lookup failed", column=column, error=str(exc))
+        return None
+    return _first_row(getattr(result, "data", None)) if result is not None else None
+
+
+async def _auth_user_exists(sb, supabase_uid: str) -> bool:
+    """True unless Supabase says the auth user is gone (deleted)."""
+    try:
+        resp = await sb.auth.admin.get_user_by_id(supabase_uid)
+    except Exception as exc:
+        text = str(exc).lower()
+        return not ("not found" in text or "user_not_found" in text or "404" in text)
+    return bool(resp is not None and getattr(resp, "user", None) is not None)
+
+
+async def _find_or_link_user_row(
+    sb,
+    supabase_uid: str,
+    email: str | None,
+    *,
+    insert_extra: dict | None = None,
+) -> dict:
+    """Return the users row for a Supabase account, linking or creating it.
+
+    public.users.email is unique. A row can already exist for the email from Wix
+    (/api-key, no supabase_uid) or from an auth account that was deleted. Inserting
+    a second row then fails and email/password sign-in returns 500, so link the
+    existing row to this account instead. Tier, usage and API key are kept.
+    """
+    row = await _select_user_row(sb, "supabase_uid", supabase_uid)
+    if row:
+        return row
+
+    address = (email or "").strip()
+    candidates: list[str] = []
+    for candidate in (address, address.lower()):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    for candidate in candidates:
+        existing = await _select_user_row(sb, "email", candidate)
+        if not existing:
+            continue
+        owner = existing.get("supabase_uid")
+        if owner and str(owner) != str(supabase_uid) and await _auth_user_exists(sb, str(owner)):
+            logger.error("users row email belongs to another auth user", user_id=str(existing.get("id")))
+            raise UserLinkConflictError(candidate)
+        result = (
+            await sb.table("users")
+            .update({"supabase_uid": supabase_uid})
+            .eq("id", existing["id"])
+            .execute()
+        )
+        linked = _first_row(getattr(result, "data", None)) or {**existing, "supabase_uid": supabase_uid}
+        logger.info(
+            "Linked existing users row to Supabase account",
+            user_id=str(existing.get("id")),
+            previous_uid_set=bool(owner),
+        )
+        return linked
+
+    payload = {
+        "supabase_uid": supabase_uid,
+        "email": address or f"{supabase_uid[:8]}@users.local",
+        "tier": "free",
+        **(insert_extra or {}),
+    }
+    result = await sb.table("users").insert(payload).execute()
+    created = _first_row(getattr(result, "data", None))
+    if not created:
+        raise ValueError("Insert returned no data")
+    return created
+
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _DESKTOP_SSO_HTML_PATH = Path(__file__).resolve().parent.parent / "templates" / "desktop_sso.html"
@@ -301,37 +487,26 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid Google session",
             ) from exc
-        result = (
-            await sb.table("users")
-            .select("*")
-            .eq("supabase_uid", supabase_uid)
-            .maybe_single()
-            .execute()
-        )
-        if not result or not result.data:
-            # Resolve email from JWT user if needed — create row like OAuth exchange
+        user_row = await _select_user_row(sb, "supabase_uid", supabase_uid)
+        if not user_row:
+            # Resolve email from the JWT user, then link or create the row.
             try:
                 user_resp = await sb.auth.get_user(access_token)
                 email = (user_resp.user.email if user_resp and user_resp.user else None) or ""
             except Exception:
                 email = ""
-            insert = (
-                await sb.table("users")
-                .insert(
-                    {
-                        "supabase_uid": supabase_uid,
-                        "email": email or f"{supabase_uid[:8]}@users.local",
-                        "tier": "free",
-                        "api_key": secrets.token_urlsafe(32),
-                    }
+            try:
+                user_row = await _find_or_link_user_row(
+                    sb,
+                    supabase_uid,
+                    email,
+                    insert_extra={"api_key": secrets.token_urlsafe(32)},
                 )
-                .execute()
-            )
-            if not insert.data:
-                raise HTTPException(status_code=500, detail="Could not create user")
-            user_row = insert.data[0] if isinstance(insert.data, list) else insert.data
-        else:
-            user_row = result.data
+            except UserLinkConflictError as exc:
+                raise HTTPException(status.HTTP_409_CONFLICT, ACCOUNT_LINK_CONFLICT_MESSAGE) from exc
+            except Exception as exc:
+                logger.exception("Desktop SSO could not create or read users row")
+                raise HTTPException(status_code=500, detail="Could not create user") from exc
         api_key = await _ensure_user_api_key(sb, user_row)
     elif body.email and body.password:
         try:
@@ -340,37 +515,21 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
                 {"email": body.email.strip(), "password": body.password}
             )
         except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password",
-            ) from exc
+            raise _login_error(exc) from exc
         if resp.user is None or resp.session is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login failed")
-        result = (
-            await sb.table("users")
-            .select("*")
-            .eq("supabase_uid", resp.user.id)
-            .maybe_single()
-            .execute()
-        )
-        if not result or not result.data:
-            insert = (
-                await sb.table("users")
-                .insert(
-                    {
-                        "supabase_uid": resp.user.id,
-                        "email": body.email.strip(),
-                        "tier": "free",
-                        "api_key": secrets.token_urlsafe(32),
-                    }
-                )
-                .execute()
+        try:
+            user_row = await _find_or_link_user_row(
+                sb,
+                resp.user.id,
+                resp.user.email or body.email.strip(),
+                insert_extra={"api_key": secrets.token_urlsafe(32)},
             )
-            if not insert.data:
-                raise HTTPException(status_code=500, detail="Could not create user")
-            user_row = insert.data[0] if isinstance(insert.data, list) else insert.data
-        else:
-            user_row = result.data
+        except UserLinkConflictError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, ACCOUNT_LINK_CONFLICT_MESSAGE) from exc
+        except Exception as exc:
+            logger.exception("Desktop SSO could not create or read users row")
+            raise HTTPException(status_code=500, detail="Could not create user") from exc
         api_key = await _ensure_user_api_key(sb, user_row)
     else:
         raise HTTPException(
@@ -408,16 +567,38 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     return out
 
 
-@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest) -> AuthResponse:
-    """Create a new account."""
+@router.post(
+    "/register",
+    response_model=None,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        201: {"model": AuthResponse},
+        202: {"model": RegisterPendingResponse},
+    },
+)
+async def register(body: RegisterRequest) -> AuthResponse | JSONResponse:
+    """Create a new account.
+
+    When email confirmation is required, Supabase returns a user and no session.
+    That is a successful sign-up: respond with 202 and needs_confirmation=true
+    instead of HTTP 400, so clients can show a check-your-email success state.
+    """
     auth_sb = await create_auth_client()
 
     try:
         resp = await auth_sb.auth.sign_up({"email": body.email, "password": body.password})
     except Exception as exc:
-        logger.exception("Registration failed")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Authentication failed") from exc
+        mapped = _register_error(exc)
+        status_value, code, _message = _auth_error_parts(exc)
+        logger.warning(
+            "Registration failed",
+            error_type=type(exc).__name__,
+            supabase_status=status_value,
+            supabase_code=code or None,
+            error=str(exc)[:300],
+            http_status=mapped.status_code,
+        )
+        raise mapped from exc
 
     if resp.user is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration failed")
@@ -425,34 +606,27 @@ async def register(body: RegisterRequest) -> AuthResponse:
     # If email confirmation is required, session may be None
     session = resp.session
     if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Please check your email to confirm your account, then sign in.",
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content=RegisterPendingResponse(
+                needs_confirmation=True,
+                message=CONFIRM_EMAIL_MESSAGE,
+                email=str(body.email),
+            ).model_dump(),
         )
 
     # Create internal user row on a client that is still the service role.
     sb = await create_auth_client()
     try:
-        insert_result = (
-            await sb.table("users")
-            .insert({"supabase_uid": resp.user.id, "email": body.email, "tier": "free"})
-            .execute()
-        )
-        if not insert_result.data or (
-            isinstance(insert_result.data, list) and len(insert_result.data) == 0
-        ):
-            raise ValueError("Insert returned no data")
-        user_row = (
-            insert_result.data
-            if isinstance(insert_result.data, dict)
-            else insert_result.data[0]
-        )
+        user_row = await _find_or_link_user_row(sb, resp.user.id, str(body.email))
     except Exception as exc:
         logger.exception("Failed to create internal user row")
         try:
             await sb.auth.admin.delete_user(resp.user.id)
         except Exception as cleanup_exc:
             logger.warning("Could not delete Supabase user after insert failure", error=str(cleanup_exc))
+        if isinstance(exc, UserLinkConflictError):
+            raise HTTPException(status.HTTP_409_CONFLICT, ACCOUNT_LINK_CONFLICT_MESSAGE) from exc
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration could not be completed",
@@ -483,41 +657,33 @@ async def login(body: LoginRequest) -> AuthResponse:
     try:
         resp = await auth_sb.auth.sign_in_with_password({"email": body.email, "password": body.password})
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-        ) from exc
+        mapped = _login_error(exc)
+        if mapped.status_code != status.HTTP_401_UNAUTHORIZED:
+            status_value, code, _message = _auth_error_parts(exc)
+            logger.warning(
+                "Login failed",
+                error_type=type(exc).__name__,
+                supabase_status=status_value,
+                supabase_code=code or None,
+                http_status=mapped.status_code,
+            )
+        raise mapped from exc
 
     if resp.user is None or resp.session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login failed")
 
-    # Fetch internal user row on a client that is still the service role.
+    # Find, link or create the internal user row on a service-role client.
     sb = await create_auth_client()
     try:
-        result = await sb.table("users").select("*").eq("supabase_uid", resp.user.id).limit(1).execute()
+        user_row = await _find_or_link_user_row(sb, resp.user.id, resp.user.email or str(body.email))
+    except UserLinkConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, ACCOUNT_LINK_CONFLICT_MESSAGE) from exc
     except Exception as exc:
-        logger.warning("User lookup after login failed", error=str(exc))
-        result = None
-    rows = result.data if result is not None and isinstance(result.data, list) else []
-    if not rows:
-        # Auto-create if missing (e.g. user registered via web)
-        try:
-            result = (
-                await sb.table("users")
-                .insert({"supabase_uid": resp.user.id, "email": body.email, "tier": "free"})
-                .execute()
-            )
-            if not result.data or (isinstance(result.data, list) and len(result.data) == 0):
-                raise ValueError("Insert returned no data")
-            user_row = result.data if isinstance(result.data, dict) else result.data[0]
-        except Exception as exc:
-            logger.exception("Failed to create or read internal user row after login")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Login could not be completed",
-            ) from exc
-    else:
-        user_row = rows[0]
+        logger.exception("Failed to create or read internal user row after login")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Login could not be completed",
+        ) from exc
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))
@@ -668,39 +834,15 @@ async def google_oauth_exchange(body: _OAuthCodeExchangeRequest) -> AuthResponse
     # Upsert internal user row on a client that is still the service role.
     sb = await create_auth_client()
     try:
-        result = (
-            await sb.table("users")
-            .select("*")
-            .eq("supabase_uid", resp.user.id)
-            .limit(1)
-            .execute()
-        )
+        user_row = await _find_or_link_user_row(sb, resp.user.id, resp.user.email or "")
+    except UserLinkConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, ACCOUNT_LINK_CONFLICT_MESSAGE) from exc
     except Exception as exc:
-        logger.warning("User lookup after OAuth exchange failed", error=str(exc))
-        result = None
-    oauth_rows = result.data if result is not None and isinstance(result.data, list) else []
-    if not oauth_rows:
-        try:
-            result = (
-                await sb.table("users")
-                .insert({
-                    "supabase_uid": resp.user.id,
-                    "email": resp.user.email or "",
-                    "tier": "free",
-                })
-                .execute()
-            )
-            if not result.data or (isinstance(result.data, list) and len(result.data) == 0):
-                raise ValueError("Insert returned no data")
-            user_row = result.data if isinstance(result.data, dict) else result.data[0]
-        except Exception as exc:
-            logger.exception("Failed to create or read internal user row after OAuth exchange")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="OAuth sign-in could not be completed",
-            ) from exc
-    else:
-        user_row = oauth_rows[0]
+        logger.exception("Failed to create or read internal user row after OAuth exchange")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OAuth sign-in could not be completed",
+        ) from exc
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))
@@ -753,39 +895,15 @@ async def _id_token_login(provider: str, id_token: str, nonce: str | None) -> Au
     # Upsert internal user row on a client that is still the service role.
     sb = await create_auth_client()
     try:
-        result = (
-            await sb.table("users")
-            .select("*")
-            .eq("supabase_uid", resp.user.id)
-            .limit(1)
-            .execute()
-        )
+        user_row = await _find_or_link_user_row(sb, resp.user.id, resp.user.email or "")
+    except UserLinkConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, ACCOUNT_LINK_CONFLICT_MESSAGE) from exc
     except Exception as exc:
-        logger.warning("User lookup after ID token sign-in failed", error=str(exc))
-        result = None
-    id_rows = result.data if result is not None and isinstance(result.data, list) else []
-    if not id_rows:
-        try:
-            result = (
-                await sb.table("users")
-                .insert({
-                    "supabase_uid": resp.user.id,
-                    "email": resp.user.email or "",
-                    "tier": "free",
-                })
-                .execute()
-            )
-            if not result.data or (isinstance(result.data, list) and len(result.data) == 0):
-                raise ValueError("Insert returned no data")
-            user_row = result.data if isinstance(result.data, dict) else result.data[0]
-        except Exception as exc:
-            logger.exception("Failed to create or read internal user row after ID token sign-in")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"{provider.title()} sign-in could not be completed",
-            ) from exc
-    else:
-        user_row = id_rows[0]
+        logger.exception("Failed to create or read internal user row after ID token sign-in")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"{provider.title()} sign-in could not be completed",
+        ) from exc
 
     try:
         usage = await get_usage_snapshot(str(user_row["id"]))

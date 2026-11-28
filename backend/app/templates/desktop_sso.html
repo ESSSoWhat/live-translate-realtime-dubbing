@@ -76,6 +76,7 @@
     details { margin-top: 1rem; color: #888; font-size: 0.85rem; }
     details summary { cursor: pointer; color: #aaa; }
     #openApp { display: none; }
+    #registerBtn { margin-top: 0.6rem; background: #2a2a2a; }
   </style>
 </head>
 <body>
@@ -93,6 +94,7 @@
       <label for="password">Password</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required />
       <button class="primary" type="submit" id="loginBtn">Sign in &amp; return to app</button>
+      <button class="primary" type="button" id="registerBtn">Create account</button>
     </form>
 
     <a class="linkbtn primary" id="openApp" href="#">Open Live Translate app</a>
@@ -113,9 +115,12 @@
   var redirectUri = params.get("redirect_uri") || sessionStorage.getItem("lt_sso_redirect") || "";
   var msg = document.getElementById("msg");
   var loginBtn = document.getElementById("loginBtn");
+  var registerBtn = document.getElementById("registerBtn");
   var googleBtn = document.getElementById("googleBtn");
   var keyBtn = document.getElementById("keyBtn");
   var openApp = document.getElementById("openApp");
+  var CONFIRM_EMAIL_MESSAGE = "Check your email to confirm your account, then sign in.";
+  var SIGNUP_TIMEOUT_MESSAGE = "This is taking longer than usual. Check your inbox before trying again.";
 
   function rememberSession() {
     if (sessionId) sessionStorage.setItem("lt_sso_session", sessionId);
@@ -223,6 +228,7 @@
   async function complete(body) {
     setMsg("Signing you in…");
     loginBtn.disabled = true;
+    if (registerBtn) registerBtn.disabled = true;
     googleBtn.disabled = true;
     keyBtn.disabled = true;
     try {
@@ -248,6 +254,7 @@
     } catch (e) {
       setMsg(e.message || "Sign-in failed");
       loginBtn.disabled = false;
+      if (registerBtn) registerBtn.disabled = false;
       googleBtn.disabled = false;
       keyBtn.disabled = false;
     }
@@ -325,9 +332,79 @@
     }
   });
 
+
+  function isConfirmationMessage(text) {
+    var lowered = (text || "").toLowerCase();
+    return lowered.indexOf("check your email") !== -1 && lowered.indexOf("confirm") !== -1;
+  }
+
+  registerBtn.addEventListener("click", async function () {
+    var email = document.getElementById("email").value.trim();
+    var password = document.getElementById("password").value;
+    if (!email || !password) {
+      setMsg("Enter an email and a password of at least 8 characters.");
+      return;
+    }
+    if (password.length < 8) {
+      setMsg("Password must be at least 8 characters.");
+      return;
+    }
+    setMsg("Creating account…");
+    loginBtn.disabled = true;
+    registerBtn.disabled = true;
+    googleBtn.disabled = true;
+    try {
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, 20000);
+      var res = await fetch("/api/v1/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ email: email, password: password }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      var data = {};
+      try { data = await res.json(); } catch (e) { data = {}; }
+      var detail = data.message || data.detail || "";
+      if (typeof detail !== "string") detail = JSON.stringify(detail);
+      if (res.status === 504 || res.status === 408) {
+        setMsg(SIGNUP_TIMEOUT_MESSAGE);
+        return;
+      }
+      if (res.ok && data.needs_confirmation) {
+        setMsg(data.message || CONFIRM_EMAIL_MESSAGE, true);
+        return;
+      }
+      if (res.status === 400 && isConfirmationMessage(detail)) {
+        setMsg(detail || CONFIRM_EMAIL_MESSAGE, true);
+        return;
+      }
+      if (res.ok && data.access_token) {
+        setMsg("Account created. Sign in to return to the app.", true);
+        return;
+      }
+      if (!res.ok) {
+        setMsg(detail || "Could not create the account. Try again.");
+        return;
+      }
+      setMsg(CONFIRM_EMAIL_MESSAGE, true);
+    } catch (e) {
+      if (e && (e.name === "AbortError" || String(e).toLowerCase().indexOf("timeout") !== -1)) {
+        setMsg(SIGNUP_TIMEOUT_MESSAGE);
+      } else {
+        setMsg(e.message || "Could not create the account. Try again.");
+      }
+    } finally {
+      loginBtn.disabled = false;
+      registerBtn.disabled = false;
+      googleBtn.disabled = false;
+    }
+  });
+
   if (!sessionId || sessionId.length < 16) {
     setMsg("Open this page from the Live Translate app (Sign in with livetranslate.net).");
     loginBtn.disabled = true;
+    if (registerBtn) registerBtn.disabled = true;
     googleBtn.disabled = true;
     keyBtn.disabled = true;
   }

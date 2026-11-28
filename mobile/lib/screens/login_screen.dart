@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/qonversion_service.dart';
+import '../services/register_status.dart';
 import '../services/sso_service.dart';
 import 'home_screen.dart';
 
@@ -26,6 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
   bool _registerMode = false;
   String? _error;
+  String? _info;
 
   Future<void> _submitAuth() async {
     final email = _emailController.text.trim();
@@ -46,11 +48,22 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _info = null;
     });
     try {
       final body = _registerMode
           ? await _api.register(email, password)
           : await _api.login(email, password);
+      if (_registerMode && body['needs_confirmation'] == true) {
+        if (!mounted) return;
+        setState(() {
+          _error = null;
+          _info = (body['message'] as String?)?.isNotEmpty == true
+              ? body['message'] as String
+              : confirmEmailMessage;
+        });
+        return;
+      }
       await _auth.saveFromAuthResponse(body);
       if (QonversionService.isAvailable) {
         final userId = body['user_id'] as String?;
@@ -63,6 +76,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
+        _info = null;
         _error = _friendlyAuthError(e);
       });
     } finally {
@@ -72,9 +86,18 @@ class _LoginScreenState extends State<LoginScreen> {
 
   String _friendlyAuthError(Object e) {
     if (e is DioException) {
-      if (e.type == DioExceptionType.connectionError ||
-          e.type == DioExceptionType.connectionTimeout ||
-          e.type == DioExceptionType.receiveTimeout) {
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.sendTimeout ||
+          e.response?.statusCode == 504) {
+        if (_registerMode) return signupTimeoutMessage;
+        return 'Connection timed out. Please try again.';
+      }
+      if (e.error is String &&
+          (e.error as String).contains('Check your inbox before trying again')) {
+        return e.error as String;
+      }
+      if (e.type == DioExceptionType.connectionError) {
         return 'Cannot reach the Live Translate API. '
             'Check your internet connection, or for local testing start the backend '
             'and use --dart-define=API_BASE_URL=...';
@@ -184,6 +207,22 @@ class _LoginScreenState extends State<LoginScreen> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 32),
+              if (_info != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: SelectableText(
+                    _info!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
               if (_error != null) ...[
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -275,6 +314,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     : () => setState(() {
                           _registerMode = !_registerMode;
                           _error = null;
+                          _info = null;
                         }),
                 child: Text(
                   _registerMode
