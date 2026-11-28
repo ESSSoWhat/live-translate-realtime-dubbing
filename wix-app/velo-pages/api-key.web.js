@@ -11,8 +11,21 @@
 import { Permissions, webMethod } from 'wix-web-module';
 import { getSecret } from 'wix-secrets-backend';
 import { orders } from 'wix-pricing-plans.v2';
+import { currentMember } from 'wix-members-backend';
 
 const BACKEND_URL = 'https://livetranslatedubtool-production.up.railway.app';
+
+// The signed-in Wix member's id. Sent to the backend so deleting the member (events.js)
+// can delete the linked app account. Returns undefined when unavailable.
+async function getMemberId() {
+    try {
+        const member = await currentMember.getMember();
+        return member?._id || undefined;
+    } catch (e) {
+        console.warn('Could not read member id:', e);
+        return undefined;
+    }
+}
 
 async function getMemberPlan() {
     try {
@@ -37,6 +50,7 @@ export const syncMemberToBackend = webMethod(
             const secret = await getSecret('LT_SYNC_SECRET');
             if (!secret) return { received: false };
             const { planId, planName, status } = await getMemberPlan();
+            const wixMemberId = await getMemberId();
             const res = await fetch(`${BACKEND_URL}/api/v1/billing/wix/sync`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Wix-Sync-Secret': secret },
@@ -45,6 +59,7 @@ export const syncMemberToBackend = webMethod(
                     plan_id: planId || undefined,
                     plan_name: planName || undefined,
                     status: status || undefined,
+                    wix_member_id: wixMemberId,
                 }),
             });
             if (!res.ok) return { received: false };
@@ -68,7 +83,7 @@ export const getApiKeyForMember = webMethod(
             const response = await fetch(`${BACKEND_URL}/api/v1/auth/api-key`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Wix-Sync-Secret': secret },
-                body: JSON.stringify({ email }),
+                body: JSON.stringify({ email, wix_member_id: await getMemberId() }),
             });
             if (!response.ok) {
                 const errorText = await response.text();

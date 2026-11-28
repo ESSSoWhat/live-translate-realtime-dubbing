@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.dependencies import get_current_user
 from app.models.requests import CheckoutRequest, WixSyncRequest
 from app.models.responses import CheckoutResponse, PlanInfo, PortalResponse
+from app.services.account_sync import link_wix_member_id
 from app.services.supabase_client import get_supabase
 from app.services.wix_tier_map import active_wix_tier_mapping, wix_plan_to_tier as _wix_plan_to_tier
 
@@ -360,6 +361,8 @@ async def provision_or_update_user(
         return {"tier": tier, "user_created": True}
 
     user_id = existing_data[0]["id"]
+    if body.wix_member_id:
+        await link_wix_member_id(sb, user_id, body.wix_member_id)
     current_tier = (existing_data[0].get("tier") or "free").strip().lower()
     new_tier = _max_tier(current_tier, tier) if subscription_status == "active" else tier
     update = {"tier": new_tier, "subscription_status": subscription_status}
@@ -446,6 +449,8 @@ async def wix_sync(body: WixSyncRequest, request: Request) -> dict:
         if ins.data and len(ins.data) > 0:
             row = ins.data[0] if isinstance(ins.data, list) else ins.data
             user_id = row["id"]
+            if body.wix_member_id:
+                await link_wix_member_id(sb, user_id, body.wix_member_id)
             logger.info("Wix sync: user created with API key", user_id=str(user_id), email=body.email, tier=tier)
             return {"received": True, "updated": True, "tier": tier, "user_created": True}
         raise HTTPException(status_code=500, detail="Failed to create user")

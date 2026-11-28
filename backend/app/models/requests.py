@@ -126,6 +126,7 @@ class WixSyncRequest(BaseModel):
     plan_name: str | None = None
     status: str | None = None  # e.g. ACTIVE, CANCELED
     tier: Tier | None = None  # Optional: website can send tier directly when already resolved
+    wix_member_id: str | None = Field(default=None, max_length=64)
 
     @field_validator("tier", mode="before")
     @classmethod
@@ -143,6 +144,9 @@ class ApiKeyRequest(BaseModel):
     """Body for API key provision (Wix-only; call after member login)."""
 
     email: EmailStr
+    # Wix member id (from wix-members-backend currentMember). Links the app account to
+    # the Wix member so deleting either one can delete the other.
+    wix_member_id: str | None = Field(default=None, max_length=64)
 
 
 class UsageReportRequest(BaseModel):
