@@ -43,6 +43,12 @@ from PyQt6.QtWidgets import (
 if TYPE_CHECKING:
     from live_dubbing.config.settings import AppSettings
 
+from live_dubbing.register_status import (
+    CONFIRM_EMAIL_MESSAGE,
+    SIGNUP_TIMEOUT_MESSAGE,
+    classify_register_response,
+)
+
 logger = structlog.get_logger(__name__)
 
 # OAuth provider domains - used to detect when a redirect leads to the actual OAuth URL.
@@ -134,15 +140,42 @@ class _AuthWorker(QThread):
 
             data = resp.json() if resp.content else {}
 
+            if self._mode == "register":
+                kind, message, payload = classify_register_response(
+                    resp.status_code, data
+                )
+                if kind == "needs_confirmation":
+                    self.success.emit({
+                        "needs_confirmation": True,
+                        "message": message,
+                        "email": self._email,
+                    })
+                    return
+                if kind == "timeout":
+                    self.error.emit(message)
+                    return
+                if kind == "error":
+                    msg = (
+                        data.get("error_description")
+                        or data.get("msg")
+                        or data.get("message")
+                        or data.get("error")
+                        or message
+                    )
+                    self.error.emit(str(msg))
+                    return
+
             if resp.status_code in (200, 201):
                 access_token = data.get("access_token", "")
                 refresh_token = data.get("refresh_token", "")
 
                 if not access_token:
                     # Registration returned 200 but no token — email confirmation needed
-                    self.error.emit(
-                        "Check your email for a confirmation link, then sign in."
-                    )
+                    self.success.emit({
+                        "needs_confirmation": True,
+                        "message": CONFIRM_EMAIL_MESSAGE,
+                        "email": self._email,
+                    })
                     return
 
                 # Decode user_id / email from JWT payload
@@ -176,7 +209,10 @@ class _AuthWorker(QThread):
         except httpx.ConnectError:
             self.error.emit("Cannot connect to Supabase. Check your internet connection.")
         except httpx.TimeoutException:
-            self.error.emit("Connection timed out. Please try again.")
+            if self._mode == "register":
+                self.error.emit(SIGNUP_TIMEOUT_MESSAGE)
+            else:
+                self.error.emit("Connection timed out. Please try again.")
         except Exception as exc:
             self.error.emit(str(exc))
 
@@ -189,29 +225,50 @@ class _AuthWorker(QThread):
                     endpoint,
                     json={"email": self._email, "password": self._password},
                 )
+            try:
+                body = response.json() if response.content else {}
+            except Exception:
+                body = {}
+            if self._mode == "register":
+                kind, message, payload = classify_register_response(
+                    response.status_code, body
+                )
+                if kind == "signed_in":
+                    self.success.emit(payload or body)
+                    return
+                if kind == "needs_confirmation":
+                    self.success.emit({
+                        "needs_confirmation": True,
+                        "message": message,
+                        "email": self._email,
+                    })
+                    return
+                self.error.emit(message)
+                return
             if response.status_code in (200, 201):
-                self.success.emit(response.json())
+                self.success.emit(body if isinstance(body, dict) else response.json())
             else:
-                try:
-                    body = response.json()
-                    detail = body.get("detail", "Unknown error")
-                    if isinstance(detail, list):
-                        parts = []
-                        for item in detail:
-                            if isinstance(item, dict) and "msg" in item:
-                                parts.append(str(item["msg"]))
-                            else:
-                                parts.append(str(item))
-                        detail = " ".join(parts) if parts else "Invalid request"
-                    else:
-                        detail = str(detail)
-                except Exception:
+                detail = body.get("detail", "Unknown error") if isinstance(body, dict) else "Unknown error"
+                if isinstance(detail, list):
+                    parts = []
+                    for item in detail:
+                        if isinstance(item, dict) and "msg" in item:
+                            parts.append(str(item["msg"]))
+                        else:
+                            parts.append(str(item))
+                    detail = " ".join(parts) if parts else "Invalid request"
+                else:
+                    detail = str(detail)
+                if not detail or detail == "Unknown error":
                     detail = f"HTTP {response.status_code}"
                 self.error.emit(detail)
         except httpx.ConnectError:
             self.error.emit("Cannot connect to server. Check your internet connection.")
         except httpx.TimeoutException:
-            self.error.emit("Connection timed out. Please try again.")
+            if self._mode == "register":
+                self.error.emit(SIGNUP_TIMEOUT_MESSAGE)
+            else:
+                self.error.emit("Connection timed out. Please try again.")
         except Exception as exc:
             self.error.emit(str(exc))
 
@@ -1166,14 +1223,26 @@ class LoginDialog(QDialog):
         if busy:
             self._error_label.hide()
 
+    def _show_info(self, message: str) -> None:
+        """Re-enable buttons and show a success or guidance message."""
+        self._set_busy(False)
+        assert self._error_label is not None
+        self._error_label.setStyleSheet("color: #3d9a5f; margin-top: 8px; font-size: 12px;")
+        self._error_label.setText(message)
+        self._error_label.show()
+
     def _show_error(self, message: str) -> None:
         """Re-enable buttons then display the error message."""
         self._set_busy(False)           # Re-enable buttons first
         assert self._error_label is not None
+        self._error_label.setStyleSheet("color: #e05555; margin-top: 8px; font-size: 12px;")
         self._error_label.setText(message)
         self._error_label.show()        # Show AFTER _set_busy so it stays visible
 
     def _on_auth_success(self, data: dict) -> None:
+        if data.get("needs_confirmation"):
+            self._show_info(str(data.get("message") or CONFIRM_EMAIL_MESSAGE))
+            return
         access = data.get("access_token")
         refresh = data.get("refresh_token")
         if not access or not refresh:

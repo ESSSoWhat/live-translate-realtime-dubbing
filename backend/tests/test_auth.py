@@ -156,3 +156,49 @@ def test_desktop_sso_complete_oauth_code_stores_handoff(
     assert exchanged is not None
     assert exchanged.args[0]["auth_code"] == "auth-code"
     assert exchanged.args[0]["code_verifier"] == "verifier"
+
+
+def test_register_needs_confirmation_returns_202(auth_client: TestClient, mock_supabase) -> None:
+    """When Supabase creates a user but returns no session, sign-up is success."""
+    mock_supabase.auth.sign_up = AsyncMock(
+        return_value=MagicMock(
+            user=MagicMock(id="supa-pending", email="pending@test.com"),
+            session=None,
+        )
+    )
+    r = auth_client.post(
+        "/api/v1/auth/register",
+        json={"email": "pending@test.com", "password": "password123"},
+    )
+    assert r.status_code == 202
+    data = r.json()
+    assert data["needs_confirmation"] is True
+    assert data["email"] == "pending@test.com"
+    assert "Check your email to confirm your account" in data["message"]
+    # Must not look like the old error payload
+    assert "detail" not in data
+    assert "access_token" not in data
+
+
+def test_register_timeout_returns_504(auth_client: TestClient, mock_supabase) -> None:
+    """A timed-out confirmation email is a 504 with retry guidance, not a 400."""
+    mock_supabase.auth.sign_up = AsyncMock(side_effect=TimeoutError("context deadline exceeded"))
+    r = auth_client.post(
+        "/api/v1/auth/register",
+        json={"email": "slow@test.com", "password": "password123"},
+    )
+    assert r.status_code == 504
+    detail = r.json()["detail"]
+    assert "taking longer than usual" in detail
+    assert "Check your inbox before trying again" in detail
+
+
+def test_desktop_sso_page_offers_create_account(client: TestClient) -> None:
+    """The shared sign-in page can create an account and shows check-your-email copy."""
+    r = client.get("/api/v1/auth/desktop-sso")
+    assert r.status_code == 200
+    body = r.text
+    assert "Create account" in body
+    assert "/api/v1/auth/register" in body
+    assert "Check your email to confirm your account" in body
+    assert "Check your inbox before trying again" in body

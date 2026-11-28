@@ -16,11 +16,27 @@ from pydantic import BaseModel, Field  # pylint: disable=import-error
 
 from app.config import get_settings
 from app.models.requests import ApiKeyRequest, ForgotPasswordRequest, LoginRequest, RefreshRequest, RegisterRequest
-from app.models.responses import AuthResponse, TokenResponse
+from app.models.responses import AuthResponse, RegisterPendingResponse, TokenResponse
 from app.services.supabase_client import create_auth_client, get_supabase
 from app.services.usage import get_usage_snapshot
 
 logger = structlog.get_logger(__name__)
+
+CONFIRM_EMAIL_MESSAGE = "Check your email to confirm your account, then sign in."
+SIGNUP_TIMEOUT_MESSAGE = (
+    "This is taking longer than usual. Check your inbox before trying again."
+)
+
+
+def _is_auth_timeout(exc: BaseException) -> bool:
+    """True when a sign-up call failed because a request timed out."""
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(
+        token in text
+        for token in ("timeout", "timed out", "deadline exceeded")
+    )
+
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _DESKTOP_SSO_HTML_PATH = Path(__file__).resolve().parent.parent / "templates" / "desktop_sso.html"
@@ -408,14 +424,33 @@ async def desktop_sso_complete(body: DesktopSsoCompleteRequest) -> dict:
     return out
 
 
-@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest) -> AuthResponse:
-    """Create a new account."""
+@router.post(
+    "/register",
+    response_model=None,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        201: {"model": AuthResponse},
+        202: {"model": RegisterPendingResponse},
+    },
+)
+async def register(body: RegisterRequest) -> AuthResponse | JSONResponse:
+    """Create a new account.
+
+    When email confirmation is required, Supabase returns a user and no session.
+    That is a successful sign-up: respond with 202 and needs_confirmation=true
+    instead of HTTP 400, so clients can show a check-your-email success state.
+    """
     auth_sb = await create_auth_client()
 
     try:
         resp = await auth_sb.auth.sign_up({"email": body.email, "password": body.password})
     except Exception as exc:
+        if _is_auth_timeout(exc):
+            logger.warning("Registration timed out", error=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=SIGNUP_TIMEOUT_MESSAGE,
+            ) from exc
         logger.exception("Registration failed")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Authentication failed") from exc
 
@@ -425,9 +460,13 @@ async def register(body: RegisterRequest) -> AuthResponse:
     # If email confirmation is required, session may be None
     session = resp.session
     if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Please check your email to confirm your account, then sign in.",
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content=RegisterPendingResponse(
+                needs_confirmation=True,
+                message=CONFIRM_EMAIL_MESSAGE,
+                email=str(body.email),
+            ).model_dump(),
         )
 
     # Create internal user row on a client that is still the service role.
